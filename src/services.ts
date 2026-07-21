@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiDraft, DocumentBlock, OpenAICompatibleConfig, Project, SearchConfig, SearchResult } from "./types";
+import type { AiDraft, CommandPreset, CommandResult, DocumentBlock, OpenAICompatibleConfig, Project, SearchConfig, SearchResult } from "./types";
 
 const inTauri = () => "__TAURI_INTERNALS__" in window;
+export const isDesktop = () => inTauri();
 export async function improveBlock(block: DocumentBlock, instruction: string, context: string[], config: OpenAICompatibleConfig): Promise<AiDraft> {
   if (!config.enabled) throw new Error("当前项目已禁用联网 AI");
   if (!config.apiKey && !config.baseUrl.includes("localhost")) throw new Error("请先在设置中填写 API Key");
@@ -19,10 +20,51 @@ export async function searchWeb(query: string, config: SearchConfig): Promise<Se
   if (!config.endpoint) throw new Error("请先配置搜索服务地址");
   if (inTauri()) return invoke("search_web", { query, config });
   if (config.provider === "searxng") {
-    const r = await fetch(`${config.endpoint.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json`);
-    const j = await r.json(); return (j.results ?? []).slice(0, 8).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.content ?? "" }));
+    const r = await fetch(`${config.endpoint.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json&language=zh-CN`, {
+      headers: { "Accept": "application/json" },
+    });
+    if (!r.ok) throw new Error(`搜索服务返回 ${r.status}${r.status === 0 ? "（CORS 受限或无法连接）" : ""}`);
+    const j = await r.json(); return (j.results ?? []).slice(0, 12).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.content ?? "" }));
   }
   const r = await fetch(`${config.endpoint || "https://api.search.brave.com/res/v1/web/search"}?q=${encodeURIComponent(query)}`, { headers: { "X-Subscription-Token": config.apiKey } });
   const j = await r.json(); return (j.web?.results ?? []).slice(0, 8).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.description ?? "" }));
 }
 export async function saveMarkdown(project: Project, markdown: string) { if (inTauri()) return invoke("save_markdown", { projectName: project.name, markdown }); const blob = new Blob([markdown], { type: "text/markdown" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${project.name}.md`; a.click(); URL.revokeObjectURL(a.href); }
+export async function runCommand(preset: CommandPreset): Promise<CommandResult> {
+  if (!inTauri()) throw new Error("请在 Tauri 桌面端运行此任务");
+  return invoke<CommandResult>("run_command", {
+    preset: {
+      program: preset.program,
+      args: preset.args,
+      cwd: preset.cwd || ".",
+      timeoutMs: preset.timeoutMs,
+      allowShell: preset.allowShell,
+      stdin: preset.stdin,
+    },
+  });
+}
+
+export async function detectTools(): Promise<Record<string, string>> {
+  if (!inTauri()) return {};
+  return invoke<Record<string, string>>("detect_tools");
+}
+
+export async function terminalOpen(cols: number, rows: number, cwd = "."): Promise<number> {
+  if (!inTauri()) throw new Error("请在 Tauri 桌面端使用终端");
+  return invoke<number>("terminal_open", { cols, rows, cwd });
+}
+
+export async function terminalWrite(id: number, data: string): Promise<void> {
+  if (!inTauri()) throw new Error("请在 Tauri 桌面端使用终端");
+  await invoke("terminal_write", { id, data });
+}
+
+export async function terminalResize(id: number, cols: number, rows: number): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("terminal_resize", { id, cols, rows });
+}
+
+export async function terminalClose(id: number): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("terminal_close", { id });
+}

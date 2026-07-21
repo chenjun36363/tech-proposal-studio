@@ -1,26 +1,712 @@
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
+import {
+  AlignmentType,
+  BorderStyle,
+  Document,
+  HeadingLevel,
+  ImageRun,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+  type FileChild,
+  type IImageOptions,
+} from "docx";
 import type { Project } from "./types";
+import { exportMarkdown } from "./storage";
+import { isDesktop } from "./services";
+import { invoke } from "@tauri-apps/api/core";
+import { readBinaryFile } from "./workspace";
 
-export function buildDocx(project: Project) {
-  const children: Paragraph[] = [new Paragraph({ text: project.name, heading: HeadingLevel.TITLE })];
-  for (const section of project.sections) {
-    children.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_1, pageBreakBefore: section.order > 0 }));
-    for (const block of section.blocks) {
-      for (const line of (block.content || " ").split("\n")) {
-        children.push(new Paragraph({ children: [new TextRun({ text: line || " ", font: block.type === "code" ? "Consolas" : "Microsoft YaHei" })], style: block.type === "code" ? "Code" : undefined }));
-      }
+const HEADING_LEVELS = [
+  HeadingLevel.HEADING_1,
+  HeadingLevel.HEADING_2,
+  HeadingLevel.HEADING_3,
+  HeadingLevel.HEADING_4,
+  HeadingLevel.HEADING_5,
+  HeadingLevel.HEADING_6,
+] as const;
+
+/** 黑体 — headings (eastAsia + ascii fallback) */
+const HEADING_FONT = { eastAsia: "黑体", ascii: "SimHei", hAnsi: "SimHei" };
+/** 宋体 — body */
+const BODY_FONT = { eastAsia: "宋体", ascii: "SimSun", hAnsi: "SimSun" };
+const CODE_FONT = "Consolas";
+
+// Word half-points: 2号 = 22pt → 44; 小四 = 12pt → 24
+const SIZE_H1 = 44;
+const SIZE_H2 = 32;
+const SIZE_H3 = 28;
+const SIZE_H4 = 24;
+const SIZE_H5 = 24;
+const SIZE_H6 = 21;
+const SIZE_BODY = 24;
+const SIZE_CODE = 18;
+
+const HEADING_SIZES = [SIZE_H1, SIZE_H2, SIZE_H3, SIZE_H4, SIZE_H5, SIZE_H6] as const;
+
+const MAX_IMAGE_WIDTH_PX = 520;
+
+function plainText(line: string): string {
+  return line
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+}
+
+function runsFromInline(
+  line: string,
+  base?: { italics?: boolean; color?: string; font?: typeof BODY_FONT | string; size?: number },
+): TextRun[] {
+  const font = base?.font ?? BODY_FONT;
+  const size = base?.size ?? SIZE_BODY;
+  const pieces: TextRun[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line))) {
+    if (m.index > last) {
+      pieces.push(
+        new TextRun({
+          text: line.slice(last, m.index),
+          font,
+          size,
+          italics: base?.italics,
+          color: base?.color,
+        }),
+      );
     }
+    const token = m[0];
+    if (token.startsWith("**") && token.endsWith("**")) {
+      pieces.push(
+        new TextRun({
+          text: token.slice(2, -2),
+          font,
+          size,
+          bold: true,
+          italics: base?.italics,
+          color: base?.color,
+        }),
+      );
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      pieces.push(new TextRun({ text: token.slice(1, -1), font: CODE_FONT, size: SIZE_CODE }));
+    } else if (token.startsWith("*") && token.endsWith("*")) {
+      pieces.push(
+        new TextRun({
+          text: token.slice(1, -1),
+          font,
+          size,
+          italics: true,
+          color: base?.color,
+        }),
+      );
+    }
+    last = m.index + token.length;
   }
-  return new Document({
-    styles: {
-      default: { document: { run: { font: "Microsoft YaHei", size: 21 }, paragraph: { spacing: { line: 360 } } } },
-      paragraphStyles: [{ id: "Code", name: "Code", basedOn: "Normal", run: { font: "Consolas", size: 18 }, paragraph: { shading: { fill: "F3F5F3" }, spacing: { before: 80, after: 80 } } }]
-    },
-    sections: [{ properties: { page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } } }, children }]
+  if (last < line.length) {
+    pieces.push(
+      new TextRun({
+        text: line.slice(last),
+        font,
+        size,
+        italics: base?.italics,
+        color: base?.color,
+      }),
+    );
+  }
+  if (!pieces.length) pieces.push(new TextRun({ text: " ", font, size }));
+  return pieces;
+}
+
+function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolean }): Paragraph {
+  if (opts?.code) {
+    return new Paragraph({
+      children: [new TextRun({ text: line.length ? line : " ", font: CODE_FONT, size: SIZE_CODE })],
+      style: "Code",
+    });
+  }
+  if (opts?.quote) {
+    return new Paragraph({
+      children: runsFromInline(line, {
+        italics: true,
+        color: "555555",
+        font: BODY_FONT,
+        size: SIZE_BODY,
+      }),
+      indent: { left: 420 },
+    });
+  }
+  return new Paragraph({
+    children: runsFromInline(line, { font: BODY_FONT, size: SIZE_BODY }),
   });
 }
 
-export async function downloadDocx(project: Project) {
-  const blob = await Packer.toBlob(buildDocx(project));
-  const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `${project.name}.docx`; anchor.click(); URL.revokeObjectURL(anchor.href);
+function parseTableRows(block: string[]): string[][] {
+  return block
+    .filter((l) => !/^\s*\|?\s*:?-{3,}/.test(l.replace(/\|/g, "")))
+    .map((l) =>
+      l
+        .trim()
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((c) => plainText(c.trim())),
+    )
+    .filter((r) => r.some((c) => c.length));
+}
+
+function tableFromMarkdown(rows: string[][]): Table {
+  const colCount = Math.max(...rows.map((r) => r.length), 1);
+  const width = Math.floor(9000 / colCount);
+  return new Table({
+    width: { size: 9000, type: WidthType.DXA },
+    rows: rows.map(
+      (row, ri) =>
+        new TableRow({
+          children: Array.from({ length: colCount }, (_, ci) => {
+            const text = row[ci] ?? "";
+            return new TableCell({
+              width: { size: width, type: WidthType.DXA },
+              borders: {
+                top: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
+                bottom: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
+                left: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
+                right: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
+              },
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: text || " ",
+                      font: BODY_FONT,
+                      size: 20,
+                      bold: ri === 0,
+                    }),
+                  ],
+                }),
+              ],
+            });
+          }),
+        }),
+    ),
+  });
+}
+
+function dirname(path: string): string {
+  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return i >= 0 ? path.slice(0, i) : "";
+}
+
+function joinPath(base: string, rel: string): string {
+  const clean = rel.replace(/^\.\//, "").replace(/\\/g, "/");
+  if (!base) return clean;
+  const sep = base.includes("\\") ? "\\" : "/";
+  return `${base.replace(/[\\/]+$/, "")}${sep}${clean.replace(/\//g, sep)}`;
+}
+
+function isAbsolutePath(src: string): boolean {
+  return /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(src);
+}
+
+function imageTypeFromPath(path: string): "jpg" | "png" | "gif" | "bmp" | null {
+  const ext = path.split(".").pop()?.toLowerCase().split("?")[0] ?? "";
+  if (ext === "jpg" || ext === "jpeg") return "jpg";
+  if (ext === "png") return "png";
+  if (ext === "gif") return "gif";
+  if (ext === "bmp") return "bmp";
+  return null;
+}
+
+function sniffImageType(bytes: Uint8Array): "jpg" | "png" | "gif" | "bmp" | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return "png";
+  }
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "gif";
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) return "bmp";
+  return null;
+}
+
+/** Read PNG/JPEG/GIF/BMP dimensions from headers (no full decode). */
+export function readImageSize(bytes: Uint8Array, type: "jpg" | "png" | "gif" | "bmp"): { width: number; height: number } {
+  try {
+    if (type === "png" && bytes.length >= 24) {
+      const w =
+        (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+      const h =
+        (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+      if (w > 0 && h > 0) return { width: w, height: h };
+    }
+    if (type === "gif" && bytes.length >= 10) {
+      const w = bytes[6] | (bytes[7] << 8);
+      const h = bytes[8] | (bytes[9] << 8);
+      if (w > 0 && h > 0) return { width: w, height: h };
+    }
+    if (type === "bmp" && bytes.length >= 26) {
+      const w = bytes[18] | (bytes[19] << 8) | (bytes[20] << 16) | (bytes[21] << 24);
+      const h = Math.abs(bytes[22] | (bytes[23] << 8) | (bytes[24] << 16) | (bytes[25] << 24));
+      if (w > 0 && h > 0) return { width: w, height: h };
+    }
+    if (type === "jpg") {
+      let i = 2;
+      while (i + 9 < bytes.length) {
+        if (bytes[i] !== 0xff) {
+          i += 1;
+          continue;
+        }
+        const marker = bytes[i + 1];
+        if (marker === 0xd8 || marker === 0xd9) {
+          i += 2;
+          continue;
+        }
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+          i += 2;
+          continue;
+        }
+        const len = (bytes[i + 2] << 8) | bytes[i + 3];
+        // SOF0 / SOF2
+        if (marker === 0xc0 || marker === 0xc2) {
+          const h = (bytes[i + 5] << 8) | bytes[i + 6];
+          const w = (bytes[i + 7] << 8) | bytes[i + 8];
+          if (w > 0 && h > 0) return { width: w, height: h };
+        }
+        if (len < 2) break;
+        i += 2 + len;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return { width: 480, height: 320 };
+}
+
+function scaleImage(width: number, height: number, maxWidth: number): { width: number; height: number } {
+  if (width <= maxWidth) return { width, height };
+  const ratio = maxWidth / width;
+  return { width: Math.round(width * ratio), height: Math.round(height * ratio) };
+}
+
+function resolveLocalImagePath(src: string, filePath?: string, workspaceRoot?: string): string | null {
+  const cleaned = src.trim().replace(/^<|>$/g, "").split(/\s+/)[0];
+  if (!cleaned || /^(https?:|data:|asset:|blob:|tauri:)/i.test(cleaned)) return null;
+  const normalized = cleaned.replace(/\\/g, "/");
+  if (isAbsolutePath(cleaned) || isAbsolutePath(normalized)) return cleaned;
+  if (/^assets\//i.test(normalized) && workspaceRoot) {
+    return joinPath(workspaceRoot, normalized);
+  }
+  if (filePath) return joinPath(dirname(filePath), normalized);
+  if (workspaceRoot) return joinPath(workspaceRoot, normalized);
+  return null;
+}
+
+async function loadImageBytes(path: string): Promise<Uint8Array | null> {
+  try {
+    if (isDesktop()) {
+      return await readBinaryFile(path);
+    }
+  } catch {
+    /* try fetch for browser/dev */
+  }
+  try {
+    if (typeof fetch === "function" && /^(https?:|data:|blob:|file:)/i.test(path)) {
+      const res = await fetch(path);
+      if (!res.ok) return null;
+      return new Uint8Array(await res.arrayBuffer());
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function paragraphFromImage(
+  alt: string,
+  src: string,
+  filePath?: string,
+  workspaceRoot?: string,
+): Promise<Paragraph> {
+  const abs = resolveLocalImagePath(src, filePath, workspaceRoot);
+  if (!abs) {
+    return new Paragraph({
+      children: [
+        new TextRun({
+          text: alt ? `[图片: ${alt}]` : `[图片: ${src}]`,
+          font: BODY_FONT,
+          size: SIZE_BODY,
+          italics: true,
+          color: "666666",
+        }),
+      ],
+    });
+  }
+
+  const bytes = await loadImageBytes(abs);
+  if (!bytes || !bytes.length) {
+    return new Paragraph({
+      children: [
+        new TextRun({
+          text: alt ? `[图片无法加载: ${alt}]` : `[图片无法加载: ${src}]`,
+          font: BODY_FONT,
+          size: SIZE_BODY,
+          italics: true,
+          color: "666666",
+        }),
+      ],
+    });
+  }
+
+  const type = imageTypeFromPath(abs) ?? sniffImageType(bytes);
+  if (!type) {
+    return new Paragraph({
+      children: [
+        new TextRun({
+          text: `[不支持的图片格式: ${src}]`,
+          font: BODY_FONT,
+          size: SIZE_BODY,
+          italics: true,
+          color: "666666",
+        }),
+      ],
+    });
+  }
+
+  const natural = readImageSize(bytes, type);
+  const sized = scaleImage(natural.width, natural.height, MAX_IMAGE_WIDTH_PX);
+  const options: IImageOptions = {
+    type,
+    data: bytes,
+    transformation: { width: sized.width, height: sized.height },
+    altText: {
+      name: alt || "image",
+      description: alt || src,
+      title: alt || "image",
+    },
+  };
+
+  return new Paragraph({
+    children: [new ImageRun(options)],
+    spacing: { before: 120, after: 120 },
+  });
+}
+
+function headingParagraph(level: number, title: string, centeredTitle: boolean): Paragraph {
+  const size = HEADING_SIZES[Math.min(Math.max(level, 1), 6) - 1];
+  if (level === 1 && centeredTitle) {
+    return new Paragraph({
+      children: [
+        new TextRun({
+          text: title,
+          font: HEADING_FONT,
+          bold: true,
+          size: SIZE_H1,
+          color: "000000",
+        }),
+      ],
+      heading: HeadingLevel.TITLE,
+      spacing: { after: 200 },
+      alignment: AlignmentType.CENTER,
+    });
+  }
+  return new Paragraph({
+    children: [
+      new TextRun({
+        text: title,
+        font: HEADING_FONT,
+        bold: true,
+        size,
+        color: "000000",
+      }),
+    ],
+    heading: HEADING_LEVELS[Math.min(level, 6) - 1],
+    spacing: { before: 240, after: 120 },
+  });
+}
+
+/** Build DOCX from project markdown body (fallback to legacy sections). */
+export async function buildDocx(project: Project): Promise<Document> {
+  const markdown = exportMarkdown(project);
+  const children: FileChild[] = [];
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  let inCode = false;
+  let sawTitle = false;
+  let i = 0;
+  const filePath = project.filePath;
+  const workspaceRoot = project.workspace?.root;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.trim().startsWith("```")) {
+      inCode = !inCode;
+      i += 1;
+      continue;
+    }
+    if (inCode) {
+      children.push(paragraphFromLine(line, { code: true }));
+      i += 1;
+      continue;
+    }
+
+    // GFM table block
+    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?[\s:-]+\|/.test(lines[i + 1])) {
+      const block: string[] = [];
+      while (i < lines.length && lines[i].includes("|")) {
+        block.push(lines[i]);
+        i += 1;
+      }
+      const rows = parseTableRows(block);
+      if (rows.length) children.push(tableFromMarkdown(rows));
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      const level = heading[1].length;
+      const title = plainText(heading[2].trim());
+      if (level === 1 && !sawTitle) {
+        children.push(headingParagraph(1, title, true));
+        sawTitle = true;
+      } else {
+        children.push(headingParagraph(level, title, false));
+      }
+      i += 1;
+      continue;
+    }
+
+    // Image-only line: ![alt](src)
+    const imageOnly = line.match(/^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (imageOnly) {
+      children.push(await paragraphFromImage(imageOnly[1], imageOnly[2], filePath, workspaceRoot));
+      i += 1;
+      continue;
+    }
+
+    // Inline image mixed with text — extract images as separate paragraphs after text
+    if (/!\[[^\]]*\]\([^)]+\)/.test(line)) {
+      const parts = line.split(/(!\[[^\]]*\]\([^)]+\))/g);
+      let textBuf = "";
+      for (const part of parts) {
+        const img = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+        if (img) {
+          if (textBuf.trim()) {
+            children.push(paragraphFromLine(textBuf.trim()));
+            textBuf = "";
+          }
+          children.push(await paragraphFromImage(img[1], img[2], filePath, workspaceRoot));
+        } else {
+          textBuf += part;
+        }
+      }
+      if (textBuf.trim()) children.push(paragraphFromLine(textBuf.trim()));
+      i += 1;
+      continue;
+    }
+
+    if (line.startsWith("> ")) {
+      children.push(paragraphFromLine(line.replace(/^>\s?/, ""), { quote: true }));
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const text = line.replace(/^\s*[-*+]\s+/, "");
+      children.push(
+        new Paragraph({
+          children: runsFromInline(text, { font: BODY_FONT, size: SIZE_BODY }),
+          indent: { left: 360 },
+          bullet: { level: 0 },
+        }),
+      );
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      children.push(
+        new Paragraph({
+          children: runsFromInline(line.replace(/^\s*\d+\.\s+/, ""), {
+            font: BODY_FONT,
+            size: SIZE_BODY,
+          }),
+          indent: { left: 360 },
+        }),
+      );
+      i += 1;
+      continue;
+    }
+
+    if (!line.trim()) {
+      children.push(new Paragraph({ text: "" }));
+      i += 1;
+      continue;
+    }
+
+    children.push(paragraphFromLine(line));
+    i += 1;
+  }
+
+  if (!children.length) {
+    children.push(
+      headingParagraph(1, project.name || "未命名技术方案", true),
+    );
+  }
+
+  return new Document({
+    styles: {
+      default: {
+        document: {
+          run: { font: BODY_FONT, size: SIZE_BODY, color: "000000" },
+          paragraph: { spacing: { line: 360 } },
+        },
+      },
+      paragraphStyles: [
+        {
+          id: "Title",
+          name: "Title",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H1, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 0, after: 200 }, alignment: AlignmentType.CENTER },
+        },
+        {
+          id: "Heading1",
+          name: "Heading 1",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H1, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 280, after: 140 } },
+        },
+        {
+          id: "Heading2",
+          name: "Heading 2",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H2, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 240, after: 120 } },
+        },
+        {
+          id: "Heading3",
+          name: "Heading 3",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H3, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 200, after: 100 } },
+        },
+        {
+          id: "Heading4",
+          name: "Heading 4",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H4, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 180, after: 100 } },
+        },
+        {
+          id: "Heading5",
+          name: "Heading 5",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H5, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 160, after: 80 } },
+        },
+        {
+          id: "Heading6",
+          name: "Heading 6",
+          basedOn: "Normal",
+          next: "Normal",
+          run: { font: HEADING_FONT, size: SIZE_H6, bold: true, color: "000000" },
+          paragraph: { spacing: { before: 140, after: 80 } },
+        },
+        {
+          id: "Code",
+          name: "Code",
+          basedOn: "Normal",
+          run: { font: CODE_FONT, size: SIZE_CODE },
+          paragraph: { shading: { fill: "F3F5F3" }, spacing: { before: 80, after: 80 } },
+        },
+      ],
+    },
+    sections: [
+      {
+        properties: {
+          page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } },
+        },
+        children,
+      },
+    ],
+  });
+}
+
+function safeFileName(name: string): string {
+  return (name || "技术方案").replace(/[<>:"/\\|?*]/g, "_");
+}
+
+/**
+ * Browser / WebView: Packer.toBuffer uses Node buffers and throws
+ * "nodebuffer is not supported by this platform". Prefer Blob/ArrayBuffer.
+ */
+export async function buildDocxBytes(project: Project): Promise<Uint8Array> {
+  const doc = await buildDocx(project);
+  try {
+    const ab = await Packer.toArrayBuffer(doc);
+    return new Uint8Array(ab);
+  } catch {
+    /* fall through */
+  }
+  try {
+    const blob = await Packer.toBlob(doc);
+    const ab = await blob.arrayBuffer();
+    return new Uint8Array(ab);
+  } catch {
+    /* fall through */
+  }
+  // Node / vitest only
+  const buf = await Packer.toBuffer(doc);
+  return buf instanceof Uint8Array ? buf : new Uint8Array(buf as ArrayBuffer);
+}
+
+export async function downloadDocx(project: Project): Promise<string | void> {
+  const fileName = `${safeFileName(project.name)}.docx`;
+  const bytes = await buildDocxBytes(project);
+
+  if (isDesktop()) {
+    try {
+      const path = await invoke<string | null>("save_binary_file", {
+        defaultName: fileName,
+        bytes: Array.from(bytes),
+        filters: [["Word 文档", ["docx"]]],
+        title: "导出 Word",
+      });
+      if (path) return path;
+      return;
+    } catch {
+      const path = await invoke<string>("save_docx_export", {
+        projectName: project.name,
+        bytes: Array.from(bytes),
+      });
+      return path;
+    }
+  }
+
+  const blob = new Blob([bytes], {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(anchor.href);
 }

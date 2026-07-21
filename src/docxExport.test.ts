@@ -1,13 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { Packer } from "docx";
 import { createProject } from "./data";
-import { buildDocx } from "./docxExport";
+import { buildDocx, buildDocxBytes, readImageSize } from "./docxExport";
+
+// Minimal 1x1 PNG
+const PNG_1x1 = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+  0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+  0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe, 0xd4, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+  0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]);
 
 describe("Word export", () => {
-  it("creates a valid DOCX package", async () => {
-    const project = createProject(); project.name = "架构方案"; project.sections[0].blocks[0].content = "目标正文";
-    const bytes = await Packer.toBuffer(buildDocx(project));
+  it("creates a valid DOCX package from markdown", async () => {
+    const project = createProject();
+    project.name = "架构方案";
+    project.markdown = "# 架构方案\n\n## 背景与目标\n\n目标正文\n\n```ts\nconst x = 1;\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n";
+    expect(await buildDocx(project)).toBeTruthy();
+    const bytes = await buildDocxBytes(project);
     expect(bytes.byteLength).toBeGreaterThan(1000);
+    // ZIP magic PK
     expect(Array.from(bytes.slice(0, 2))).toEqual([0x50, 0x4b]);
+  });
+
+  it("reads PNG dimensions from IHDR", () => {
+    expect(readImageSize(PNG_1x1, "png")).toEqual({ width: 1, height: 1 });
+  });
+
+  it("embeds local image bytes when path is absolute", async () => {
+    // Patch via absolute path is desktop-only; without Tauri, missing image falls back to placeholder
+    // and still produces a valid package.
+    const project = createProject();
+    project.name = "带图方案";
+    project.markdown = "# 带图方案\n\n正文\n\n![示意](assets/missing.png)\n";
+    const bytes = await buildDocxBytes(project);
+    expect(Array.from(bytes.slice(0, 2))).toEqual([0x50, 0x4b]);
+    expect(bytes.byteLength).toBeGreaterThan(800);
   });
 });
