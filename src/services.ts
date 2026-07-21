@@ -20,14 +20,28 @@ export async function searchWeb(query: string, config: SearchConfig): Promise<Se
   if (!config.endpoint) throw new Error("请先配置搜索服务地址");
   if (inTauri()) return invoke("search_web", { query, config });
   if (config.provider === "searxng") {
-    const r = await fetch(`${config.endpoint.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json&language=zh-CN`, {
+    const engines = config.engines?.length ? config.engines : ["baidu", "360search", "bing"];
+    const params = new URLSearchParams({ q: query, format: "json", language: "zh-CN", engines: engines.join(",") });
+    const r = await fetch(`${config.endpoint.replace(/\/$/, "")}/search?${params}`, {
       headers: { "Accept": "application/json" },
     });
     if (!r.ok) throw new Error(`搜索服务返回 ${r.status}${r.status === 0 ? "（CORS 受限或无法连接）" : ""}`);
-    const j = await r.json(); return (j.results ?? []).slice(0, 12).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.content ?? "" }));
+    const j = await r.json();
+    if (!(j.results ?? []).length && j.unresponsive_engines?.length) {
+      throw new Error(`上游搜索失败：${j.unresponsive_engines.map((item: unknown[]) => `${item[0]}（${item[1]}）`).join("、")}`);
+    }
+    return (j.results ?? []).slice(0, 12).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.content ?? "" }));
   }
   const r = await fetch(`${config.endpoint || "https://api.search.brave.com/res/v1/web/search"}?q=${encodeURIComponent(query)}`, { headers: { "X-Subscription-Token": config.apiKey } });
   const j = await r.json(); return (j.web?.results ?? []).slice(0, 8).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.description ?? "" }));
+}
+export async function openExternalUrl(url: string): Promise<void> {
+  if (!/^https?:\/\//i.test(url.trim())) throw new Error("仅允许打开 http/https 来源链接");
+  if (inTauri()) {
+    await invoke("open_external_url", { url: url.trim() });
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 export async function saveMarkdown(project: Project, markdown: string) { if (inTauri()) return invoke("save_markdown", { projectName: project.name, markdown }); const blob = new Blob([markdown], { type: "text/markdown" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${project.name}.md`; a.click(); URL.revokeObjectURL(a.href); }
 export async function runCommand(preset: CommandPreset): Promise<CommandResult> {

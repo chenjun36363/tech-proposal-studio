@@ -36,6 +36,9 @@ function normalizeSearch(raw: Partial<SearchConfig> | undefined): SearchConfig {
     provider,
     endpoint: typeof raw?.endpoint === "string" ? raw.endpoint : d.endpoint,
     apiKey: typeof raw?.apiKey === "string" ? raw.apiKey : "",
+    engines: Array.isArray(raw?.engines) && raw.engines.length
+      ? raw.engines.filter(engine => typeof engine === "string" && engine.trim()).map(engine => engine.trim())
+      : [...(d.engines ?? ["baidu", "360search", "bing"])],
   };
 }
 

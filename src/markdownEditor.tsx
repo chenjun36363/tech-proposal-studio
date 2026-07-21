@@ -65,16 +65,27 @@ export function MarkdownPreview({
   markdown,
   filePath,
   workspaceRoot,
+  onLinkClick,
 }: {
   markdown: string;
   filePath?: string;
   workspaceRoot?: string;
+  onLinkClick?: (href: string) => void;
 }) {
   const html = useMemo(() => {
     const raw = marked.parse(markdown || "") as string;
     return rewriteLocalImages(raw, filePath, workspaceRoot);
   }, [markdown, filePath, workspaceRoot]);
-  return <div className="md-preview" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div
+    className="md-preview"
+    onClick={e => {
+      const anchor = (e.target as HTMLElement).closest("a");
+      if (!anchor || !onLinkClick) return;
+      e.preventDefault();
+      onLinkClick(anchor.href);
+    }}
+    dangerouslySetInnerHTML={{ __html: html }}
+  />;
 }
 
 export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {

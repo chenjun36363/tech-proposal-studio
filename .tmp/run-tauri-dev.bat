@@ -6,6 +6,6 @@ if errorlevel 1 (
 )
 where cl
 where link
-cd /d E:\opencode\tech-proposal-studio
+cd /d D:\nas\myproject\tech-proposal-studio
 set PATH=%USERPROFILE%\.cargo\bin;%PATH%
 pnpm tauri dev

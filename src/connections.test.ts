@@ -29,6 +29,7 @@ describe("workspace connections", () => {
     expect(conn.model.enabled).toBe(true);
     expect(conn.search.provider).toBe("brave");
     expect(conn.search.apiKey).toBe("k2");
+    expect(conn.search.engines).toEqual(["baidu", "360search", "bing"]);
   });
 
   it("applies connections onto a project", () => {
@@ -40,6 +41,7 @@ describe("workspace connections", () => {
     expect(next.model.baseUrl).toBe("http://127.0.0.1:8080/v1");
     expect(next.model.apiKey).toBe("mk");
     expect(next.search.endpoint).toBe("http://searx.local");
+    expect(next.search.engines).toEqual(["baidu", "360search", "bing"]);
   });
 
   it("round-trips browser connections including keys", async () => {
@@ -52,5 +54,6 @@ describe("workspace connections", () => {
     expect(loaded?.model.apiKey).toBe("browser-model-key");
     expect(loaded?.search.apiKey).toBe("browser-search-key");
     expect(loaded?.search.endpoint).toBe("http://searx");
+    expect(loaded?.search.engines).toEqual(["baidu", "360search", "bing"]);
   });
 });

@@ -18,6 +18,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
+mod knowledge;
+
 const CREDENTIAL_SERVICE: &str = "com.techproposal.studio";
 const LEGACY_CREDENTIAL_SERVICE: &str = "cn.gouan.writer";
 
@@ -49,11 +51,13 @@ impl Default for TerminalState {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ModelConfig {
-    base_url: String,
-    api_key: String,
-    timeout_ms: u64,
-    headers: HashMap<String, String>,
+pub(crate) struct ModelConfig {
+    pub(crate) base_url: String,
+    pub(crate) api_key: String,
+    #[serde(default)]
+    pub(crate) model: String,
+    pub(crate) timeout_ms: u64,
+    pub(crate) headers: HashMap<String, String>,
 }
 #[derive(Deserialize)]
 struct SearchConfig {
@@ -61,6 +65,12 @@ struct SearchConfig {
     endpoint: String,
     #[serde(rename = "apiKey")]
     api_key: String,
+    #[serde(default = "default_search_engines")]
+    engines: Vec<String>,
+}
+
+fn default_search_engines() -> Vec<String> {
+    vec!["baidu".into(), "360search".into(), "bing".into()]
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -443,12 +453,18 @@ fn store_secret(name: String, value: String) -> Result<(), String> {
 async fn search_web(query: String, config: SearchConfig) -> Result<Vec<SearchResult>, String> {
     let client = reqwest::Client::new();
     let response = if config.provider == "searxng" {
+        let engines = if config.engines.is_empty() {
+            default_search_engines()
+        } else {
+            config.engines.clone()
+        };
         client
             .get(format!(
                 "{}/search",
                 config.endpoint.trim_end_matches('/')
             ))
             .query(&[("q", query.as_str()), ("format", "json")])
+            .query(&[("engines", engines.join(","))])
             .send()
             .await
     } else {
@@ -465,6 +481,27 @@ async fn search_web(query: String, config: SearchConfig) -> Result<Vec<SearchRes
     }
     .map_err(|e| e.to_string())?;
     let json: Value = response.json().await.map_err(|e| e.to_string())?;
+    if config.provider == "searxng"
+        && json.get("results").and_then(Value::as_array).is_some_and(Vec::is_empty)
+    {
+        if let Some(failures) = json.get("unresponsive_engines").and_then(Value::as_array) {
+            if !failures.is_empty() {
+                let detail = failures
+                    .iter()
+                    .filter_map(|item| item.as_array())
+                    .map(|item| {
+                        format!(
+                            "{}（{}）",
+                            item.first().and_then(Value::as_str).unwrap_or("未知引擎"),
+                            item.get(1).and_then(Value::as_str).unwrap_or("失败")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("、");
+                return Err(format!("上游搜索失败：{detail}"));
+            }
+        }
+    }
     let items = if config.provider == "searxng" {
         json.get("results")
     } else {
@@ -637,7 +674,7 @@ fn ensure_workspace(paths: WorkspacePaths) -> Result<WorkspacePaths, String> {
     if !readme.exists() {
         let _ = fs::write(
             readme,
-            "# 历史资料\n\n把参考用 Markdown 放到此目录（可含子目录），会自动加载到「资料」侧栏。\n\n当前正在编辑的方案 Markdown 放在工作目录根下，通过「打开 / 保存」操作。\n",
+            "# 知识库原文\n\n把参考用 Markdown 放到此目录（可含子目录），可在「知识库」侧栏扫描并建立章节索引。\n\n当前正在编辑的方案 Markdown 放在工作目录根下，通过「打开 / 保存」操作。\n",
         );
     }
     Ok(WorkspacePaths {
@@ -729,6 +766,18 @@ fn list_workspace_markdown(root: String) -> Result<Vec<LibraryFile>, String> {
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("读取失败: {e}"))
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let normalized = url.trim();
+    let lowercase = normalized.to_ascii_lowercase();
+    if normalized.chars().any(char::is_control)
+        || !(lowercase.starts_with("https://") || lowercase.starts_with("http://"))
+    {
+        return Err("仅允许打开 http/https 来源链接".into());
+    }
+    open::that(normalized).map_err(|e| format!("无法打开来源链接: {e}"))
 }
 
 #[tauri::command]
@@ -1214,11 +1263,28 @@ pub fn run() {
             save_project_file,
             load_project_file,
             read_text_file,
+            open_external_url,
             read_binary_file,
             write_text_file,
             rename_file,
             write_library_markdown,
             save_image_to_workspace
+            ,knowledge::knowledge_scan
+            ,knowledge::knowledge_import_markdown
+            ,knowledge::knowledge_index_pending
+            ,knowledge::knowledge_list
+            ,knowledge::knowledge_sections
+            ,knowledge::knowledge_search
+            ,knowledge::knowledge_chunk
+            ,knowledge::knowledge_section_chunks
+            ,knowledge::knowledge_remove
+            ,knowledge::knowledge_delete_file
+            ,knowledge::knowledge_retry_enrichment
+            ,knowledge::knowledge_import_web
+            ,knowledge::knowledge_analyze_markdown
+            ,knowledge::knowledge_apply_headings
+            ,knowledge::knowledge_backups
+            ,knowledge::knowledge_restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("failed to run application");

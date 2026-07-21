@@ -7,6 +7,7 @@ export interface AgentTool {
   id: AgentToolId;
   name: string;
   program: string;
+  installPackage: string;
   description: string;
   timeoutMs: number;
   buildArgs: (prompt: string) => string[];
@@ -17,6 +18,7 @@ export const agentTools: AgentTool[] = [
     id: "claude",
     name: "Claude Code",
     program: "claude",
+    installPackage: "@anthropic-ai/claude-code",
     description: "非交互 -p 输出，适合润色当前块",
     timeoutMs: 300_000,
     buildArgs: (prompt) => ["-p", prompt, "--output-format", "text"],
@@ -25,6 +27,7 @@ export const agentTools: AgentTool[] = [
     id: "codex",
     name: "Codex",
     program: "codex",
+    installPackage: "@openai/codex",
     description: "codex exec 非交互执行",
     timeoutMs: 300_000,
     buildArgs: (prompt) => ["exec", "--skip-git-repo-check", prompt],
@@ -33,6 +36,7 @@ export const agentTools: AgentTool[] = [
     id: "opencode",
     name: "OpenCode",
     program: "opencode",
+    installPackage: "opencode-ai",
     description: "opencode run 非交互执行",
     timeoutMs: 300_000,
     buildArgs: (prompt) => ["run", prompt],
@@ -57,14 +61,32 @@ export function defaultAgentPrompt(project: Project, block: DocumentBlock): stri
   ].join("\n");
 }
 
-export function buildAgentCommand(tool: AgentTool, prompt: string): CommandPreset {
+export function buildAgentCommand(tool: AgentTool, prompt: string, cwd = "."): CommandPreset {
   return {
     id: makeId(),
     name: tool.name,
     program: tool.program,
     args: tool.buildArgs(prompt),
-    cwd: ".",
+    cwd,
     timeoutMs: tool.timeoutMs,
+    allowShell: false,
+  };
+}
+
+export function withAgentContext(prompt: string, context: string[], enabled: boolean): string {
+  const task = prompt.trim();
+  if (!enabled || !context.length) return task;
+  return `${task}\n\n参考上下文：\n${context.join("\n---\n")}`;
+}
+
+export function buildAgentInstallCommand(tool: AgentTool): CommandPreset {
+  return {
+    id: makeId(),
+    name: `安装 ${tool.name}`,
+    program: "npm",
+    args: ["install", "--global", `${tool.installPackage}@latest`, "--no-fund", "--no-audit"],
+    cwd: ".",
+    timeoutMs: 300_000,
     allowShell: false,
   };
 }

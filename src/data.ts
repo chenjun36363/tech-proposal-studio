@@ -10,7 +10,7 @@ export function createProject(): Project {
   return {
     id: makeId(), name, updatedAt: new Date().toISOString(), markdown: defaultProposalMarkdown(name), sections, sources: [],
     model: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4.1-mini", timeoutMs: 60000, headers: {}, enabled: true },
-    search: { provider: "searxng", endpoint: "", apiKey: "" },
+    search: { provider: "searxng", endpoint: "", apiKey: "", engines: ["baidu", "360search", "bing"] },
     workspace: { root: "", historyDir: "" },
     commands: [
       { id: makeId(), name: "检查 Node 版本", program: "node", args: ["--version"], cwd: ".", timeoutMs: 15000, allowShell: false },

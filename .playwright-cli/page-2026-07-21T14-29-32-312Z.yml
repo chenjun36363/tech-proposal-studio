@@ -1,0 +1,181 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: 构案
+    - generic [ref=e10]:
+      - textbox [ref=e11]: 未命名技术方案
+      - generic [ref=e12]: 未关联文件 · 自动缓存 2026/7/21
+    - generic [ref=e13]:
+      - button "撤销 (Ctrl+Z)" [ref=e14] [cursor=pointer]
+      - button "重做 (Ctrl+Y / Ctrl+Shift+Z)" [ref=e18] [cursor=pointer]
+      - button "新建" [ref=e23] [cursor=pointer]
+      - button "打开" [ref=e27] [cursor=pointer]
+      - button "重新加载" [disabled] [ref=e30] [cursor=pointer]
+      - button "保存" [ref=e36] [cursor=pointer]
+      - button "重命名" [disabled] [ref=e41] [cursor=pointer]
+      - button "导出" [ref=e46] [cursor=pointer]
+      - button "终端" [ref=e52] [cursor=pointer]
+      - button "收起右侧面板" [ref=e56] [cursor=pointer]
+      - button "设置" [ref=e60] [cursor=pointer]
+      - button "更多" [ref=e64] [cursor=pointer]
+  - generic [ref=e69]:
+    - complementary [ref=e70]:
+      - generic [ref=e71]:
+        - generic [ref=e72]: 目录
+        - generic [ref=e73]:
+          - button "新建 Markdown 文件" [ref=e74] [cursor=pointer]
+          - button "打开工作区 Markdown" [ref=e78] [cursor=pointer]
+          - button "未关联磁盘文件" [ref=e81] [cursor=pointer]
+      - generic [ref=e87]:
+        - button "按章节" [ref=e88] [cursor=pointer]
+        - button "全文" [ref=e89] [cursor=pointer]
+      - generic [ref=e90]:
+        - generic [ref=e91]:
+          - generic [ref=e92]: 展开到
+          - generic [ref=e93]:
+            - button "2级" [ref=e94] [cursor=pointer]
+            - button "3级" [ref=e95] [cursor=pointer]
+            - button "4级" [ref=e96] [cursor=pointer]
+            - button "全部" [ref=e97] [cursor=pointer]
+        - generic [ref=e98]:
+          - generic [ref=e99]: 收起到
+          - generic [ref=e100]:
+            - button "2级" [ref=e101] [cursor=pointer]
+            - button "3级" [ref=e102] [cursor=pointer]
+            - button "4级" [ref=e103] [cursor=pointer]
+            - button "全部" [ref=e104] [cursor=pointer]
+      - navigation [ref=e105]:
+        - button "H1 未命名技术方案" [ref=e106] [cursor=pointer]:
+          - generic [ref=e110]: H1
+          - generic [ref=e111]: 未命名技术方案
+        - button "H2 背景与目标" [ref=e112] [cursor=pointer]:
+          - generic [ref=e113]: H2
+          - generic [ref=e114]: 背景与目标
+        - button "H2 范围与约束" [ref=e115] [cursor=pointer]:
+          - generic [ref=e116]: H2
+          - generic [ref=e117]: 范围与约束
+        - button "H2 总体架构" [ref=e118] [cursor=pointer]:
+          - generic [ref=e119]: H2
+          - generic [ref=e120]: 总体架构
+        - button "H2 详细设计" [ref=e121] [cursor=pointer]:
+          - generic [ref=e122]: H2
+          - generic [ref=e123]: 详细设计
+        - button "H2 接口与数据" [ref=e124] [cursor=pointer]:
+          - generic [ref=e125]: H2
+          - generic [ref=e126]: 接口与数据
+        - button "H2 安全设计" [ref=e127] [cursor=pointer]:
+          - generic [ref=e128]: H2
+          - generic [ref=e129]: 安全设计
+        - button "H2 部署与迁移" [ref=e130] [cursor=pointer]:
+          - generic [ref=e131]: H2
+          - generic [ref=e132]: 部署与迁移
+        - button "H2 风险与应对" [ref=e133] [cursor=pointer]:
+          - generic [ref=e134]: H2
+          - generic [ref=e135]: 风险与应对
+        - button "H2 测试与验收" [ref=e136] [cursor=pointer]:
+          - generic [ref=e137]: H2
+          - generic [ref=e138]: 测试与验收
+    - generic "拖动调整左侧面板宽度" [ref=e139]
+    - main [ref=e140]:
+      - generic [ref=e141]:
+        - generic [ref=e142]:
+          - generic [ref=e143]: H1
+          - textbox [ref=e144]: 未命名技术方案
+        - generic [ref=e145]:
+          - button "源码" [ref=e146] [cursor=pointer]
+          - button "分栏" [ref=e147] [cursor=pointer]
+          - button "预览" [ref=e148] [cursor=pointer]
+      - generic "选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）" [ref=e149]:
+        - generic [ref=e150]: 设置标题
+        - button "H1" [ref=e151] [cursor=pointer]
+        - button "H2" [ref=e152] [cursor=pointer]
+        - button "H3" [ref=e153] [cursor=pointer]
+        - button "H4" [ref=e154] [cursor=pointer]
+        - button "H5" [ref=e155] [cursor=pointer]
+        - button "H6" [ref=e156] [cursor=pointer]
+        - button "重编号" [ref=e157] [cursor=pointer]
+        - button "加粗 (Ctrl+B)" [ref=e159] [cursor=pointer]
+        - button "斜体 (Ctrl+I)" [ref=e162] [cursor=pointer]
+        - button "删除线" [ref=e165] [cursor=pointer]
+        - button "行内代码" [ref=e169] [cursor=pointer]
+        - button "标黄高亮" [ref=e174] [cursor=pointer]
+        - button "查找" [ref=e178] [cursor=pointer]
+        - button "替换" [ref=e182] [cursor=pointer]
+      - generic [ref=e191]:
+        - textbox "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片" [ref=e193]: "# 未命名技术方案 ## 背景与目标 在此编写本章内容… ## 范围与约束 在此编写本章内容… ## 总体架构 在此编写本章内容… ## 详细设计 在此编写本章内容… ## 接口与数据 在此编写本章内容… ## 安全设计 在此编写本章内容… ## 部署与迁移 在此编写本章内容… ## 风险与应对 在此编写本章内容… ## 测试与验收 在此编写本章内容…"
+        - generic [ref=e195]:
+          - heading "未命名技术方案" [level=1] [ref=e255]
+          - heading "背景与目标" [level=2] [ref=e256]
+          - paragraph [ref=e257]: 在此编写本章内容…
+          - heading "范围与约束" [level=2] [ref=e258]
+          - paragraph [ref=e259]: 在此编写本章内容…
+          - heading "总体架构" [level=2] [ref=e260]
+          - paragraph [ref=e261]: 在此编写本章内容…
+          - heading "详细设计" [level=2] [ref=e262]
+          - paragraph [ref=e263]: 在此编写本章内容…
+          - heading "接口与数据" [level=2] [ref=e264]
+          - paragraph [ref=e265]: 在此编写本章内容…
+          - heading "安全设计" [level=2] [ref=e266]
+          - paragraph [ref=e267]: 在此编写本章内容…
+          - heading "部署与迁移" [level=2] [ref=e268]
+          - paragraph [ref=e269]: 在此编写本章内容…
+          - heading "风险与应对" [level=2] [ref=e270]
+          - paragraph [ref=e271]: 在此编写本章内容…
+          - heading "测试与验收" [level=2] [ref=e272]
+          - paragraph [ref=e273]: 在此编写本章内容…
+    - generic "拖动调整右侧面板宽度" [ref=e215]
+    - complementary [ref=e216]:
+      - generic [ref=e217]:
+        - generic [ref=e218]:
+          - button "AI" [ref=e219] [cursor=pointer]
+          - button "CLI" [ref=e222] [cursor=pointer]
+          - button "资料" [ref=e226] [cursor=pointer]
+          - button "联网" [ref=e229] [cursor=pointer]
+          - button "环境检查" [active] [ref=e233] [cursor=pointer]
+        - button "关闭侧栏" [ref=e236] [cursor=pointer]
+      - generic [ref=e274]:
+        - generic [ref=e275]: Agent CLI
+        - generic [ref=e279]:
+          - generic [ref=e280]:
+            - generic [ref=e281]:
+              - generic [ref=e283]: Claude Code
+              - emphasis [ref=e284]: 未检测
+            - code [ref=e285]: npm i -g @anthropic-ai/claude-code
+            - button "一键安装" [ref=e286] [cursor=pointer]
+          - generic [ref=e287]:
+            - generic [ref=e288]:
+              - generic [ref=e290]: Codex
+              - emphasis [ref=e291]: 未检测
+            - code [ref=e292]: npm i -g @openai/codex
+            - button "一键安装" [ref=e293] [cursor=pointer]
+          - generic [ref=e294]:
+            - generic [ref=e295]:
+              - generic [ref=e297]: OpenCode
+              - emphasis [ref=e298]: 未检测
+            - code [ref=e299]: npm i -g opencode-ai
+            - button "一键安装" [ref=e300] [cursor=pointer]
+        - generic [ref=e301]: 环境命令
+        - generic [ref=e304]:
+          - generic [ref=e307]:
+            - generic [ref=e308]: 检查 Node 版本 · 未检测
+            - code [ref=e309]: node --version
+          - button "运行" [ref=e310] [cursor=pointer]
+        - generic [ref=e311]:
+          - generic [ref=e314]:
+            - generic [ref=e315]: 检查 Claude CLI · 未检测
+            - code [ref=e316]: claude --version
+          - button "运行" [ref=e317] [cursor=pointer]
+        - generic [ref=e318]:
+          - generic [ref=e321]:
+            - generic [ref=e322]: 检查 Codex CLI · 未检测
+            - code [ref=e323]: codex --version
+          - button "运行" [ref=e324] [cursor=pointer]
+        - generic [ref=e325]:
+          - generic [ref=e328]:
+            - generic [ref=e329]: 检查 OpenCode CLI · 未检测
+            - code [ref=e330]: opencode --version
+          - button "运行" [ref=e331] [cursor=pointer]
+      - generic:
+        - generic:
+          - generic: CLI · PowerShell
+          - emphasis: .
+        - paragraph: 内置 PowerShell 终端仅在 Tauri 桌面端可用。

@@ -86,6 +86,33 @@ export async function writeTextFile(path: string, content: string): Promise<stri
   return invoke<string>("write_text_file", { path, content });
 }
 
+export function uniqueImportedMarkdownName(sourceName: string, existingNames: string[]): string {
+  const normalized = sourceName.replace(/\.markdown$/i, ".md").replace(/[<>:"/\\|?*]/g, "_");
+  const safeName = /\.md$/i.test(normalized) ? normalized : `${normalized || "导入文档"}.md`;
+  const stem = safeName.replace(/\.md$/i, "");
+  const used = new Set(existingNames.map(name => name.toLocaleLowerCase()));
+  if (!used.has(safeName.toLocaleLowerCase())) return safeName;
+  for (let index = 1; ; index += 1) {
+    const candidate = `${stem} (${index}).md`;
+    if (!used.has(candidate.toLocaleLowerCase())) return candidate;
+  }
+}
+
+export async function importMarkdownToWorkspace(sourcePath: string, root: string): Promise<string> {
+  if (!isDesktop()) throw new Error("导入 Markdown 仅在桌面端可用");
+  if (!root.trim()) throw new Error("请先在设置中配置工作目录");
+  const files = await listWorkspaceMarkdown(root);
+  const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/\/$/, "").toLocaleLowerCase();
+  const existingSource = files.find(file => normalizePath(file.path) === normalizePath(sourcePath));
+  if (existingSource) return existingSource.path;
+  const content = await readTextFile(sourcePath);
+  const sourceName = sourcePath.split(/[\\/]/).pop() || "导入文档.md";
+  const fileName = uniqueImportedMarkdownName(sourceName, files.map(file => file.path.split(/[\\/]/).pop() || file.title));
+  const separator = root.includes("\\") ? "\\" : "/";
+  const destination = `${root.replace(/[\\/]+$/, "")}${separator}${fileName}`;
+  return writeTextFile(destination, content);
+}
+
 export async function writeLibraryMarkdown(historyDir: string, title: string, content: string): Promise<LibraryFile> {
   if (!isDesktop()) throw new Error("请在桌面端导入到历史资料目录");
   return invoke<LibraryFile>("write_library_markdown", { historyDir, title, content });

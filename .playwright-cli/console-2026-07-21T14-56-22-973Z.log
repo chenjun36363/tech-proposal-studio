@@ -1,0 +1,18 @@
+[     223ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:20102
+[     567ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:1420/favicon.ico:0
+[  228953ms] ReferenceError: openCliTaskPanel is not defined
+    at App (http://localhost:1420/src/App.tsx?t=1784646011624:1076:120)
+    at Object.react_stack_bottom_frame (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:18509:20)
+    at renderWithHooks (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:5654:24)
+    at updateFunctionComponent (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:7475:21)
+    at beginWork (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:8525:20)
+    at runWithFiberInDEV (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:997:72)
+    at performUnitOfWork (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:12561:98)
+    at workLoopSync (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:12424:43)
+    at renderRootSync (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:12408:13)
+    at performWorkOnRoot (http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:11827:37)
+[  228953ms] [WARNING] %s
+
+%s
+ An error occurred in the <App> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=f00474bc:6965
