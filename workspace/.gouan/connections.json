@@ -10,7 +10,7 @@
   "search": {
     "provider": "searxng",
     "endpoint": "https://searxng.newxuu.top:1888",
-    "apiKey": "",
+    "apiKey": "EDUP6KUf0idQdrbgqkMFvBW7DFwfx",
     "engines": [
       "baidu",
       "360search",

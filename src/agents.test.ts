@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentTools, buildAgentCommand, buildAgentInstallCommand, withAgentContext } from "./agents";
+import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext } from "./agents";
+import { createProject } from "./data";
 
 describe("agent install commands", () => {
   it.each([
@@ -18,14 +19,39 @@ describe("agent install commands", () => {
     const codex = agentTools.find(item => item.id === "codex")!;
     const command = buildAgentCommand(codex, "检查并修复测试", "D:\\workspace");
     expect(command.program).toBe("codex");
-    expect(command.args).toEqual(["exec", "--skip-git-repo-check", "检查并修复测试"]);
+    expect(command.args).toEqual(["exec", "--skip-git-repo-check", "-"]);
+    expect(command.stdin).toBe("检查并修复测试");
     expect(command.cwd).toBe("D:\\workspace");
     expect(command.allowShell).toBe(false);
+  });
+
+  it.each(["claude", "codex"])("passes multiline prompts to %s through stdin", id => {
+    const tool = agentTools.find(item => item.id === id)!;
+    const prompt = "任务：完善章节\n\n当前章节内容：\n正文";
+    const command = buildAgentCommand(tool, prompt);
+    expect(command.stdin).toBe(prompt);
+    expect(command.args).not.toContain(prompt);
+  });
+
+  it("uses DeepSeek V4 Flash Free for OpenCode tasks", () => {
+    const opencode = agentTools.find(item => item.id === "opencode")!;
+    const command = buildAgentCommand(opencode, "执行任务");
+    expect(command.args).toEqual(["run", "--model", "opencode/deepseek-v4-flash-free", "执行任务"]);
+    expect(command.stdin).toBeUndefined();
   });
 
   it("appends selected context only when enabled", () => {
     expect(withAgentContext("执行任务", ["资料 A: 摘要", "资料 B: 摘要"], true)).toContain("资料 A: 摘要\n---\n资料 B: 摘要");
     expect(withAgentContext("执行任务", ["资料 A: 摘要"], false)).toBe("执行任务");
     expect(withAgentContext("执行任务", [], true)).toBe("执行任务");
+  });
+
+  it("uses the current Markdown heading to make the task explicit", () => {
+    const project = createProject();
+    const block = { ...project.sections[0].blocks[0], sectionId: "markdown", content: "## 4.2 部署方案\n\n现有内容" };
+    const prompt = defaultAgentPrompt(project, block);
+    expect(prompt).toContain("任务：请结合上下文参考内容，帮我优化当前章节。");
+    expect(prompt).toContain("章节：4.2 部署方案");
+    expect(prompt).toContain("只返回可直接替换当前章节的完整 Markdown 内容");
   });
 });

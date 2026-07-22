@@ -252,6 +252,18 @@ fn resolve_executable(program: &str) -> Result<PathBuf, String> {
         return Ok(direct);
     }
 
+    // OpenCode's `run` command requires a positional message and does not consume
+    // plain stdin as that message. Prefer its native binary so multiline prompts
+    // bypass cmd.exe parsing when passed as an argument.
+    if program.eq_ignore_ascii_case("opencode") {
+        for dir in tool_search_dirs() {
+            let candidate = dir.join("node_modules").join("opencode-ai").join("bin").join("opencode.exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+
     // Prefer real Windows launchers first to avoid npm's extensionless bash shims (os error 193).
     let mut names = Vec::new();
     if program.contains('.') {
@@ -390,6 +402,32 @@ fn resolve_shell() -> Result<(PathBuf, Vec<String>), String> {
         ));
     }
     Err("未找到 PowerShell（pwsh / powershell）".into())
+}
+
+#[tauri::command]
+fn open_workspace_powershell(cwd: String) -> Result<(), String> {
+    let workdir = resolve_workdir(&cwd)?;
+    let (shell, args) = resolve_shell()?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        std::process::Command::new(shell)
+            .args(args)
+            .current_dir(workdir)
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()
+            .map_err(|e| format!("打开 PowerShell 失败: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (shell, args, workdir);
+        Err("独立 PowerShell 窗口目前仅支持 Windows".into())
+    }
 }
 
 #[tauri::command]
@@ -1253,6 +1291,7 @@ pub fn run() {
             terminal_write,
             terminal_resize,
             terminal_close,
+            open_workspace_powershell,
             default_workspace_root,
             ensure_workspace,
             pick_directory,
@@ -1275,12 +1314,13 @@ pub fn run() {
             ,knowledge::knowledge_list
             ,knowledge::knowledge_sections
             ,knowledge::knowledge_search
+            ,knowledge::knowledge_section_scope
             ,knowledge::knowledge_chunk
             ,knowledge::knowledge_set_chunk_quality
+            ,knowledge::knowledge_set_section_quality
             ,knowledge::knowledge_section_chunks
             ,knowledge::knowledge_remove
             ,knowledge::knowledge_delete_file
-            ,knowledge::knowledge_retry_enrichment
             ,knowledge::knowledge_import_web
             ,knowledge::knowledge_analyze_markdown
             ,knowledge::knowledge_apply_headings

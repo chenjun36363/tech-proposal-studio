@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isDesktop } from "./services";
@@ -102,6 +102,13 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   placeholder,
 }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    if (!composingRef.current) setDraft(value);
+  }, [value]);
 
   useImperativeHandle(ref, () => ({
     getSelection: () => {
@@ -129,22 +136,18 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     },
   }), []);
 
-  useEffect(() => {
-    const el = taRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.max(280, el.scrollHeight)}px`;
-  }, [value]);
-
   const insertAtCursor = (snippet: string) => {
     const el = taRef.current;
     if (!el) {
-      onChange(value + snippet);
+      const next = draft + snippet;
+      setDraft(next);
+      onChange(next);
       return;
     }
-    const start = el.selectionStart ?? value.length;
-    const end = el.selectionEnd ?? value.length;
-    const next = value.slice(0, start) + snippet + value.slice(end);
+    const start = el.selectionStart ?? draft.length;
+    const end = el.selectionEnd ?? draft.length;
+    const next = draft.slice(0, start) + snippet + draft.slice(end);
+    setDraft(next);
     onChange(next);
     requestAnimationFrame(() => {
       el.focus();
@@ -171,15 +174,44 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     }
   };
 
+  const syncHighlightScroll = () => {
+    const textarea = taRef.current;
+    const highlight = highlightRef.current;
+    if (!textarea || !highlight) return;
+    highlight.scrollTop = textarea.scrollTop;
+    highlight.scrollLeft = textarea.scrollLeft;
+  };
+
   return (
-    <textarea
-      ref={taRef}
-      className="md-source"
-      value={value}
-      placeholder={placeholder ?? "在此编辑 Markdown…"}
-      spellCheck={false}
-      onChange={(e) => onChange(e.target.value)}
-      onPaste={(e) => void handlePaste(e)}
-    />
+    <div className="md-source-editor">
+      <div ref={highlightRef} className="md-source-highlight" aria-hidden="true">
+        {draft.split("\n").map((line, index) => {
+          const heading = /^(#{1,6})(?:[ \t]+|$)/.exec(line);
+          return <div className={heading ? `md-source-heading heading-${heading[1].length}` : undefined} key={index}>{line || " "}</div>;
+        })}
+      </div>
+      <textarea
+        ref={taRef}
+        className="md-source"
+        value={draft}
+        placeholder={placeholder ?? "在此编辑 Markdown…"}
+        spellCheck={false}
+        wrap="soft"
+        onScroll={syncHighlightScroll}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          if (!composingRef.current) onChange(next);
+        }}
+        onCompositionStart={() => { composingRef.current = true; }}
+        onCompositionEnd={(e) => {
+          composingRef.current = false;
+          const next = e.currentTarget.value;
+          setDraft(next);
+          onChange(next);
+        }}
+        onPaste={(e) => void handlePaste(e)}
+      />
+    </div>
   );
 });

@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   applyHeadingLevel,
   formatHeadingPrefix,
+  moveSection,
+  parseMarkdownHeadings,
   renumberHeadings,
+  replaceSection,
+  sectionBody,
   stripHeadingPrefix,
 } from "./markdownDoc";
 
@@ -45,5 +49,67 @@ describe("heading numbering", () => {
     expect(markdown).toContain("## 第1章 背景与目标");
     expect(markdown).toContain("## 第2章 范围与约束");
     expect(markdown).toContain("正文");
+  });
+
+  it("preserves section text while typing instead of inserting trailing newlines", () => {
+    const markdown = "# 方案\n\n正文";
+    const [heading] = parseMarkdownHeadings(markdown);
+
+    expect(replaceSection(markdown, heading, "# 方案\n\n正文中文")).toBe("# 方案\n\n正文中文");
+  });
+
+  it("keeps a newline boundary before the following section", () => {
+    const markdown = "# 方案\n\n## 第一章\n\n正文\n## 第二章\n\n正文";
+    const heading = parseMarkdownHeadings(markdown)[1];
+
+    expect(replaceSection(markdown, heading, "## 第一章\n\n正文中文")).toContain("正文中文\n## 第二章");
+  });
+
+  it("does not expose a trailing blank line at the end of the document", () => {
+    const markdown = "# 方案\n\n正文\n";
+    const [heading] = parseMarkdownHeadings(markdown);
+
+    expect(sectionBody(markdown, heading)).toBe("# 方案\n\n正文");
+  });
+
+  it("does not expose the separator before the following section", () => {
+    const markdown = "# 方案\n\n## 第一章\n\n正文\n\n## 第二章\n\n正文";
+    const heading = parseMarkdownHeadings(markdown)[1];
+
+    expect(sectionBody(markdown, heading)).toBe("## 第一章\n\n正文");
+  });
+
+  it("supports consecutive typing at the end of a non-final section", () => {
+    let markdown = "# 方案\n\n## 第一章\n\n正文\n## 第二章\n\n正文";
+    for (const character of "连续输入") {
+      const heading = parseMarkdownHeadings(markdown)[1];
+      markdown = replaceSection(markdown, heading, sectionBody(markdown, heading) + character);
+    }
+
+    expect(markdown).toContain("正文连续输入\n## 第二章");
+  });
+
+  it("moves a chapter together with its descendants", () => {
+    const markdown = "# 方案\n\n## 第一章\n\n正文一\n### 子章节\n\n子正文\n## 第二章\n\n正文二";
+    const headings = parseMarkdownHeadings(markdown);
+    const moved = moveSection(markdown, headings[1], headings[3], "after");
+
+    expect(moved.indexOf("## 第二章")).toBeLessThan(moved.indexOf("## 第一章"));
+    expect(moved.indexOf("### 子章节")).toBeGreaterThan(moved.indexOf("## 第一章"));
+    expect(moved.match(/正文一/g)).toHaveLength(1);
+  });
+
+  it("does not move a section into one of its descendants", () => {
+    const markdown = "# 方案\n\n## 第一章\n\n正文\n### 子章节\n\n子正文\n## 第二章";
+    const headings = parseMarkdownHeadings(markdown);
+
+    expect(moveSection(markdown, headings[1], headings[2], "before")).toBe(markdown);
+  });
+
+  it("keeps an adjacent section in place when dropped before its next sibling", () => {
+    const markdown = "# 方案\n\n## 第一章\n\n正文一\n## 第二章\n\n正文二";
+    const headings = parseMarkdownHeadings(markdown);
+
+    expect(moveSection(markdown, headings[1], headings[2], "before")).toBe(markdown);
   });
 });

@@ -80,12 +80,35 @@ export function parseMarkdownHeadings(markdown: string): MdHeading[] {
 }
 
 export function sectionBody(markdown: string, heading: MdHeading): string {
-  return markdown.slice(heading.start, heading.end).replace(/\s+$/, "") + (heading.end < markdown.length || markdown.endsWith("\n") ? "\n" : "");
+  return markdown.slice(heading.start, heading.end).replace(/\s+$/, "");
 }
 
 export function replaceSection(markdown: string, heading: MdHeading, nextBody: string): string {
-  const body = nextBody.replace(/\s+$/, "") + "\n";
+  const body = heading.end < markdown.length && !nextBody.endsWith("\n")
+    ? `${nextBody}\n`
+    : nextBody;
   return markdown.slice(0, heading.start) + body + markdown.slice(heading.end);
+}
+
+export type SectionMovePosition = "before" | "after";
+
+/** Move a heading together with its body and descendants relative to another heading. */
+export function moveSection(
+  markdown: string,
+  source: MdHeading,
+  target: MdHeading,
+  position: SectionMovePosition,
+): string {
+  if (source.id === target.id) return markdown;
+  if (target.start > source.start && target.start < source.end) return markdown;
+
+  const section = markdown.slice(source.start, source.end);
+  const withoutSource = markdown.slice(0, source.start) + markdown.slice(source.end);
+  const originalInsertion = position === "before" ? target.start : target.end;
+  const insertion = originalInsertion >= source.end
+    ? originalInsertion - (source.end - source.start)
+    : originalInsertion;
+  return withoutSource.slice(0, insertion) + section + withoutSource.slice(insertion);
 }
 
 export function defaultProposalMarkdown(name = "未命名技术方案"): string {

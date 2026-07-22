@@ -53,7 +53,7 @@ export interface LibraryFile {
   updatedAt: string;
   size: number;
 }
-export type KnowledgeIndexStatus = "pending_enrichment" | "ready" | "partial";
+export type KnowledgeIndexStatus = "ready";
 export interface KnowledgeDocument {
   id: string;
   sourceType: "markdown" | "web";
@@ -76,11 +76,11 @@ export interface KnowledgeSection {
   headingPath: string;
   level: number;
   position: number;
-  summary: string;
   chunkCount: number;
   headingSource: "markdown" | "toc" | "numbering" | "model" | "user";
   originalLine?: number;
   confidence: number;
+  quality: KnowledgeChunkQuality;
 }
 export interface KnowledgeChunk {
   id: string;
@@ -89,16 +89,38 @@ export interface KnowledgeChunk {
   documentTitle: string;
   headingPath: string;
   content: string;
-  summary: string;
-  keywords: string[];
   position: number;
   startChar: number;
   endChar: number;
-  status: "pending" | "ready" | "failed";
+  status: "ready";
   quality: KnowledgeChunkQuality;
 }
 export type KnowledgeChunkQuality = "good" | "normal" | "bad";
-export interface KnowledgeSearchResult { chunk: KnowledgeChunk; excerpt: string; score: number; }
+export type KnowledgeSearchField = "documentTitle" | "headingPath" | "content";
+export interface KnowledgeSearchResult {
+  chunk: KnowledgeChunk;
+  excerpt: string;
+  score: number;
+  matchedSectionId: string;
+  scopeSectionId: string;
+  level: number;
+  parentId?: string;
+  canMoveUp: boolean;
+}
+export interface KnowledgeSectionScope {
+  id: string;
+  documentId: string;
+  documentTitle: string;
+  sectionId: string;
+  parentId?: string;
+  title: string;
+  headingPath: string;
+  level: number;
+  content: string;
+  sectionCount: number;
+  quality: KnowledgeChunkQuality;
+  canMoveUp: boolean;
+}
 export interface KnowledgeScanItem { path: string; title: string; state: "unindexed" | "changed" | "indexed"; documentId?: string; }
 export interface KnowledgeProgress { documentId: string; stage: string; current: number; total: number; message: string; }
 export interface HeadingCandidate {
