@@ -1,7 +1,7 @@
 export type BlockType = "text" | "table" | "code" | "mermaid" | "quote" | "decision" | "evidence";
 export interface DocumentBlock { id: string; sectionId: string; type: BlockType; content: string; order: number; status: "draft" | "review" | "done"; sourceRefs: string[]; metadata?: Record<string, string>; }
 export interface Section { id: string; title: string; order: number; blocks: DocumentBlock[]; }
-export interface SourceRecord { id: string; kind: "local" | "web"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; }
+export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
 export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; }
 export interface SearchConfig { provider: "searxng" | "brave"; endpoint: string; apiKey: string; engines?: string[]; }
 /** API / search connection config stored under workspace `.gouan/connections.json`. */
@@ -95,7 +95,9 @@ export interface KnowledgeChunk {
   startChar: number;
   endChar: number;
   status: "pending" | "ready" | "failed";
+  quality: KnowledgeChunkQuality;
 }
+export type KnowledgeChunkQuality = "good" | "normal" | "bad";
 export interface KnowledgeSearchResult { chunk: KnowledgeChunk; excerpt: string; score: number; }
 export interface KnowledgeScanItem { path: string; title: string; state: "unindexed" | "changed" | "indexed"; documentId?: string; }
 export interface KnowledgeProgress { documentId: string; stage: string; current: number; total: number; message: string; }

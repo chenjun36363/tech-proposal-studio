@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { uniqueImportedMarkdownName } from "./workspace";
+import type { Project } from "./types";
+import { mergeLibrarySources, uniqueImportedMarkdownName } from "./workspace";
 
 describe("workspace Markdown import", () => {
   it("keeps an unused Markdown filename", () => {
@@ -12,5 +13,23 @@ describe("workspace Markdown import", () => {
 
   it("normalizes markdown extensions and unsafe filename characters", () => {
     expect(uniqueImportedMarkdownName("外部:方案.markdown", [])).toBe("外部_方案.md");
+  });
+});
+
+describe("workspace source refresh", () => {
+  it("retains manually added context sources", () => {
+    const manual = {
+      id: "manual-1",
+      kind: "manual" as const,
+      title: "访谈补充",
+      location: "手动添加",
+      excerpt: "完整内容",
+      content: "完整内容",
+      fingerprint: "manual-1",
+      accessedAt: "2026-07-22T00:00:00.000Z",
+    };
+    const project = { sources: [manual] } as Project;
+
+    expect(mergeLibrarySources(project, []).sources).toEqual([manual]);
   });
 });

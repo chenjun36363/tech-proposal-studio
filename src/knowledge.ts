@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeChunk, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult, KnowledgeSection, OpenAICompatibleConfig, WorkspacePaths } from "./types";
+import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult, KnowledgeSection, OpenAICompatibleConfig, WorkspacePaths } from "./types";
 import { isDesktop } from "./services";
 
 function desktopOnly() {
@@ -22,11 +22,14 @@ export async function listKnowledge(workspace: WorkspacePaths): Promise<Knowledg
 export async function listKnowledgeSections(workspace: WorkspacePaths, documentId: string): Promise<KnowledgeSection[]> {
   desktopOnly(); return invoke("knowledge_sections", { workspace, documentId });
 }
-export async function searchKnowledge(workspace: WorkspacePaths, query: string, limit = 30): Promise<KnowledgeSearchResult[]> {
-  desktopOnly(); return invoke("knowledge_search", { workspace, query, limit });
+export async function searchKnowledge(workspace: WorkspacePaths, query: string, qualities: KnowledgeChunkQuality[] = ["good", "normal"], limit = 30): Promise<KnowledgeSearchResult[]> {
+  desktopOnly(); return invoke("knowledge_search", { workspace, query, qualities, limit });
 }
 export async function getKnowledgeChunk(workspace: WorkspacePaths, chunkId: string): Promise<KnowledgeChunk> {
   desktopOnly(); return invoke("knowledge_chunk", { workspace, chunkId });
+}
+export async function setKnowledgeChunkQuality(workspace: WorkspacePaths, chunkId: string, quality: KnowledgeChunkQuality): Promise<KnowledgeChunk> {
+  desktopOnly(); return invoke("knowledge_set_chunk_quality", { workspace, chunkId, quality });
 }
 export async function listKnowledgeSectionChunks(workspace: WorkspacePaths, sectionId: string): Promise<KnowledgeChunk[]> {
   desktopOnly(); return invoke("knowledge_section_chunks", { workspace, sectionId });

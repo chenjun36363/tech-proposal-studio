@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Bot, Braces, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, ExternalLink, FilePlus2, FolderOpen, FolderSearch, Globe2, Highlighter, Italic, Layers3, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, RotateCcw, Save, Search, Settings, Sparkles, Strikethrough, TerminalSquare, Trash2, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Bold, BookOpen, Bot, Braces, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, ExternalLink, Eye, FilePlus2, FolderOpen, FolderSearch, Globe2, Highlighter, Italic, Layers3, Maximize2, Minimize2, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, TerminalSquare, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext, type AgentToolId } from "./agents";
@@ -61,8 +61,9 @@ import {
   restoreKnowledgeBackup,
   scanKnowledge,
   searchKnowledge,
+  setKnowledgeChunkQuality,
 } from "./knowledge";
-import type { HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision, KnowledgeChunk, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult, KnowledgeSection } from "./types";
+import type { HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult, KnowledgeSection } from "./types";
 
 type RightTab = "ai" | "commands" | "context" | "sources" | "search" | "env";
 type EditorMode = "section" | "full";
@@ -93,55 +94,46 @@ function SourcePreviewModal({ source, markdown, loading, error, workspaceRoot, c
   close: () => void;
   notify: (message: string) => void;
 }) {
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
-  const changeZoom = (next: number) => setZoom(Math.min(2.5, Math.max(0.5, Math.round(next * 10) / 10)));
+  const [maximized, setMaximized] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const toggleMaximized = () => { setMaximized(value => !value); setPosition({ x: 0, y: 0 }); };
   const openOriginal = async () => {
     try { await openExternalUrl(source.location); } catch (e: any) { notify(e?.message ?? "无法打开来源链接"); }
   };
   return <div className="preview-modal-overlay" onClick={close}>
-    <div className="preview-modal" onClick={e => e.stopPropagation()}>
-      <div className="preview-modal-head">
+    <div className={`preview-modal ${maximized ? "maximized" : ""}`} style={maximized ? undefined : { transform: `translate(${position.x}px, ${position.y}px)` }} onClick={e => e.stopPropagation()}>
+      <div
+        className="preview-modal-head"
+        onDoubleClick={event => { if (!(event.target as HTMLElement).closest("button")) toggleMaximized(); }}
+        onPointerDown={event => {
+          if (maximized || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+          dragRef.current = { x: event.clientX, y: event.clientY, left: position.x, top: position.y };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={event => {
+          const drag = dragRef.current;
+          if (!drag) return;
+          setPosition({ x: drag.left + event.clientX - drag.x, y: drag.top + event.clientY - drag.y });
+        }}
+        onPointerUp={event => { dragRef.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+        onPointerCancel={() => { dragRef.current = null; }}
+      >
         <div className="preview-modal-title">
           <strong>{source.title}</strong>
           <em title={source.location}>{source.location}</em>
         </div>
         <div className="preview-modal-tools">
           {source.kind === "web" && <IconButton title="打开原网页" onClick={() => void openOriginal()}><ExternalLink size={16} /></IconButton>}
-          <span className="preview-zoom-value">{Math.round(zoom * 100)}%</span>
-          <IconButton title="缩小预览" onClick={() => changeZoom(zoom - 0.1)}><ZoomOut size={17} /></IconButton>
-          <IconButton title="放大预览" onClick={() => changeZoom(zoom + 0.1)}><ZoomIn size={17} /></IconButton>
-          <IconButton title="复位预览" onClick={resetView}><RotateCcw size={16} /></IconButton>
+          <IconButton title={maximized ? "还原窗口" : "最大化窗口"} onClick={toggleMaximized}>{maximized ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</IconButton>
           <span className="preview-tool-divider" />
           <IconButton title="关闭预览" onClick={close}><X size={18} /></IconButton>
         </div>
       </div>
       {loading && <div className="loading-line preview-status">正在加载预览…</div>}
       {error && <p className="muted preview-status">{error}</p>}
-      {!loading && !error && <div
-        className={`preview-modal-viewport ${dragRef.current ? "is-dragging" : ""}`}
-        title="拖动预览，Ctrl + 滚轮缩放"
-        onWheel={e => {
-          if (!e.ctrlKey) return;
-          e.preventDefault();
-          changeZoom(zoom + (e.deltaY < 0 ? 0.1 : -0.1));
-        }}
-        onPointerDown={e => {
-          if (e.button !== 0) return;
-          dragRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
-          e.currentTarget.setPointerCapture(e.pointerId);
-        }}
-        onPointerMove={e => {
-          const drag = dragRef.current;
-          if (!drag) return;
-          setPan({ x: drag.panX + e.clientX - drag.x, y: drag.panY + e.clientY - drag.y });
-        }}
-        onPointerUp={e => { dragRef.current = null; e.currentTarget.releasePointerCapture(e.pointerId); }}
-        onPointerCancel={() => { dragRef.current = null; }}
-      >
-        <div className="preview-modal-canvas" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+      {!loading && !error && <div className="preview-modal-viewport">
+        <div className="preview-modal-canvas">
           <MarkdownPreview
             markdown={markdown}
             filePath={source.kind === "local" ? source.location : undefined}
@@ -216,6 +208,7 @@ export default function App() {
   const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_DEFAULT);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [knowledgeManagerOpen, setKnowledgeManagerOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
   const [fileMenu, setFileMenu] = useState(false);
@@ -840,6 +833,7 @@ export default function App() {
         <span>{project.filePath ? `磁盘 · ${project.filePath}` : `未关联文件 · 自动缓存 ${new Date(project.updatedAt).toLocaleDateString("zh-CN")}`}</span>
       </div>
       <div className="top-actions">
+        <button className="text-button" disabled={!desktop} title={desktop ? "管理知识文档与索引" : "知识管理仅在桌面端可用"} onClick={() => setKnowledgeManagerOpen(true)}><BookOpen size={16} />知识管理</button>
         <button className="text-button" onClick={() => void saveToWorkspace()}><Save size={16} />保存</button>
         <div className="export-menu" ref={exportMenuRef}>
           <button className="text-button" disabled={exporting} onClick={() => setExportMenu(v => !v)}>
@@ -1126,6 +1120,13 @@ export default function App() {
         }
       }}
     />}
+    {knowledgeManagerOpen && <KnowledgeManagerModal
+      project={project}
+      updateProject={updateProject}
+      updateBlock={updateActiveBlock}
+      notify={notify}
+      close={() => setKnowledgeManagerOpen(false)}
+    />}
     {sourceOpen && <SourceModal
       historyDir={workspace?.historyDir || ""}
       close={() => setSourceOpen(false)}
@@ -1150,28 +1151,195 @@ export default function App() {
   </div>;
 }
 
+function KnowledgeManagerModal({ project, updateProject, updateBlock, notify, close }: any) {
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [pending, setPending] = useState<KnowledgeScanItem[]>([]);
+  const [sections, setSections] = useState<Record<string, KnowledgeSection[]>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<KnowledgeProgress | null>(null);
+  const [headingReview, setHeadingReview] = useState<HeadingDetectionResult | null>(null);
+  const [headingCandidates, setHeadingCandidates] = useState<HeadingCandidate[]>([]);
+  const [preview, setPreview] = useState<{ source: SourceRecord; markdown: string; loading: boolean; error: string } | null>(null);
+
+  const reload = async () => {
+    if (!project.workspace?.root) return;
+    const [nextDocuments, scanned] = await Promise.all([listKnowledge(project.workspace), scanKnowledge(project.workspace)]);
+    setDocuments(nextDocuments);
+    setPending(scanned.filter((item: KnowledgeScanItem) => item.state !== "indexed"));
+  };
+
+  useEffect(() => { void reload().catch((e: any) => notify(e?.message ?? "知识库加载失败")); }, [project.workspace?.root]);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void onKnowledgeProgress(setProgress).then(fn => { unlisten = fn; });
+    return () => unlisten?.();
+  }, []);
+
+  const analyze = async (path: string) => {
+    if (!project.workspace) return;
+    setBusy(true);
+    try { const result = await analyzeKnowledgeMarkdown(project.workspace, path, project.model); setHeadingReview(result); setHeadingCandidates(result.candidates); }
+    catch (e: any) { notify(e?.message ?? "文档结构识别失败"); }
+    finally { setBusy(false); }
+  };
+  const importFile = async () => {
+    if (!project.workspace) return notify("请先配置工作目录");
+    const path = await pickMarkdownFile("上传知识 Markdown", project.workspace.historyDir);
+    if (path) await analyze(path);
+  };
+  const confirmReview = async () => {
+    if (!project.workspace || !headingReview) return;
+    setBusy(true);
+    const decisions: HeadingReviewDecision[] = headingCandidates.map(item => ({ id: item.id, line: item.line, selected: item.selected, level: item.level, source: item.source, confidence: item.confidence }));
+    try { await applyKnowledgeHeadings(project.workspace, headingReview, decisions, project.model); setHeadingReview(null); setHeadingCandidates([]); await reload(); notify("文档结构已确认并入库"); }
+    catch (e: any) { notify(e?.message ?? "规范化入库失败"); }
+    finally { setBusy(false); }
+  };
+  const toggleDocument = async (documentId: string) => {
+    const next = new Set(expanded);
+    if (next.has(documentId)) next.delete(documentId); else {
+      next.add(documentId);
+      if (!sections[documentId] && project.workspace) {
+        try { const value = await listKnowledgeSections(project.workspace, documentId); setSections(current => ({ ...current, [documentId]: value })); }
+        catch (e: any) { notify(e?.message ?? "读取文档结构失败"); }
+      }
+    }
+    setExpanded(next);
+  };
+  const rebuild = async (document: KnowledgeDocument) => {
+    if (!project.workspace) return;
+    setBusy(true);
+    try { await importKnowledgeMarkdown(project.workspace, document.location, project.model); await reload(); notify("索引已重建"); }
+    catch (e: any) { notify(e?.message ?? "重建索引失败"); }
+    finally { setBusy(false); }
+  };
+  const restore = async (document: KnowledgeDocument) => {
+    if (!project.workspace) return;
+    setBusy(true);
+    try {
+      const backups = await listKnowledgeBackups(project.workspace, document.id);
+      if (!backups.length) return notify("该文档没有可恢复的原始快照");
+      if (!confirm(`恢复“${document.title}”到 ${backups[0].name}？当前规范化内容会被替换。`)) return;
+      await restoreKnowledgeBackup(project.workspace, document.id, backups[0].path, project.model); await reload(); notify("已恢复原始版本并重建索引");
+    } catch (e: any) { notify(e?.message ?? "恢复原文失败"); }
+    finally { setBusy(false); }
+  };
+  const deletePending = async (item: KnowledgeScanItem) => {
+    if (!project.workspace || !confirm(`彻底删除“${item.title}”？\n\n将删除 history 中的 Markdown 副本，此操作无法撤销。`)) return;
+    setBusy(true);
+    try { await deleteKnowledgeFile(project.workspace, item.path, item.documentId); await reload(); notify("知识文档已删除"); }
+    catch (e: any) { notify(e?.message ?? "删除失败"); }
+    finally { setBusy(false); }
+  };
+  const deleteIndexed = async (document: KnowledgeDocument) => {
+    if (!project.workspace || !confirm(`彻底删除“${document.title}”？\n\n将同时删除索引和 history 中的 Markdown 副本，此操作无法撤销。`)) return;
+    setBusy(true);
+    try {
+      await deleteKnowledgeFile(project.workspace, document.location, document.id);
+      const removedIds = new Set((project.sources as SourceRecord[]).filter(source => source.location === `knowledge:${document.id}`).map(source => source.id));
+      updateProject((value: Project) => ({ ...value, sources: value.sources.filter(source => !removedIds.has(source.id)) }));
+      updateBlock((value: DocumentBlock) => ({ ...value, sourceRefs: value.sourceRefs.filter(id => !removedIds.has(id)) }));
+      await reload(); notify("知识文档及索引已删除");
+    } catch (e: any) { notify(e?.message ?? "删除失败"); }
+    finally { setBusy(false); }
+  };
+  const previewDocument = async (document: KnowledgeDocument) => {
+    const source: SourceRecord = { id: document.id, kind: "local", title: document.title, location: document.location, excerpt: "", fingerprint: document.fingerprint, accessedAt: new Date().toISOString() };
+    setPreview({ source, markdown: "", loading: true, error: "" });
+    try { const markdown = await readTextFile(document.location); setPreview({ source, markdown, loading: false, error: "" }); }
+    catch (e: any) { setPreview({ source, markdown: "", loading: false, error: e?.message ?? "读取文档失败" }); }
+  };
+  const previewSection = async (document: KnowledgeDocument, section: KnowledgeSection) => {
+    if (!project.workspace) return;
+    const source: SourceRecord = { id: section.id, kind: "local", title: `${document.title} / ${section.title}`, location: document.location, excerpt: section.summary, fingerprint: section.id, accessedAt: new Date().toISOString(), heading: section.headingPath };
+    setPreview({ source, markdown: "", loading: true, error: "" });
+    try {
+      const chunks = await listKnowledgeSectionChunks(project.workspace, section.id);
+      const markdown = chunks.map(chunk => chunk.content).filter(Boolean).join("\n\n---\n\n");
+      setPreview({ source, markdown: markdown || `# ${section.title}\n\n（该章节暂无正文）`, loading: false, error: "" });
+    } catch (e: any) { setPreview({ source, markdown: "", loading: false, error: e?.message ?? "读取知识片段失败" }); }
+  };
+  const groups = [
+    { id: "local", label: "本地 Markdown", documents: documents.filter(item => item.sourceType === "markdown") },
+    { id: "web", label: "网页知识", documents: documents.filter(item => item.sourceType === "web") },
+  ].filter(group => group.documents.length);
+  const headingSourceLabel = (source: KnowledgeSection["headingSource"]) => ({ markdown: "原生标题", toc: "目录匹配", numbering: "编号识别", model: "模型识别", user: "人工确认" }[source] ?? source);
+
+  return <div className="modal-backdrop knowledge-manager-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
+    <div className="modal knowledge-manager-modal" onMouseDown={event => event.stopPropagation()}>
+      <div className="modal-title"><div><BookOpen size={19} /><span>知识管理</span></div><IconButton title="关闭" onClick={() => !busy && close()}><X size={18} /></IconButton></div>
+      <div className="knowledge-manager-toolbar">
+        <div><b>{documents.length}</b><span>已入库</span><b>{pending.length}</b><span>待处理</span></div>
+        <div><button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button className="primary" disabled={busy} onClick={() => void importFile()}><FilePlus2 size={15} />导入 Markdown</button></div>
+      </div>
+      {progress && busy && <div className="knowledge-progress"><span>{progress.message}</span><b>{progress.total ? `${progress.current}/${progress.total}` : progress.stage}</b></div>}
+      <div className="knowledge-manager-body">
+        <section className="knowledge-manager-column">
+          <div className="knowledge-manager-heading"><span>待处理</span><b>{pending.length}</b></div>
+          <div className="knowledge-manager-scroll">
+            {pending.map(item => <article className="knowledge-manager-pending" key={item.path}>
+              <div><b>{item.title}</b><span title={item.path}>{item.path}</span></div>
+              <em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "内容已更新" : "尚未索引"}</em>
+              <div><button disabled={busy} onClick={() => void analyze(item.path)}>识别结构</button><IconButton title="删除工作区副本" onClick={() => void deletePending(item)}><Trash2 size={13} /></IconButton></div>
+            </article>)}
+            {!pending.length && <div className="knowledge-manager-empty"><Check size={20} /><span>没有待处理文档</span></div>}
+          </div>
+        </section>
+        <section className="knowledge-manager-column indexed">
+          <div className="knowledge-manager-heading"><span>已入库</span><b>{documents.length}</b></div>
+          <div className="knowledge-manager-scroll">
+            {groups.map(group => <div className="knowledge-manager-group" key={group.id}>
+              <div className="knowledge-section-heading"><div>{group.id === "local" ? <FolderSearch size={14} /> : <Globe2 size={14} />}<b>{group.label}</b><span>{group.documents.length}</span></div></div>
+              {group.documents.map(document => <article className="knowledge-document" key={document.id}>
+                <div className="knowledge-document-head">
+                  <button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>
+                  <div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片</span><code title={document.location}>{document.location}</code></div>
+                  <em className={`knowledge-status ${document.status}`}>{document.status === "ready" ? "已就绪" : document.status === "partial" ? "部分失败" : "待增强"}</em>
+                </div>
+                {document.error && <p className="knowledge-error">{document.error}</p>}
+                <div className="source-item-actions knowledge-actions">
+                  <button onClick={() => void previewDocument(document)}><Eye size={12} />预览全文</button>
+                  {document.sourceUrl && <button onClick={() => void openExternalUrl(document.sourceUrl!)}><ExternalLink size={12} />原网页</button>}
+                  {document.sourceType === "markdown" && <button disabled={busy} onClick={() => void analyze(document.location)}>重新识别</button>}
+                  {document.sourceType === "markdown" && <button disabled={busy} onClick={() => void rebuild(document)}>重建索引</button>}
+                  {document.sourceType === "markdown" && <button disabled={busy} onClick={() => void restore(document)}>恢复原文</button>}
+                  {document.status !== "ready" && <button disabled={busy} onClick={() => { if (!project.workspace) return; setBusy(true); void retryKnowledgeEnrichment(project.workspace, document.id, project.model).then(reload).catch((e: any) => notify(e?.message ?? "重试失败")).finally(() => setBusy(false)); }}>重试增强</button>}
+                  <button onClick={() => { if (!project.workspace || !confirm(`从知识库移出“${document.title}”？原始 Markdown 会保留。`)) return; void removeKnowledgeDocument(project.workspace, document.id).then(reload).catch((e: any) => notify(e?.message ?? "移出失败")); }}>移出</button>
+                  <button className="danger" disabled={busy} onClick={() => void deleteIndexed(document)}><Trash2 size={12} />删除</button>
+                </div>
+                {expanded.has(document.id) && <div className="knowledge-tree">{(sections[document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><IconButton title="预览知识片段" onClick={() => void previewSection(document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}
+              </article>)}
+            </div>)}
+            {!documents.length && <div className="knowledge-manager-empty"><BookOpen size={20} /><span>暂无已入库文档</span></div>}
+          </div>
+        </section>
+      </div>
+    </div>
+    {headingReview && <HeadingReviewModal result={headingReview} candidates={headingCandidates} setCandidates={setHeadingCandidates} busy={busy} close={() => { if (!busy) { setHeadingReview(null); setHeadingCandidates([]); } }} confirm={() => void confirmReview()} />}
+    {preview && <SourcePreviewModal source={preview.source} markdown={preview.markdown} loading={preview.loading} error={preview.error} workspaceRoot={project.workspace?.root} notify={notify} close={() => setPreview(null)} />}
+  </div>;
+}
+
 function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, notify, openSettings, close, openSource, refreshLibrary, terminalCwd, previewSource, setPreviewSource, previewMarkdown, setPreviewMarkdown, previewLoading, setPreviewLoading, previewError, setPreviewError }: any) {
   const [instruction, setInstruction] = useState("使表述更专业、具体，并补充必要的实施约束");
   const [aiUseContext, setAiUseContext] = useState(true);
+  const [manualContextOpen, setManualContextOpen] = useState(false);
+  const [manualContextTitle, setManualContextTitle] = useState("");
+  const [manualContextContent, setManualContextContent] = useState("");
   const [draft, setDraft] = useState<AiDraft | null>(null);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [knowledgeQualityFilters, setKnowledgeQualityFilters] = useState<Set<KnowledgeChunkQuality>>(() => new Set(["good", "normal"]));
   const [webQuery, setWebQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [sourceContents, setSourceContents] = useState<Record<string, string>>({});
   const [localSearching, setLocalSearching] = useState(false);
-  const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([]);
-  const [knowledgePending, setKnowledgePending] = useState<KnowledgeScanItem[]>([]);
-  const [knowledgeSections, setKnowledgeSections] = useState<Record<string, KnowledgeSection[]>>({});
-  const [expandedKnowledge, setExpandedKnowledge] = useState<Set<string>>(new Set());
   const [knowledgeResults, setKnowledgeResults] = useState<KnowledgeSearchResult[]>([]);
   const [knowledgeChunks, setKnowledgeChunks] = useState<Record<string, KnowledgeChunk>>({});
   const [knowledgeBusy, setKnowledgeBusy] = useState(false);
-  const [knowledgeProgress, setKnowledgeProgress] = useState<KnowledgeProgress | null>(null);
-  const [headingReview, setHeadingReview] = useState<HeadingDetectionResult | null>(null);
-  const [headingCandidates, setHeadingCandidates] = useState<HeadingCandidate[]>([]);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [commandOutputs, setCommandOutputs] = useState<Record<string, CommandResult | { error: string }>>({});
   const [toolPaths, setToolPaths] = useState<Record<string, string>>({});
@@ -1187,7 +1355,7 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
   const contextSources = useMemo(() => project.sources.filter((s: SourceRecord) => block.sourceRefs.includes(s.id)), [project.sources, block.sourceRefs]);
   const context = useMemo(() => contextSources.map((s: SourceRecord) => {
     const chunk = knowledgeChunks[s.id];
-    return chunk ? `${chunk.documentTitle} / ${chunk.headingPath}:\n${chunk.content}` : `${s.title}: ${s.excerpt}`;
+    return chunk ? `${chunk.documentTitle} / ${chunk.headingPath}:\n${chunk.content}` : `${s.title}:\n${s.content ?? s.excerpt}`;
   }), [contextSources, knowledgeChunks]);
   const filteredSources = useMemo(
     () => (project.sources as SourceRecord[]).filter(s => matchesSource(s, query, sourceContents[s.id] ?? "")),
@@ -1209,22 +1377,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     return () => { cancelled = true; };
   }, [desktop, tab, query, project.sources, sourceContents]);
 
-  const reloadKnowledge = async () => {
-    if (!desktop || !project.workspace?.root) return;
-    const [documents, scanned] = await Promise.all([listKnowledge(project.workspace), scanKnowledge(project.workspace)]);
-    setKnowledgeDocuments(documents);
-    setKnowledgePending(scanned.filter(item => item.state !== "indexed"));
-  };
-  useEffect(() => {
-    if (tab !== "sources" || !desktop || !project.workspace?.root) return;
-    void reloadKnowledge().catch((e: any) => notify(e?.message ?? "知识库加载失败"));
-  }, [tab, desktop, project.workspace?.root]);
-  useEffect(() => {
-    if (!desktop) return;
-    let unlisten: (() => void) | undefined;
-    void onKnowledgeProgress(setKnowledgeProgress).then(fn => { unlisten = fn; });
-    return () => unlisten?.();
-  }, [desktop]);
   useEffect(() => {
     if (!desktop || !project.workspace?.root) return;
     const ids = (block.sourceRefs as string[]).filter(id => id.startsWith("kc-") && !knowledgeChunks[id]);
@@ -1252,18 +1404,56 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     setSearchAttempted(true);
     try { setResults(await searchWeb(webQuery, project.search)); } catch (e: any) { notify(e.message); } finally { setSearching(false); }
   };
+  const updateSourceContext = (sourceId: string, source?: SourceRecord, mode: "add" | "remove" | "toggle" = "add") => {
+    updateProject((p: Project) => {
+      const currentRefs = p.sections[0]?.blocks[0]?.sourceRefs ?? [];
+      const included = currentRefs.includes(sourceId);
+      const shouldInclude = mode === "toggle" ? !included : mode === "add";
+      const sourceRefs = shouldInclude
+        ? (included ? currentRefs : [...currentRefs, sourceId])
+        : currentRefs.filter((id: string) => id !== sourceId);
+      const sources = source && !p.sources.some((item: SourceRecord) => item.id === source.id)
+        ? [...p.sources, source]
+        : p.sources;
+      const sections = p.sections.map((section, sectionIndex) => sectionIndex === 0 ? {
+        ...section,
+        blocks: section.blocks.map((item, blockIndex) => blockIndex === 0 ? { ...item, sourceRefs } : item),
+      } : section);
+      return { ...p, sources, sections };
+    });
+  };
   const saveResult = (r: SearchResult, includeInContext = false) => {
     const existing = (project.sources as SourceRecord[]).find(source => source.kind === "web" && source.location === r.url);
     const source = existing ?? { id: makeId(), kind: "web" as const, title: r.title, location: r.url, excerpt: r.excerpt, fingerprint: btoa(unescape(encodeURIComponent(r.url))).slice(0, 32), accessedAt: new Date().toISOString() };
-    if (!existing) updateProject((p: Project) => ({ ...p, sources: [...p.sources, source] }));
     if (includeInContext) {
-      updateBlock((b: DocumentBlock) => ({ ...b, sourceRefs: b.sourceRefs.includes(source.id) ? b.sourceRefs : [...b.sourceRefs, source.id] }));
+      updateSourceContext(source.id, source);
       notify(existing ? "来源已加入上下文" : "来源已保存并加入上下文");
       return;
     }
+    if (!existing) updateProject((p: Project) => ({ ...p, sources: [...p.sources, source] }));
     notify(existing ? "该来源已保存" : "来源已保存");
   };
-  const removeFromContext = (sourceId: string) => updateBlock((b: DocumentBlock) => ({ ...b, sourceRefs: b.sourceRefs.filter((id: string) => id !== sourceId) }));
+  const removeFromContext = (sourceId: string) => updateSourceContext(sourceId, undefined, "remove");
+  const addManualContext = () => {
+    const content = manualContextContent.trim();
+    if (!content) return notify("请先填写上下文内容");
+    const title = manualContextTitle.trim() || "手动添加的内容";
+    const source: SourceRecord = {
+      id: makeId(),
+      kind: "manual",
+      title,
+      location: "手动添加",
+      excerpt: content.replace(/\s+/g, " ").slice(0, 180),
+      content,
+      fingerprint: `manual-${makeId()}`,
+      accessedAt: new Date().toISOString(),
+    };
+    updateSourceContext(source.id, source);
+    setManualContextTitle("");
+    setManualContextContent("");
+    setManualContextOpen(false);
+    notify("内容已加入上下文");
+  };
   const openWebSource = async (url: string) => {
     try { await openExternalUrl(url); } catch (e: any) { notify(e?.message ?? "无法打开来源链接"); }
   };
@@ -1271,6 +1461,10 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     setPreviewSource(source);
     setPreviewMarkdown("");
     setPreviewError("");
+    if (source.kind === "manual") {
+      setPreviewMarkdown(source.content ?? source.excerpt);
+      return;
+    }
     if (source.kind === "web") {
       setPreviewMarkdown(`# ${source.title}\n\n${source.excerpt || ""}\n\n[打开网页](${source.location})`);
       return;
@@ -1338,8 +1532,7 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       heading: chunk.headingPath,
     };
     setKnowledgeChunks(current => ({ ...current, [chunk.id]: chunk }));
-    updateProject((p: Project) => ({ ...p, sources: p.sources.some((item: SourceRecord) => item.id === source.id) ? p.sources : [...p.sources, source] }));
-    updateBlock((b: DocumentBlock) => ({ ...b, sourceRefs: b.sourceRefs.includes(chunk.id) ? b.sourceRefs.filter((id: string) => id !== chunk.id) : [...b.sourceRefs, chunk.id] }));
+    updateSourceContext(chunk.id, source, "toggle");
   };
   const previewKnowledgeChunk = (chunk: KnowledgeChunk) => {
     setKnowledgeChunks(current => ({ ...current, [chunk.id]: chunk }));
@@ -1350,102 +1543,32 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
   const runKnowledgeSearch = async () => {
     if (!query.trim() || !project.workspace) { setKnowledgeResults([]); return; }
     setLocalSearching(true);
-    try { setKnowledgeResults(await searchKnowledge(project.workspace, query)); }
+    try { setKnowledgeResults(await searchKnowledge(project.workspace, query, ["good", "normal", "bad"].filter((quality): quality is KnowledgeChunkQuality => knowledgeQualityFilters.has(quality as KnowledgeChunkQuality)))); }
     catch (e: any) { notify(e?.message ?? "知识库搜索失败"); }
     finally { setLocalSearching(false); }
   };
-  const toggleKnowledgeDocument = async (documentId: string) => {
-    const next = new Set(expandedKnowledge);
-    if (next.has(documentId)) next.delete(documentId); else {
-      next.add(documentId);
-      if (!knowledgeSections[documentId] && project.workspace) {
-        try { const sections = await listKnowledgeSections(project.workspace, documentId); setKnowledgeSections(current => ({ ...current, [documentId]: sections })); }
-        catch (e: any) { notify(e?.message ?? "读取文档结构失败"); }
-      }
-    }
-    setExpandedKnowledge(next);
+  const toggleKnowledgeQualityFilter = (quality: KnowledgeChunkQuality) => {
+    setKnowledgeQualityFilters(current => {
+      if (current.has(quality) && current.size === 1) return current;
+      const next = new Set(current);
+      if (next.has(quality)) next.delete(quality); else next.add(quality);
+      return next;
+    });
   };
-  const showSectionChunks = async (section: KnowledgeSection) => {
-    if (!project.workspace) return;
-    setKnowledgeBusy(true);
+  const markKnowledgeQuality = async (chunk: KnowledgeChunk, quality: KnowledgeChunkQuality) => {
+    if (!project.workspace || chunk.quality === quality) return;
     try {
-      const chunks = await listKnowledgeSectionChunks(project.workspace, section.id);
-      setKnowledgeResults(chunks.map(chunk => ({ chunk, excerpt: chunk.summary || chunk.content.slice(0, 220), score: 0 })));
-    } catch (e: any) { notify(e?.message ?? "读取章节失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const importKnowledgeFile = async () => {
-    if (!project.workspace) return notify("请先配置工作目录");
-    const path = await pickMarkdownFile("上传知识 Markdown", project.workspace.historyDir);
-    if (!path) return;
-    setKnowledgeBusy(true);
-    try { const result = await analyzeKnowledgeMarkdown(project.workspace, path, project.model); setHeadingReview(result); setHeadingCandidates(result.candidates); }
-    catch (e: any) { notify(e?.message ?? "文档结构识别失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const indexPending = async () => {
-    if (!project.workspace || !knowledgePending.length) return;
-    setKnowledgeBusy(true);
-    try { const result = await analyzeKnowledgeMarkdown(project.workspace, knowledgePending[0].path, project.model); setHeadingReview(result); setHeadingCandidates(result.candidates); }
-    catch (e: any) { notify(e?.message ?? "文档结构识别失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const confirmHeadingReview = async () => {
-    if (!project.workspace || !headingReview) return;
-    setKnowledgeBusy(true);
-    const decisions: HeadingReviewDecision[] = headingCandidates.map(item => ({ id: item.id, line: item.line, selected: item.selected, level: item.level, source: item.source === "user" ? "user" : item.source, confidence: item.confidence }));
-    try { await applyKnowledgeHeadings(project.workspace, headingReview, decisions, project.model); setHeadingReview(null); setHeadingCandidates([]); await reloadKnowledge(); notify("文档结构已确认并入库"); }
-    catch (e: any) { notify(e?.message ?? "规范化入库失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const reanalyzeKnowledge = async (document: KnowledgeDocument) => {
-    if (!project.workspace) return;
-    setKnowledgeBusy(true);
-    try { const result = await analyzeKnowledgeMarkdown(project.workspace, document.location, project.model); setHeadingReview(result); setHeadingCandidates(result.candidates); }
-    catch (e: any) { notify(e?.message ?? "重新识别失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const rebuildKnowledge = async (document: KnowledgeDocument) => {
-    if (!project.workspace) return;
-    setKnowledgeBusy(true);
-    try { await importKnowledgeMarkdown(project.workspace, document.location, project.model); await reloadKnowledge(); notify("已按新版策略重建索引"); }
-    catch (e: any) { notify(e?.message ?? "重建索引失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const restoreLatestKnowledgeBackup = async (document: KnowledgeDocument) => {
-    if (!project.workspace) return;
-    setKnowledgeBusy(true);
-    try {
-      const backups = await listKnowledgeBackups(project.workspace, document.id);
-      if (!backups.length) return notify("该文档没有可恢复的原始快照");
-      if (!confirm(`恢复“${document.title}”到 ${backups[0].name}？当前规范化内容会被替换。`)) return;
-      await restoreKnowledgeBackup(project.workspace, document.id, backups[0].path, project.model); await reloadKnowledge(); notify("已恢复原始版本并重建索引");
-    } catch (e: any) { notify(e?.message ?? "恢复原文失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const deletePendingKnowledge = async (item: KnowledgeScanItem) => {
-    if (!project.workspace || !confirm(`彻底删除“${item.title}”？\n\n将删除工作区 history 中的 Markdown 副本，此操作无法撤销。`)) return;
-    setKnowledgeBusy(true);
-    try { await deleteKnowledgeFile(project.workspace, item.path, item.documentId); await reloadKnowledge(); notify("知识文档已删除"); }
-    catch (e: any) { notify(e?.message ?? "删除失败"); }
-    finally { setKnowledgeBusy(false); }
-  };
-  const deleteIndexedKnowledge = async (document: KnowledgeDocument) => {
-    if (!project.workspace || !confirm(`彻底删除“${document.title}”？\n\n将同时删除索引和 history 中的 Markdown 副本，此操作无法撤销。`)) return;
-    setKnowledgeBusy(true);
-    try {
-      await deleteKnowledgeFile(project.workspace, document.location, document.id);
-      const removedIds = new Set((project.sources as SourceRecord[]).filter(source => source.location === `knowledge:${document.id}`).map(source => source.id));
-      updateProject((p: Project) => ({ ...p, sources: p.sources.filter((source: SourceRecord) => !removedIds.has(source.id)) }));
-      updateBlock((b: DocumentBlock) => ({ ...b, sourceRefs: b.sourceRefs.filter((id: string) => !removedIds.has(id)) }));
-      await reloadKnowledge(); notify("知识文档及索引已删除");
-    } catch (e: any) { notify(e?.message ?? "删除失败"); }
-    finally { setKnowledgeBusy(false); }
+      const updated = await setKnowledgeChunkQuality(project.workspace, chunk.id, quality);
+      setKnowledgeChunks(current => ({ ...current, [updated.id]: updated }));
+      const qualities = (["good", "normal", "bad"] as KnowledgeChunkQuality[]).filter(item => knowledgeQualityFilters.has(item));
+      setKnowledgeResults(await searchKnowledge(project.workspace, query, qualities));
+      notify(`已标记为${quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}片段`);
+    } catch (e: any) { notify(e?.message ?? "更新片段质量失败"); }
   };
   const saveWebToKnowledge = async (result: SearchResult) => {
     if (!project.workspace) return notify("请先配置工作目录");
     setKnowledgeBusy(true);
-    try { await importKnowledgeWeb(project.workspace, result.url, project.model); await reloadKnowledge(); notify("网页全文已存入知识库"); }
+    try { await importKnowledgeWeb(project.workspace, result.url, project.model); notify("网页全文已存入知识库"); }
     catch (e: any) { notify(e?.message ?? "网页入库失败"); }
     finally { setKnowledgeBusy(false); }
   };
@@ -1477,12 +1600,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     updateBlock((b: DocumentBlock) => ({ ...b, content: text, status: "review" as const }));
     notify("已写入当前章节");
   };
-
-  const knowledgeGroups = [
-    { id: "local", label: "本地 Markdown", icon: <FolderSearch size={14} />, documents: knowledgeDocuments.filter(document => document.sourceType === "markdown") },
-    { id: "web", label: "网页知识", icon: <Globe2 size={14} />, documents: knowledgeDocuments.filter(document => document.sourceType === "web") },
-  ].filter(group => group.documents.length);
-  const headingSourceLabel = (source: KnowledgeSection["headingSource"]) => ({ markdown: "原生标题", toc: "目录匹配", numbering: "编号识别", model: "模型识别", user: "人工确认" }[source] ?? source);
 
   return <aside className="right-panel">
     <div className="inspector-top">
@@ -1546,13 +1663,21 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     {tab === "context" && <div className="inspector-content context-manager">
       <div className="context-manager-head">
         <div><Layers3 size={17} /><span>已选上下文</span><b>{contextSources.length}</b></div>
-        <button type="button" disabled={!contextSources.length} onClick={() => updateBlock((b: DocumentBlock) => ({ ...b, sourceRefs: [] }))}><Trash2 size={13} />清空</button>
+        <div className="context-manager-actions">
+          <button type="button" className="context-add-action" onClick={() => setManualContextOpen(open => !open)}><Pencil size={13} />手动添加</button>
+          <button type="button" className="context-clear-action" disabled={!contextSources.length} onClick={() => updateBlock((b: DocumentBlock) => ({ ...b, sourceRefs: [] }))}><Trash2 size={13} />清空</button>
+        </div>
       </div>
+      {manualContextOpen && <div className="manual-context-form">
+        <label>名称（可选）<input value={manualContextTitle} onChange={event => setManualContextTitle(event.target.value)} placeholder="例如：客户访谈补充" /></label>
+        <label>内容<textarea autoFocus value={manualContextContent} onChange={event => setManualContextContent(event.target.value)} placeholder="粘贴或输入需要随当前章节发送的内容" /></label>
+        <div><button type="button" onClick={() => { setManualContextOpen(false); setManualContextTitle(""); setManualContextContent(""); }}>取消</button><button type="button" className="primary" disabled={!manualContextContent.trim()} onClick={addManualContext}><Layers3 size={13} />加入上下文</button></div>
+      </div>}
       <div className="context-source-list">
         {contextSources.map((source: SourceRecord, index: number) => <article key={source.id}>
           <div className="context-source-index">{String(index + 1).padStart(2, "0")}</div>
           <div className="context-source-body">
-            <span>{source.kind === "web" ? <Globe2 size={13} /> : <FolderSearch size={13} />}{source.kind === "web" ? "网页来源" : "本地资料"}</span>
+            <span>{source.kind === "web" ? <Globe2 size={13} /> : source.kind === "manual" ? <Pencil size={13} /> : <FolderSearch size={13} />}{source.kind === "web" ? "网页来源" : source.kind === "manual" ? "手动内容" : "本地资料"}</span>
             <b>{source.title}</b>
             <p>{source.excerpt || "（无摘要）"}</p>
             <div>
@@ -1566,6 +1691,7 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     </div>}
     {tab === "sources" && <div className="inspector-content sources-panel knowledge-panel">
       {!desktop ? <div className="context-empty"><BookOpen size={24} /><span>知识库仅在桌面端可用</span></div> : <>
+      <div className="knowledge-search-intro"><div><Search size={17} /><b>知识检索</b></div><span>搜索结果可预览并加入当前章节上下文</span></div>
       <div className="search-row">
         <input
           value={query}
@@ -1575,53 +1701,30 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
         />
         <button type="button" title="搜索知识库" onClick={() => void runKnowledgeSearch()}><Search size={16} /></button>
       </div>
-      {localSearching && <div className="loading-line">正在检索知识切片…</div>}
-      {knowledgeProgress && knowledgeBusy && <div className="knowledge-progress"><span>{knowledgeProgress.message}</span><b>{knowledgeProgress.total ? `${knowledgeProgress.current}/${knowledgeProgress.total}` : knowledgeProgress.stage}</b></div>}
-      <div className="source-actions">
-        <button className="import-link" disabled={knowledgeBusy} onClick={() => void importKnowledgeFile()}><FilePlus2 size={16} />上传 Markdown</button>
-        <button className="import-link" disabled={knowledgeBusy} onClick={() => void reloadKnowledge()}><RefreshCw size={15} />扫描</button>
+      <div className="knowledge-quality-filter" role="group" aria-label="片段质量筛选">
+        <span>片段状态</span>
+        {(["good", "normal", "bad"] as KnowledgeChunkQuality[]).map(quality => <label key={quality} className={knowledgeQualityFilters.has(quality) ? "active" : ""}>
+          <input type="checkbox" checked={knowledgeQualityFilters.has(quality)} onChange={() => toggleKnowledgeQualityFilter(quality)} />
+          {quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}
+        </label>)}
       </div>
-      {!!knowledgePending.length && <section className="knowledge-pending-section">
-        <div className="knowledge-section-heading"><div><RefreshCw size={14} /><b>待处理</b><span>{knowledgePending.length}</span></div><em>逐份确认结构后建立索引</em></div>
-        <div className="knowledge-pending-list">{knowledgePending.map(item => <article key={item.path}>
-          <div className="knowledge-pending-main"><b>{item.title}</b><span title={item.path}>{item.path}</span></div>
-          <em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "内容已更新" : "尚未索引"}</em>
-          <div className="knowledge-pending-actions"><button disabled={knowledgeBusy} onClick={() => { if (!project.workspace) return; setKnowledgeBusy(true); void analyzeKnowledgeMarkdown(project.workspace, item.path, project.model).then(result => { setHeadingReview(result); setHeadingCandidates(result.candidates); }).catch((e: any) => notify(e?.message ?? "识别失败")).finally(() => setKnowledgeBusy(false)); }}>识别结构</button><button className="danger" disabled={knowledgeBusy} title="删除工作区副本" onClick={() => void deletePendingKnowledge(item)}><Trash2 size={13} /></button></div>
-        </article>)}</div>
-      </section>}
+      {localSearching && <div className="loading-line">正在检索知识切片…</div>}
       {!!knowledgeResults.length && <div className="source-list knowledge-results">
         {knowledgeResults.map(({ chunk, excerpt }) => <article key={chunk.id}>
-          <div><FolderSearch size={14} /><span>{chunk.headingPath}</span></div><b>{chunk.documentTitle}</b><p>{excerpt}</p>
-          <div className="source-item-actions"><button onClick={() => previewKnowledgeChunk(chunk)}>预览</button><button onClick={() => addKnowledgeChunkToContext(chunk)}>{block.sourceRefs.includes(chunk.id) ? "移除上下文" : "加入上下文"}</button></div>
+          <div><FolderSearch size={14} /><span>{chunk.headingPath}</span><em className={`knowledge-quality-badge ${chunk.quality}`}>{chunk.quality === "good" ? "优质" : chunk.quality === "bad" ? "劣质" : "普通"}</em></div><b>{chunk.documentTitle}</b><p>{excerpt}</p>
+          <div className="knowledge-result-footer">
+            <div className="source-item-actions"><button onClick={() => previewKnowledgeChunk(chunk)}>预览</button><button className={block.sourceRefs.includes(chunk.id) ? "context-added" : ""} onClick={() => addKnowledgeChunkToContext(chunk)}>{block.sourceRefs.includes(chunk.id) ? <><Check size={12} />已加入上下文</> : <><Layers3 size={12} />加入上下文</>}</button></div>
+            <div className="knowledge-quality-actions" role="group" aria-label="标记片段质量">
+              <IconButton title="标记为优质" active={chunk.quality === "good"} onClick={() => void markKnowledgeQuality(chunk, "good")}><ThumbsUp size={13} /></IconButton>
+              <IconButton title="标记为普通" active={chunk.quality === "normal"} onClick={() => void markKnowledgeQuality(chunk, "normal")}><Minus size={13} /></IconButton>
+              <IconButton title="标记为劣质" active={chunk.quality === "bad"} onClick={() => void markKnowledgeQuality(chunk, "bad")}><ThumbsDown size={13} /></IconButton>
+            </div>
+          </div>
         </article>)}
       </div>
       }
-      <div className="knowledge-documents">
-        {knowledgeGroups.map(group => <section className="knowledge-source-group" key={group.id}>
-          <div className="knowledge-section-heading"><div>{group.icon}<b>{group.label}</b><span>{group.documents.length}</span></div><em>{group.id === "local" ? "工作区 history" : "网页全文归档"}</em></div>
-          {group.documents.map(document => <article className="knowledge-document" key={document.id}>
-          <div className="knowledge-document-head">
-            <button className="knowledge-expand" title={expandedKnowledge.has(document.id) ? "收起章节" : "展开章节"} onClick={() => void toggleKnowledgeDocument(document.id)}>{expandedKnowledge.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>
-            <div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片{document.structureStatus === "review_recommended" ? " · 建议识别结构" : ""}</span><code title={document.sourceUrl || document.location}>{document.sourceUrl || document.location}</code></div>
-            <em className={`knowledge-status ${document.status}`}>{document.status === "ready" ? "已就绪" : document.status === "partial" ? "部分失败" : "待增强"}</em>
-          </div>
-          {document.error && <p className="knowledge-error">{document.error}</p>}
-          <div className="source-item-actions knowledge-actions">
-            {document.sourceUrl && <button onClick={() => void openWebSource(document.sourceUrl!)}><ExternalLink size={12} />原网页</button>}
-            {document.sourceType === "markdown" && <button disabled={knowledgeBusy} onClick={() => void reanalyzeKnowledge(document)}>重新识别</button>}
-            {document.sourceType === "markdown" && <button disabled={knowledgeBusy} onClick={() => void rebuildKnowledge(document)}>重建索引</button>}
-            {document.sourceType === "markdown" && <button disabled={knowledgeBusy} onClick={() => void restoreLatestKnowledgeBackup(document)}>恢复原文</button>}
-            {document.status !== "ready" && <button disabled={knowledgeBusy} onClick={() => { if (!project.workspace) return; setKnowledgeBusy(true); void retryKnowledgeEnrichment(project.workspace, document.id, project.model).then(reloadKnowledge).catch((e: any) => notify(e?.message ?? "重试失败")).finally(() => setKnowledgeBusy(false)); }}>重试增强</button>}
-            <button onClick={() => { if (!project.workspace || !confirm(`从知识库移出“${document.title}”？原始 Markdown 会保留。`)) return; void removeKnowledgeDocument(project.workspace, document.id).then(reloadKnowledge).catch((e: any) => notify(e?.message ?? "移出失败")); }}><Trash2 size={12} />移出</button>
-            <button className="danger" disabled={knowledgeBusy} onClick={() => void deleteIndexedKnowledge(document)}><Trash2 size={12} />删除</button>
-          </div>
-          {expandedKnowledge.has(document.id) && <div className="knowledge-tree">{(knowledgeSections[document.id] ?? []).map(section => <button key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }} onClick={() => void showSectionChunks(section)}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em>{section.chunkCount}</em></button>)}</div>}
-        </article>)}
-        </section>)}
-        {!knowledgeDocuments.length && !knowledgePending.length && <p className="muted">暂无知识文档</p>}
-      </div>
+      {!localSearching && !knowledgeResults.length && <div className="knowledge-search-empty"><BookOpen size={25} /><b>{query.trim() ? "没有匹配结果" : "输入关键词检索知识库"}</b><span>{query.trim() ? "尝试更短的关键词或章节名称" : "检索正文、章节、摘要和关键词"}</span></div>}
       </>}
-      {headingReview && <HeadingReviewModal result={headingReview} candidates={headingCandidates} setCandidates={setHeadingCandidates} busy={knowledgeBusy} close={() => { if (!knowledgeBusy) { setHeadingReview(null); setHeadingCandidates([]); } }} confirm={() => void confirmHeadingReview()} />}
     </div>}
     {tab === "search" && <div className="inspector-content sources-panel">
       <div className="search-row">

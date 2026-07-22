@@ -1,0 +1,20 @@
+{
+  "model": {
+    "baseUrl": "http://www.newxuu.top:8317/v1",
+    "apiKey": "sk-gvAFqxFL7DzNaGyBz",
+    "model": "grok-4.5",
+    "timeoutMs": 60000,
+    "headers": {},
+    "enabled": true
+  },
+  "search": {
+    "provider": "searxng",
+    "endpoint": "https://searxng.newxuu.top:1888",
+    "apiKey": "",
+    "engines": [
+      "baidu",
+      "360search",
+      "bing"
+    ]
+  }
+}

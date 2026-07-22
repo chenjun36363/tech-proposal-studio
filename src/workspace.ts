@@ -135,9 +135,9 @@ export function libraryFileToSource(file: LibraryFile): SourceRecord {
   };
 }
 
-/** Refresh local library sources from disk markdown files; keep web sources. */
+/** Refresh local library sources from disk markdown files; keep non-library sources. */
 export function mergeLibrarySources(project: Project, files: LibraryFile[]): Project {
-  const web = project.sources.filter((s) => s.kind === "web");
+  const retained = project.sources.filter((s) => s.kind !== "local");
   const byPath = new Map(project.sources.filter((s) => s.kind === "local").map((s) => [s.location, s]));
   const local = files.map((file) => {
     const old = byPath.get(file.path);
@@ -153,5 +153,5 @@ export function mergeLibrarySources(project: Project, files: LibraryFile[]): Pro
     }
     return libraryFileToSource(file);
   });
-  return { ...project, sources: [...local, ...web] };
+  return { ...project, sources: [...local, ...retained] };
 }

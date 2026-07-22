@@ -1276,6 +1276,7 @@ pub fn run() {
             ,knowledge::knowledge_sections
             ,knowledge::knowledge_search
             ,knowledge::knowledge_chunk
+            ,knowledge::knowledge_set_chunk_quality
             ,knowledge::knowledge_section_chunks
             ,knowledge::knowledge_remove
             ,knowledge::knowledge_delete_file

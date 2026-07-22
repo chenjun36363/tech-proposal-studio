@@ -109,6 +109,7 @@ pub struct KnowledgeChunk {
     start_char: i64,
     end_char: i64,
     status: String,
+    quality: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +174,49 @@ fn stable_id(prefix: &str, value: &str) -> String {
     format!("{prefix}-{}", &hash_text(value)[..24])
 }
 
+fn normalized_location(value: &str) -> String {
+    #[cfg(windows)]
+    {
+        let path = value.replace('/', "\\");
+        let path = if let Some(rest) = path.strip_prefix("\\\\?\\UNC\\") {
+            format!("\\\\{rest}")
+        } else if let Some(rest) = path.strip_prefix("\\\\?\\") {
+            rest.to_string()
+        } else {
+            path
+        };
+        path.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        value.to_string()
+    }
+}
+
+fn find_document_by_location(db: &Connection, location: &str) -> Result<Option<(String, String)>, String> {
+    if let Some(found) = db.query_row(
+        "SELECT id,fingerprint FROM knowledge_documents WHERE location=?1",
+        [location],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|e| e.to_string())? {
+        return Ok(Some(found));
+    }
+    let wanted = normalized_location(location);
+    let mut stmt = db.prepare("SELECT id,location,fingerprint FROM knowledge_documents").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
+    for row in rows {
+        let (id, stored_location, fingerprint) = row.map_err(|e| e.to_string())?;
+        if normalized_location(&stored_location) == wanted { return Ok(Some((id, fingerprint))); }
+    }
+    Ok(None)
+}
+
+fn document_id_for_location(db: &Connection, location: &str) -> Result<String, String> {
+    Ok(find_document_by_location(db, location)?
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| stable_id("kd", &normalized_location(location))))
+}
+
 fn knowledge_db(workspace: &WorkspacePaths) -> Result<Connection, String> {
     if workspace.root.trim().is_empty() { return Err("请先配置工作目录".into()); }
     let dir = PathBuf::from(&workspace.root).join(".gouan");
@@ -198,7 +242,8 @@ fn knowledge_db(workspace: &WorkspacePaths) -> Result<Connection, String> {
            section_id TEXT NOT NULL REFERENCES knowledge_sections(id) ON DELETE CASCADE,
            heading_path TEXT NOT NULL, content TEXT NOT NULL, search_text TEXT NOT NULL,
            summary TEXT NOT NULL DEFAULT '', keywords TEXT NOT NULL DEFAULT '[]', position INTEGER NOT NULL,
-           start_char INTEGER NOT NULL, end_char INTEGER NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL
+           start_char INTEGER NOT NULL, end_char INTEGER NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL,
+           quality TEXT NOT NULL DEFAULT 'normal'
          );
          CREATE TABLE IF NOT EXISTS knowledge_chunk_sections(
            chunk_id TEXT NOT NULL REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
@@ -217,6 +262,7 @@ fn knowledge_db(workspace: &WorkspacePaths) -> Result<Connection, String> {
         "ALTER TABLE knowledge_sections ADD COLUMN heading_source TEXT NOT NULL DEFAULT 'markdown'",
         "ALTER TABLE knowledge_sections ADD COLUMN original_line INTEGER",
         "ALTER TABLE knowledge_sections ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0",
+        "ALTER TABLE knowledge_chunks ADD COLUMN quality TEXT NOT NULL DEFAULT 'normal'",
     ] { let _ = db.execute(migration, []); }
     db.execute("INSERT OR IGNORE INTO knowledge_chunk_sections(chunk_id,section_id) SELECT id,section_id FROM knowledge_chunks",[]).map_err(|e|e.to_string())?;
     Ok(db)
@@ -334,13 +380,18 @@ fn emit_progress(app: &AppHandle, document_id: &str, stage: &str, current: usize
 fn store_document(workspace: &WorkspacePaths, source_type: &str, location: &str, source_url: Option<&str>, title: &str, markdown: &str) -> Result<KnowledgeDocument, String> {
     let mut db = knowledge_db(workspace)?;
     let fingerprint = hash_text(markdown);
-    let id = stable_id("kd", location);
+    let id = document_id_for_location(&db, location)?;
     if let Some(existing) = load_document(&db, &id)? {
         let version:i64=db.query_row("SELECT chunking_version FROM knowledge_documents WHERE id=?1",[&id],|r|r.get(0)).unwrap_or(1);
         if existing.fingerprint == fingerprint && version >= CHUNKING_VERSION { return Ok(existing); }
     }
     let sections = parse_sections(&id, title, markdown);
     let chunks = build_document_chunks(&id, &sections);
+    let existing_quality: BTreeMap<String, String> = {
+        let mut stmt = db.prepare("SELECT id,quality FROM knowledge_chunks WHERE document_id=?1").map_err(|e|e.to_string())?;
+        let result=stmt.query_map([&id], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|e|e.to_string())?.collect::<Result<_,_>>().map_err(|e|e.to_string())?;
+        result
+    };
     let tx = db.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM knowledge_chunk_fts WHERE chunk_id IN (SELECT id FROM knowledge_chunks WHERE document_id=?1)", [&id]).map_err(|e| e.to_string())?;
     tx.execute("INSERT INTO knowledge_documents(id,source_type,title,location,source_url,fingerprint,status,error,section_count,chunk_count,updated_at,chunking_version)
@@ -354,7 +405,8 @@ fn store_document(workspace: &WorkspacePaths, source_type: &str, location: &str,
     }
     for chunk in &chunks {
         let search_text = segmented(&format!("{} {}", chunk.heading_path, chunk.content));
-        tx.execute("INSERT INTO knowledge_chunks(id,document_id,section_id,heading_path,content,search_text,position,start_char,end_char,fingerprint,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'pending')", params![chunk.id,id,chunk.section_id,chunk.heading_path,chunk.content,search_text,chunk.position as i64,chunk.start_char as i64,chunk.end_char as i64,hash_text(&chunk.content)]).map_err(|e| e.to_string())?;
+        let quality=existing_quality.get(&chunk.id).map(String::as_str).unwrap_or("normal");
+        tx.execute("INSERT INTO knowledge_chunks(id,document_id,section_id,heading_path,content,search_text,position,start_char,end_char,fingerprint,status,quality) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'pending',?11)", params![chunk.id,id,chunk.section_id,chunk.heading_path,chunk.content,search_text,chunk.position as i64,chunk.start_char as i64,chunk.end_char as i64,hash_text(&chunk.content),quality]).map_err(|e| e.to_string())?;
         for section_id in &chunk.section_ids { tx.execute("INSERT INTO knowledge_chunk_sections(chunk_id,section_id) VALUES(?1,?2)",params![chunk.id,section_id]).map_err(|e|e.to_string())?; }
         tx.execute("INSERT INTO knowledge_chunk_fts(chunk_id,title_path,body,summary,keywords) VALUES(?1,?2,?3,'','')", params![chunk.id,segmented(&chunk.heading_path),segmented(&chunk.content)]).map_err(|e| e.to_string())?;
     }
@@ -548,8 +600,8 @@ pub fn knowledge_scan(workspace:WorkspacePaths)->Result<Vec<KnowledgeScanItem>,S
     let generated_readme=PathBuf::from(&workspace.history_dir).join("README.md");
     files.retain(|path| path != &generated_readme);
     files.into_iter().map(|path|{
-        let text=fs::read_to_string(&path).map_err(|e|e.to_string())?;let location=path.to_string_lossy().to_string();let id=stable_id("kd",&location);
-        let existing:Option<(String,String)>=db.query_row("SELECT id,fingerprint FROM knowledge_documents WHERE id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
+        let text=fs::read_to_string(&path).map_err(|e|e.to_string())?;let location=path.to_string_lossy().to_string();
+        let existing=find_document_by_location(&db,&location)?;
         let state=match existing.as_ref(){None=>"unindexed",Some((_,fingerprint))if fingerprint!=&hash_text(&text)=>"changed",Some(_)=>"indexed"};
         Ok(KnowledgeScanItem{title:path.file_stem().and_then(|x|x.to_str()).unwrap_or("未命名").into(),path:location,state:state.into(),document_id:existing.map(|x|x.0)})
     }).collect()
@@ -557,7 +609,7 @@ pub fn knowledge_scan(workspace:WorkspacePaths)->Result<Vec<KnowledgeScanItem>,S
 
 #[tauri::command]
 pub async fn knowledge_analyze_markdown(workspace:WorkspacePaths,source_path:String,config:ModelConfig)->Result<HeadingDetectionResult,String>{
-    let(destination,content)=ensure_history_copy(&workspace,&source_path)?;let location=destination.to_string_lossy().to_string();let document_id=stable_id("kd",&location);let(mut candidates,toc_start,toc_end)=detect_heading_candidates(&document_id,&content);let model_error=resolve_ambiguous_candidates(&mut candidates,&content,config).await;
+    let(destination,content)=ensure_history_copy(&workspace,&source_path)?;let location=destination.to_string_lossy().to_string();let document_id={let db=knowledge_db(&workspace)?;document_id_for_location(&db,&location)?};let(mut candidates,toc_start,toc_end)=detect_heading_candidates(&document_id,&content);let model_error=resolve_ambiguous_candidates(&mut candidates,&content,config).await;
     Ok(HeadingDetectionResult{document_id,title:destination.file_stem().and_then(|x|x.to_str()).unwrap_or("未命名").into(),path:location,candidates,toc_start,toc_end,model_error})
 }
 
@@ -580,7 +632,7 @@ fn save_heading_metadata(workspace:&WorkspacePaths,document_id:&str,decisions:&[
 
 #[tauri::command]
 pub async fn knowledge_apply_headings(app:AppHandle,workspace:WorkspacePaths,path:String,decisions:Vec<HeadingReviewDecision>,toc_start:Option<usize>,toc_end:Option<usize>,config:ModelConfig)->Result<KnowledgeDocument,String>{
-    let source=validate_history_path(&workspace,&path)?;let original=fs::read_to_string(&source).map_err(|e|e.to_string())?;let document_id=stable_id("kd",&source.to_string_lossy());backup_original(&workspace,&document_id,&source,&original)?;let normalized=apply_heading_decisions(&original,&decisions,toc_start,toc_end);fs::write(&source,&normalized).map_err(|e|e.to_string())?;let title=source.file_stem().and_then(|x|x.to_str()).unwrap_or("未命名");emit_progress(&app,&document_id,"chunking",0,1,"正在按确认后的结构切片");let doc=match store_document(&workspace,"markdown",&source.to_string_lossy(),None,title,&normalized){Ok(doc)=>doc,Err(error)=>{let _=fs::write(&source,&original);return Err(error);}};save_heading_metadata(&workspace,&doc.id,&decisions,&original,&normalized,"confirmed")?;enrich_document(&app,&workspace,&doc.id,config).await
+    let source=validate_history_path(&workspace,&path)?;let original=fs::read_to_string(&source).map_err(|e|e.to_string())?;let location=source.to_string_lossy();let document_id={let db=knowledge_db(&workspace)?;document_id_for_location(&db,&location)?};backup_original(&workspace,&document_id,&source,&original)?;let normalized=apply_heading_decisions(&original,&decisions,toc_start,toc_end);fs::write(&source,&normalized).map_err(|e|e.to_string())?;let title=source.file_stem().and_then(|x|x.to_str()).unwrap_or("未命名");emit_progress(&app,&document_id,"chunking",0,1,"正在按确认后的结构切片");let doc=match store_document(&workspace,"markdown",&location,None,title,&normalized){Ok(doc)=>doc,Err(error)=>{let _=fs::write(&source,&original);return Err(error);}};save_heading_metadata(&workspace,&doc.id,&decisions,&original,&normalized,"confirmed")?;enrich_document(&app,&workspace,&doc.id,config).await
 }
 
 #[tauri::command]
@@ -602,7 +654,7 @@ pub async fn knowledge_import_markdown(app:AppHandle,workspace:WorkspacePaths,so
     let history=PathBuf::from(&workspace.history_dir);
     let destination=if source.starts_with(&history){source}else{unique_destination(&history,&safe_markdown_name(source.file_name().and_then(|x|x.to_str()).unwrap_or("知识文档.md")))};
     if destination!=PathBuf::from(&source_path){fs::write(&destination,&content).map_err(|e|e.to_string())?;}
-    let title=destination.file_stem().and_then(|x|x.to_str()).unwrap_or("未命名");let location=destination.to_string_lossy().to_string();let id=stable_id("kd",&location);
+    let title=destination.file_stem().and_then(|x|x.to_str()).unwrap_or("未命名");let location=destination.to_string_lossy().to_string();let id={let db=knowledge_db(&workspace)?;document_id_for_location(&db,&location)?};
     emit_progress(&app,&id,"parsing",0,1,"正在解析 Markdown");let doc=store_document(&workspace,"markdown",&location,None,title,&content)?;
     enrich_document(&app,&workspace,&doc.id,config).await
 }
@@ -626,25 +678,32 @@ pub fn knowledge_sections(workspace:WorkspacePaths,document_id:String)->Result<V
     Ok(result)
 }
 
-fn chunk_from_row(r:&rusqlite::Row<'_>)->rusqlite::Result<KnowledgeChunk>{Ok(KnowledgeChunk{id:r.get(0)?,document_id:r.get(1)?,section_id:r.get(2)?,document_title:r.get(3)?,heading_path:r.get(4)?,content:r.get(5)?,summary:r.get(6)?,keywords:serde_json::from_str::<Vec<String>>(&r.get::<_,String>(7)?).unwrap_or_default(),position:r.get(8)?,start_char:r.get(9)?,end_char:r.get(10)?,status:r.get(11)?})}
+fn chunk_from_row(r:&rusqlite::Row<'_>)->rusqlite::Result<KnowledgeChunk>{Ok(KnowledgeChunk{id:r.get(0)?,document_id:r.get(1)?,section_id:r.get(2)?,document_title:r.get(3)?,heading_path:r.get(4)?,content:r.get(5)?,summary:r.get(6)?,keywords:serde_json::from_str::<Vec<String>>(&r.get::<_,String>(7)?).unwrap_or_default(),position:r.get(8)?,start_char:r.get(9)?,end_char:r.get(10)?,status:r.get(11)?,quality:r.get(12)?})}
 
 #[tauri::command]
-pub fn knowledge_search(workspace:WorkspacePaths,query:String,limit:Option<usize>)->Result<Vec<KnowledgeSearchResult>,String>{
+pub fn knowledge_search(workspace:WorkspacePaths,query:String,limit:Option<usize>,qualities:Option<Vec<String>>)->Result<Vec<KnowledgeSearchResult>,String>{
     let db=knowledge_db(&workspace)?;let trimmed=query.trim();if trimmed.is_empty(){return Ok(Vec::new());}let tokens=segmented(trimmed).split_whitespace().map(|x|format!("\"{}\"",x.replace('\"',""))).collect::<Vec<_>>().join(" AND ");
-    let sql="SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.summary,c.keywords,c.position,c.start_char,c.end_char,c.status,(bm25(knowledge_chunk_fts)-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END) AS score FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id WHERE knowledge_chunk_fts MATCH ?1 ORDER BY score,c.position LIMIT ?3";
-    let mut stmt=db.prepare(sql).map_err(|e|e.to_string())?;let rows=stmt.query_map(params![tokens,trimmed,limit.unwrap_or(30).min(100) as i64],|r|{let chunk=chunk_from_row(r)?;let raw=chunk.content.replace('\n'," ");let excerpt=raw.chars().take(220).collect();Ok(KnowledgeSearchResult{chunk,excerpt,score:r.get(12)?})}).map_err(|e|e.to_string())?;
+    let qualities=qualities.unwrap_or_else(||vec!["good".into(),"normal".into()]);let include_good=qualities.iter().any(|x|x=="good");let include_normal=qualities.iter().any(|x|x=="normal");let include_bad=qualities.iter().any(|x|x=="bad");
+    let sql="SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.summary,c.keywords,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts)-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END) AS score FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')) ORDER BY CASE c.quality WHEN 'good' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,score,c.position LIMIT ?6";
+    let mut stmt=db.prepare(sql).map_err(|e|e.to_string())?;let rows=stmt.query_map(params![tokens,trimmed,include_good,include_normal,include_bad,limit.unwrap_or(30).min(100) as i64],|r|{let chunk=chunk_from_row(r)?;let raw=chunk.content.replace('\n'," ");let excerpt=raw.chars().take(220).collect();Ok(KnowledgeSearchResult{chunk,excerpt,score:r.get(13)?})}).map_err(|e|e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e|e.to_string())
 }
 
 #[tauri::command]
 pub fn knowledge_chunk(workspace:WorkspacePaths,chunk_id:String)->Result<KnowledgeChunk,String>{
-    let db=knowledge_db(&workspace)?;db.query_row("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.summary,c.keywords,c.position,c.start_char,c.end_char,c.status FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id WHERE c.id=?1",[chunk_id],chunk_from_row).map_err(|e|e.to_string())
+    let db=knowledge_db(&workspace)?;db.query_row("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.summary,c.keywords,c.position,c.start_char,c.end_char,c.status,c.quality FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id WHERE c.id=?1",[chunk_id],chunk_from_row).map_err(|e|e.to_string())
+}
+
+#[tauri::command]
+pub fn knowledge_set_chunk_quality(workspace:WorkspacePaths,chunk_id:String,quality:String)->Result<KnowledgeChunk,String>{
+    if !matches!(quality.as_str(),"good"|"normal"|"bad"){return Err("片段质量状态无效".into());}
+    let db=knowledge_db(&workspace)?;let changed=db.execute("UPDATE knowledge_chunks SET quality=?2 WHERE id=?1",params![chunk_id,quality]).map_err(|e|e.to_string())?;if changed==0{return Err("知识片段不存在".into());}drop(db);knowledge_chunk(workspace,chunk_id)
 }
 
 #[tauri::command]
 pub fn knowledge_section_chunks(workspace:WorkspacePaths,section_id:String)->Result<Vec<KnowledgeChunk>,String>{
     let db=knowledge_db(&workspace)?;
-    let mut stmt=db.prepare("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.summary,c.keywords,c.position,c.start_char,c.end_char,c.status FROM knowledge_chunk_sections m JOIN knowledge_chunks c ON c.id=m.chunk_id JOIN knowledge_documents d ON d.id=c.document_id WHERE m.section_id=?1 ORDER BY c.position").map_err(|e|e.to_string())?;
+    let mut stmt=db.prepare("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.summary,c.keywords,c.position,c.start_char,c.end_char,c.status,c.quality FROM knowledge_chunk_sections m JOIN knowledge_chunks c ON c.id=m.chunk_id JOIN knowledge_documents d ON d.id=c.document_id WHERE m.section_id=?1 ORDER BY c.position").map_err(|e|e.to_string())?;
     let result=stmt.query_map([section_id],chunk_from_row).map_err(|e|e.to_string())?.collect::<Result<_,_>>().map_err(|e|e.to_string())?;
     Ok(result)
 }
@@ -657,7 +716,7 @@ pub fn knowledge_delete_file(workspace:WorkspacePaths,path:String,document_id:Op
     let target=validate_history_path(&workspace,&path)?;if !target.is_file(){return Err("知识文档不存在".into());}
     if target.file_name().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("README.md")){return Err("不能删除知识库说明文件".into());}
     let db=knowledge_db(&workspace)?;
-    let indexed_id=if let Some(requested)=document_id.as_ref(){let indexed_path:String=db.query_row("SELECT location FROM knowledge_documents WHERE id=?1",[requested],|r|r.get(0)).map_err(|e|e.to_string())?;let canonical_indexed=fs::canonicalize(indexed_path).map_err(|e|e.to_string())?;if canonical_indexed!=target{return Err("文档索引与文件不匹配".into());}Some(requested.clone())}else{db.query_row("SELECT id FROM knowledge_documents WHERE location=?1 OR location=?2",params![path,target.to_string_lossy().as_ref()],|r|r.get(0)).optional().map_err(|e|e.to_string())?};
+    let indexed_id=if let Some(requested)=document_id.as_ref(){let indexed_path:String=db.query_row("SELECT location FROM knowledge_documents WHERE id=?1",[requested],|r|r.get(0)).map_err(|e|e.to_string())?;let canonical_indexed=fs::canonicalize(indexed_path).map_err(|e|e.to_string())?;if canonical_indexed!=target{return Err("文档索引与文件不匹配".into());}Some(requested.clone())}else{find_document_by_location(&db,target.to_string_lossy().as_ref())?.map(|(id,_)|id)};
     fs::remove_file(&target).map_err(|e|format!("删除知识文档失败: {e}"))?;
     if let Some(id)=indexed_id{db.execute("DELETE FROM knowledge_chunk_fts WHERE chunk_id IN(SELECT id FROM knowledge_chunks WHERE document_id=?1)",[&id]).map_err(|e|e.to_string())?;db.execute("DELETE FROM knowledge_documents WHERE id=?1",[id]).map_err(|e|e.to_string())?;}
     Ok(())
@@ -688,6 +747,16 @@ pub async fn knowledge_import_web(app:AppHandle,workspace:WorkspacePaths,url:Str
 #[cfg(test)]
 mod tests{
  use super::*;
+ #[cfg(windows)]
+ #[test] fn treats_windows_verbatim_and_regular_paths_as_the_same_location(){
+   assert_eq!(normalized_location(r"\\?\E:\Knowledge\Doc.md"),normalized_location(r"e:/knowledge/doc.md"));
+   assert_eq!(normalized_location(r"\\?\UNC\server\share\Doc.md"),normalized_location(r"\\server\share\doc.md"));
+ }
+ #[cfg(windows)]
+ #[test] fn scan_recognizes_an_existing_verbatim_path_index(){
+   let nonce=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("gouan-path-test-{nonce}"));let history=root.join("history");fs::create_dir_all(&history).unwrap();let source=history.join("document.md");let markdown="# 文档\n\n正文";fs::write(&source,markdown).unwrap();
+   let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};let regular=source.to_string_lossy();let verbatim=format!(r"\\?\{regular}");store_document(&workspace,"markdown",&verbatim,None,"文档",markdown).unwrap();let scanned=knowledge_scan(workspace).unwrap();assert_eq!(scanned.len(),1);assert_eq!(scanned[0].state,"indexed");let _=fs::remove_dir_all(root);
+ }
  #[test] fn parses_tree_and_ignores_fenced_headings(){let s=parse_sections("d","Doc","intro\n# A\nbody\n```md\n# fake\n```\n### C\ntext");assert_eq!(s.len(),3);assert_eq!(s[1].title,"A");assert_eq!(s[2].path,"A > C");}
  #[test] fn does_not_create_empty_preamble_but_keeps_empty_heading(){let s=parse_sections("d","Doc","# A\n## Empty\n");assert_eq!(s.len(),2);assert_eq!(s[0].title,"A");assert_eq!(s[1].title,"Empty");}
  #[test] fn chunks_with_overlap(){let body=(0..13000).map(|i|if i%80==0{'\n'}else{'中'}).collect::<String>();let s=ParsedSection{id:"s".into(),parent_id:None,title:"T".into(),path:"T".into(),level:1,position:0,body};let c=split_section("d",&s);assert!(c.len()>=3);assert_eq!(c[1].start_char,c[0].end_char-CHUNK_OVERLAP_CHARS);}
@@ -702,6 +771,6 @@ mod tests{
  #[test] fn indexes_searches_and_removes_without_deleting_source(){
    let root=std::env::temp_dir().join(format!("gouan-knowledge-test-{}",now_string()));let history=root.join("history");fs::create_dir_all(&history).unwrap();let source=history.join("payment.md");let markdown="# 支付架构\n\n接口使用幂等键避免重复扣款。";fs::write(&source,markdown).unwrap();
    let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};let location=source.to_string_lossy().to_string();let first=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();let second=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();assert_eq!(first.id,second.id);
-   let hits=knowledge_search(workspace.clone(),"幂等".into(),Some(10)).unwrap();assert_eq!(hits.len(),1);assert!(hits[0].chunk.content.contains("重复扣款"));knowledge_remove(workspace.clone(),first.id).unwrap();assert!(source.exists());assert!(knowledge_list(workspace.clone()).unwrap().is_empty());let restored=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();knowledge_delete_file(workspace.clone(),location,Some(restored.id)).unwrap();assert!(!source.exists());assert!(knowledge_list(workspace).unwrap().is_empty());let _=fs::remove_dir_all(root);
+   let hits=knowledge_search(workspace.clone(),"幂等".into(),Some(10),None).unwrap();assert_eq!(hits.len(),1);assert!(hits[0].chunk.content.contains("重复扣款"));let chunk_id=hits[0].chunk.id.clone();knowledge_set_chunk_quality(workspace.clone(),chunk_id.clone(),"bad".into()).unwrap();assert!(knowledge_search(workspace.clone(),"幂等".into(),Some(10),None).unwrap().is_empty());assert_eq!(knowledge_search(workspace.clone(),"幂等".into(),Some(10),Some(vec!["bad".into()])).unwrap().len(),1);knowledge_set_chunk_quality(workspace.clone(),chunk_id,"good".into()).unwrap();knowledge_remove(workspace.clone(),first.id).unwrap();assert!(source.exists());assert!(knowledge_list(workspace.clone()).unwrap().is_empty());let restored=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();knowledge_delete_file(workspace.clone(),location,Some(restored.id)).unwrap();assert!(!source.exists());assert!(knowledge_list(workspace).unwrap().is_empty());let _=fs::remove_dir_all(root);
  }
 }
