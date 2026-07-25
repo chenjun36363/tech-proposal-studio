@@ -1,4 +1,4 @@
-import type { ConnectionSettings, OpenAICompatibleConfig, Project, SearchConfig } from "./types";
+import type { ConnectionSettings, MinerUConfig, OpenAICompatibleConfig, Project, SearchConfig } from "./types";
 import { createProject } from "./data";
 import { isDesktop } from "./services";
 import { invoke } from "@tauri-apps/api/core";
@@ -14,7 +14,7 @@ export function connectionsFilePath(root: string): string {
 
 function defaults(): ConnectionSettings {
   const base = createProject();
-  return { model: { ...base.model }, search: { ...base.search } };
+  return { model: { ...base.model }, search: { ...base.search }, mineru: { ...base.mineru } };
 }
 
 function normalizeModel(raw: Partial<OpenAICompatibleConfig> | undefined): OpenAICompatibleConfig {
@@ -42,11 +42,35 @@ function normalizeSearch(raw: Partial<SearchConfig> | undefined): SearchConfig {
   };
 }
 
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+export function normalizeMineru(raw: Partial<MinerUConfig> | undefined | null): MinerUConfig {
+  const d = defaults().mineru;
+  const modelVersion = typeof raw?.modelVersion === "string" && raw.modelVersion.trim()
+    ? raw.modelVersion.trim()
+    : d.modelVersion;
+  return {
+    baseUrl: typeof raw?.baseUrl === "string" && raw.baseUrl.trim() ? raw.baseUrl.trim() : d.baseUrl,
+    apiKey: typeof raw?.apiKey === "string" ? raw.apiKey : "",
+    modelVersion,
+    language: typeof raw?.language === "string" && raw.language.trim() ? raw.language.trim() : d.language,
+    isOcr: typeof raw?.isOcr === "boolean" ? raw.isOcr : d.isOcr,
+    enableTable: typeof raw?.enableTable === "boolean" ? raw.enableTable : d.enableTable,
+    enableFormula: typeof raw?.enableFormula === "boolean" ? raw.enableFormula : d.enableFormula,
+    timeoutSeconds: clampInt(raw?.timeoutSeconds, d.timeoutSeconds, 30, 1800),
+    pollIntervalSeconds: clampInt(raw?.pollIntervalSeconds, d.pollIntervalSeconds, 1, 30),
+  };
+}
+
 export function normalizeConnections(raw: unknown): ConnectionSettings {
   const obj = (raw && typeof raw === "object" ? raw : {}) as Partial<ConnectionSettings>;
   return {
     model: normalizeModel(obj.model),
     search: normalizeSearch(obj.search),
+    mineru: normalizeMineru(obj.mineru),
   };
 }
 
@@ -54,6 +78,7 @@ export function connectionsFromProject(project: Project): ConnectionSettings {
   return {
     model: { ...project.model, headers: { ...project.model.headers } },
     search: { ...project.search },
+    mineru: normalizeMineru(project.mineru),
   };
 }
 
@@ -64,6 +89,7 @@ export function applyConnections(project: Project, conn: ConnectionSettings | nu
     ...project,
     model: next.model,
     search: next.search,
+    mineru: next.mineru,
   };
 }
 
@@ -116,6 +142,9 @@ export async function syncConnectionSecrets(conn: ConnectionSettings): Promise<v
     }
     if (conn.search.apiKey) {
       await invoke("store_secret", { name: "search-api-key", value: conn.search.apiKey });
+    }
+    if (conn.mineru.apiKey) {
+      await invoke("store_secret", { name: "mineru-api-key", value: conn.mineru.apiKey });
     }
   } catch {
     /* keyring optional */

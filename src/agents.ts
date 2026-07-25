@@ -1,7 +1,7 @@
 import type { CommandPreset, DocumentBlock, Project } from "./types";
 import { makeId } from "./data";
 
-export type AgentToolId = "claude" | "codex" | "opencode";
+export type AgentToolId = "claude" | "codex" | "opencode" | "codebuddy";
 
 export interface AgentTool {
   id: AgentToolId;
@@ -43,6 +43,16 @@ export const agentTools: AgentTool[] = [
     description: "opencode run 非交互执行",
     timeoutMs: 300_000,
     buildArgs: (prompt) => ["run", "--model", "opencode/deepseek-v4-flash-free", prompt],
+  },
+  {
+    id: "codebuddy",
+    name: "CodeBuddy",
+    program: "codebuddy",
+    installPackage: "@tencent-ai/codebuddy-code",
+    description: "腾讯云 AI 代码助手，-p 非交互执行",
+    timeoutMs: 300_000,
+    buildArgs: () => ["-p"],
+    promptViaStdin: true,
   },
 ];
 

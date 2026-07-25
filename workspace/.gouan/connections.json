@@ -2,7 +2,7 @@
   "model": {
     "baseUrl": "http://www.newxuu.top:8317/v1",
     "apiKey": "sk-gvAFqxFL7DzNaGyBz",
-    "model": "grok-4.5",
+    "model": "deepseek-v4-flash-free",
     "timeoutMs": 60000,
     "headers": {},
     "enabled": true
@@ -16,5 +16,16 @@
       "360search",
       "bing"
     ]
+  },
+  "mineru": {
+    "baseUrl": "https://mineru.net",
+    "apiKey": "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4MjYwODc0NiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc4MDcxNTMyMSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiMTczMTI2NDY2NjMiLCJvcGVuSWQiOm51bGwsInV1aWQiOiI5MjljMzBhOC1jZjA1LTQ0MTQtOGU0My05MDZlYmYyNDhkMTQiLCJlbWFpbCI6IiIsImV4cCI6MTc4ODQ5MTMyMX0.j5KWvcB-D0ltNRFBWqFdQWpM2fEwKYxUTph66zuqSaMXT7RmGRbwGtik7VXg8rNVdFaZtimnlNJzF7qhpzzsow",
+    "modelVersion": "vlm",
+    "language": "ch",
+    "isOcr": false,
+    "enableTable": true,
+    "enableFormula": true,
+    "timeoutSeconds": 300,
+    "pollIntervalSeconds": 3
   }
 }

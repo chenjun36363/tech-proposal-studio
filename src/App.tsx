@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Bot, Braces, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Copy, Download, ExternalLink, Eye, FilePlus2, FolderOpen, FolderSearch, Globe2, GripVertical, Highlighter, Info, Italic, Layers3, Maximize2, Minimize2, Minus, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, TerminalSquare, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { Bold, BookOpen, Bot, Braces, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Copy, Download, ExternalLink, Eye, FilePlus2, FolderOpen, FolderSearch, Globe2, GripVertical, Highlighter, Info, Italic, Layers3, Maximize2, Minimize2, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, TerminalSquare, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { toggleTheme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext, type AgentToolId } from "./agents";
@@ -29,6 +30,7 @@ import {
   loadWorkspaceConfig,
   mergeLibrarySources,
   pickDirectory,
+  pickDocumentFile,
   pickMarkdownFile,
   readTextFile,
   saveWorkspaceConfig,
@@ -37,6 +39,7 @@ import {
   writeLibraryMarkdown,
   writeTextFile,
 } from "./workspace";
+import { importWordOrPdfToWorkspace } from "./documentImport";
 import {
   applyConnections,
   connectionsFromProject,
@@ -67,14 +70,14 @@ import {
 } from "./knowledge";
 import type { HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope } from "./types";
 
-type RightTab = "ai" | "commands" | "context" | "sources" | "search" | "env";
+type RightTab = "ai" | "commands" | "context" | "sources" | "search";
 type EditorMode = "section" | "full";
 const RIGHT_PANEL_MIN = 280;
 const RIGHT_PANEL_MAX = 720;
-const RIGHT_PANEL_DEFAULT = 360;
+const RIGHT_PANEL_DEFAULT = 400;
 const LEFT_PANEL_MIN = 180;
 const LEFT_PANEL_MAX = 480;
-const LEFT_PANEL_DEFAULT = 240;
+const LEFT_PANEL_DEFAULT = 220;
 const cleanCommandOutput = (value: string) => value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim();
 const KNOWLEDGE_SEARCH_FIELDS: Array<{ id: KnowledgeSearchField; label: string }> = [
   { id: "documentTitle", label: "标题" },
@@ -252,11 +255,20 @@ export default function App() {
   const [project, setProject] = useState<Project>(() => withWorkspace(loadProject(), loadWorkspaceConfig()));
   const [rightTab, setRightTab] = useState<RightTab>("ai");
   const [rightOpen, setRightOpen] = useState(true);
+  const [themeDark, setThemeDark] = useState(() => document.documentElement.classList.contains("dark"));
   const [rightWidth, setRightWidth] = useState(RIGHT_PANEL_DEFAULT);
   const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_DEFAULT);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [importingDoc, setImportingDoc] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [knowledgeManagerOpen, setKnowledgeManagerOpen] = useState(false);
+  const [webSearchOpen, setWebSearchOpen] = useState(false);
+  const [envOpen, setEnvOpen] = useState(false);
+  const [envToolPaths, setEnvToolPaths] = useState<Record<string, string>>({});
+  const [envCommandOutputs, setEnvCommandOutputs] = useState<Record<string, CommandResult | { error: string }>>({});
+  const [envRunningId, setEnvRunningId] = useState<string | null>(null);
+  const [envInstallingAgentId, setEnvInstallingAgentId] = useState<AgentToolId | null>(null);
+  const [envInstallOutputs, setEnvInstallOutputs] = useState<Partial<Record<AgentToolId, CommandResult | { error: string }>>>({});
   const [toast, setToast] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
   const [fileMenu, setFileMenu] = useState(false);
@@ -361,6 +373,48 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desktop]);
 
+  useEffect(() => {
+    if (!desktop) return;
+    detectTools().then(setEnvToolPaths).catch(() => setEnvToolPaths({}));
+  }, [desktop]);
+
+  const envInstallAgent = async (tool: (typeof agentTools)[number]) => {
+    if (!desktop) return notify("请在 Tauri 桌面端安装 CLI 工具");
+    setEnvInstallingAgentId(tool.id);
+    setEnvInstallOutputs(current => ({ ...current, [tool.id]: undefined }));
+    try {
+      const result = await runCommand(buildAgentInstallCommand(tool));
+      setEnvInstallOutputs(current => ({ ...current, [tool.id]: result }));
+      if (result.exitCode !== 0) {
+        notify(`${tool.name} 安装失败，退出码 ${result.exitCode}`);
+        return;
+      }
+      setEnvToolPaths(await detectTools());
+      notify(`${tool.name} 已安装`);
+    } catch (e: any) {
+      const error = e?.message ?? String(e);
+      setEnvInstallOutputs(current => ({ ...current, [tool.id]: { error } }));
+      notify(error);
+    } finally {
+      setEnvInstallingAgentId(null);
+    }
+  };
+
+  const envRunTask = async (command: Project["commands"][number]) => {
+    if (!desktop) return notify("请在 Tauri 桌面端运行此任务");
+    setEnvRunningId(command.id);
+    try {
+      const result = await runCommand(command);
+      setEnvCommandOutputs(prev => ({ ...prev, [command.id]: result }));
+      notify(result.exitCode === 0 ? `${command.name} 完成` : `${command.name} 退出码 ${result.exitCode}`);
+    } catch (e: any) {
+      setEnvCommandOutputs(prev => ({ ...prev, [command.id]: { error: e?.message ?? String(e) } }));
+      notify(e?.message ?? "任务执行失败");
+    } finally {
+      setEnvRunningId(null);
+    }
+  };
+
   const updateProject = (fn: (p: Project) => Project, remember = true) => {
     if (remember) {
       history.current.push(structuredClone(project));
@@ -429,30 +483,10 @@ export default function App() {
 
   const expandAll = () => setCollapsedHeadings(new Set());
 
-  const collapseAll = () => {
-    const next = new Set<string>();
-    const walk = (nodes: typeof headingTree) => {
-      for (const n of nodes) {
-        if (n.children.length > 0) next.add(n.heading.id);
-        walk(n.children);
-      }
-    };
-    walk(headingTree);
-    setCollapsedHeadings(next);
-  };
-
   const expandToLevel = (level: number) => {
     const next = new Set<string>();
     for (const h of headings) {
       if (h.level > level) next.add(h.id);
-    }
-    setCollapsedHeadings(next);
-  };
-
-  const collapseToLevel = (level: number) => {
-    const next = new Set<string>();
-    for (const h of headings) {
-      if (h.level >= level) next.add(h.id);
     }
     setCollapsedHeadings(next);
   };
@@ -761,6 +795,35 @@ export default function App() {
     }
   };
 
+  const importWordPdfFromDialog = async () => {
+    if (!desktop) return notify("Word/PDF 导入仅在桌面端可用");
+    const root = workspace?.root;
+    if (!root) return notify("请先在设置中配置工作目录");
+    // Reload connections from disk — project localStorage strips mineru.apiKey.
+    const freshConn = await loadWorkspaceConnections(root);
+    if (freshConn) {
+      setProject(p => applyConnections(p, freshConn));
+    }
+    const sourcePath = await pickDocumentFile("选择要导入的 Word / PDF（推荐 .docx / .pdf）", root);
+    if (!sourcePath) return;
+    setImportingDoc(true);
+    try {
+      const { path, sourceFileName, assetRelativeDir } = await importWordOrPdfToWorkspace(
+        sourcePath,
+        root,
+        freshConn?.mineru ?? project.mineru,
+      );
+      await openMarkdownPath(path);
+      await refreshWorkspaceDocs();
+      const assetsHint = assetRelativeDir ? `，图片 → ${assetRelativeDir}` : "";
+      notify(`已通过 MinerU 导入：${sourceFileName} → ${path.split(/[\\/]/).pop()}${assetsHint}`);
+    } catch (e: any) {
+      notify(e?.message ?? "Word/PDF 导入失败");
+    } finally {
+      setImportingDoc(false);
+    }
+  };
+
   const createNewFile = async () => {
     if (!desktop) return notify("新建文件仅在桌面端可用");
     const root = workspace?.root;
@@ -916,8 +979,8 @@ export default function App() {
   };
 
   const workspaceGridStyle = rightOpen
-    ? { gridTemplateColumns: `${leftWidth}px 5px 1fr 5px ${rightWidth}px` }
-    : { gridTemplateColumns: `${leftWidth}px 5px 1fr 36px` };
+    ? { gridTemplateColumns: `${leftWidth}px 5px 1fr 5px ${rightWidth}px`, gridTemplateRows: "minmax(0, 1fr)" }
+    : { gridTemplateColumns: `${leftWidth}px 5px 1fr 36px`, gridTemplateRows: "minmax(0, 1fr)" };
 
   return <div className="app-shell">
     <header className="topbar">
@@ -928,6 +991,7 @@ export default function App() {
       </div>
       <div className="top-actions">
         <button className="text-button" disabled={!desktop} title={desktop ? "管理知识文档与索引" : "知识管理仅在桌面端可用"} onClick={() => setKnowledgeManagerOpen(true)}><BookOpen size={16} />知识管理</button>
+        <button className="text-button" title="联网搜索" onClick={() => setWebSearchOpen(true)}><Globe2 size={16} />联网搜索</button>
         <IconButton
           title={!desktop ? "PowerShell 仅在桌面端可用" : !workspace?.root ? "请先配置工作区" : "在工作区打开 PowerShell"}
           disabled={!desktop || !workspace?.root}
@@ -950,14 +1014,30 @@ export default function App() {
         >
           {rightOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
         </IconButton>
+        <IconButton
+          title={themeDark ? "切换到亮色" : "切换到暗色"}
+          onClick={() => setThemeDark(toggleTheme() === "dark")}
+        >
+          {themeDark ? <Sun size={18} /> : <Moon size={18} />}
+        </IconButton>
         <IconButton title="设置" onClick={() => setSettingsOpen(true)}><Settings size={18} /></IconButton>
         <div className="file-menu" ref={fileMenuRef}>
           <IconButton title="文件操作" active={fileMenu} onClick={() => setFileMenu(value => !value)}><MoreHorizontal size={18} /></IconButton>
           {fileMenu && <div className="file-dropdown">
             <button type="button" onClick={() => { setFileMenu(false); void createNewFile(); }}><FilePlus2 size={15} />新建</button>
-            <button type="button" onClick={() => { setFileMenu(false); void importFromDialog(); }}><Download size={15} />导入</button>
+            <button type="button" onClick={() => { setFileMenu(false); void importFromDialog(); }}><Download size={15} />导入 Markdown</button>
+            <button
+              type="button"
+              disabled={importingDoc || !desktop}
+              title={!desktop ? "仅桌面端可用" : importingDoc ? "MinerU 解析中…" : "通过 MinerU 将 Word/PDF 转为 Markdown"}
+              onClick={() => { setFileMenu(false); void importWordPdfFromDialog(); }}
+            >
+              <FilePlus2 size={15} />{importingDoc ? "解析中…" : "导入 Word/PDF"}
+            </button>
             <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); void reloadCurrentMarkdown(); }}><RefreshCw size={15} />重新加载</button>
             <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); void renameCurrentFile(); }}><Pencil size={15} />重命名</button>
+            <div className="file-dropdown-sep" />
+            <button type="button" onClick={() => { setFileMenu(false); setEnvOpen(true); }}><Command size={15} />环境检查</button>
           </div>}
         </div>
       </div>
@@ -986,17 +1066,10 @@ export default function App() {
         </div>
         <div className="toc-actions">
           <div className="toc-actions-row">
-            <span className="toc-actions-label-sep">展开到</span>
+            <span className="toc-actions-label-sep">显示级别</span>
             <span className="toc-action-btn-group">
-              {[2, 3, 4].map(l => <button key={`e${l}`} className="toc-action-btn" onClick={() => expandToLevel(l)}>{l}级</button>)}
+              {[1, 2, 3, 4].map(l => <button key={`e${l}`} className="toc-action-btn" onClick={() => expandToLevel(l)}>{l}级</button>)}
               <button type="button" className="toc-action-btn" onClick={expandAll}>全部</button>
-            </span>
-          </div>
-          <div className="toc-actions-row">
-            <span className="toc-actions-label-sep">收起到</span>
-            <span className="toc-action-btn-group">
-              {[2, 3, 4].map(l => <button key={`c${l}`} className="toc-action-btn" onClick={() => collapseToLevel(l)}>{l}级</button>)}
-              <button type="button" className="toc-action-btn" onClick={collapseAll}>全部</button>
             </span>
           </div>
         </div>
@@ -1054,6 +1127,7 @@ export default function App() {
           </div>
           <span className="format-divider" />
           <span className="heading-toolbar-label">设置标题</span>
+          <div className="heading-level-group">
           {[1, 2, 3, 4, 5, 6].map(level => (
             <button
               key={level}
@@ -1065,6 +1139,7 @@ export default function App() {
               H{level}
             </button>
           ))}
+          </div>
           <button type="button" className="heading-renumber-btn" onClick={renumberAllHeadings}>重编号</button>
           <span className="format-divider" />
           <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
@@ -1211,6 +1286,7 @@ export default function App() {
             workspace: workspacePaths ?? next.workspace,
             model: conn.model,
             search: conn.search,
+            mineru: conn.mineru,
           });
           setSettingsOpen(false);
           notify(root ? "设置已保存到工作区" : "设置已保存（浏览器本地）");
@@ -1225,6 +1301,13 @@ export default function App() {
       updateBlock={updateActiveBlock}
       notify={notify}
       close={() => setKnowledgeManagerOpen(false)}
+    />}
+    {webSearchOpen && <WebSearchModal
+      project={project}
+      block={activeBlock}
+      updateProject={updateProject}
+      notify={notify}
+      close={() => setWebSearchOpen(false)}
     />}
     {sourceOpen && <SourceModal
       historyDir={workspace?.historyDir || ""}
@@ -1246,7 +1329,67 @@ export default function App() {
         }
       }}
     />}
+    {envOpen && <EnvModal
+      desktop={desktop}
+      project={project}
+      toolPaths={envToolPaths}
+      commandOutputs={envCommandOutputs}
+      runningId={envRunningId}
+      installingAgentId={envInstallingAgentId}
+      installOutputs={envInstallOutputs}
+      installAgent={envInstallAgent}
+      runTask={envRunTask}
+      close={() => setEnvOpen(false)}
+    />}
     {toast && <div className="toast"><Check size={16} />{toast}</div>}
+  </div>;
+}
+
+function EnvModal({ desktop, project, toolPaths, commandOutputs, runningId, installingAgentId, installOutputs, installAgent, runTask, close }: {
+  desktop: boolean;
+  project: Project;
+  toolPaths: Record<string, string>;
+  commandOutputs: Record<string, CommandResult | { error: string }>;
+  runningId: string | null;
+  installingAgentId: AgentToolId | null;
+  installOutputs: Partial<Record<AgentToolId, CommandResult | { error: string }>>;
+  installAgent: (tool: (typeof agentTools)[number]) => void;
+  runTask: (command: Project["commands"][number]) => void;
+  close: () => void;
+}) {
+  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+    <div className="modal env-modal" onMouseDown={e => e.stopPropagation()}>
+      <div className="modal-title">
+        <div><Command size={18} /><span>环境检查</span></div>
+        <IconButton title="关闭" onClick={close}><X size={17} /></IconButton>
+      </div>
+      <div className="env-modal-body">
+        <div className="agent-title"><Download size={15} />Agent CLI</div>
+        <div className="installer-list">
+          {agentTools.map(tool => {
+            const installed = Boolean(toolPaths[tool.program]);
+            const output = installOutputs[tool.id];
+            const installing = installingAgentId === tool.id;
+            return <div className={`installer-item ${installed ? "ready" : "missing"}`} key={tool.id}>
+              <div className="installer-status"><span /><b>{tool.name}</b><em>{installed ? "已安装" : "未检测"}</em></div>
+              <code title={installed ? toolPaths[tool.program] : undefined}>{installed ? toolPaths[tool.program] : `npm i -g ${tool.installPackage}`}</code>
+              <button type="button" onClick={() => installAgent(tool)} disabled={Boolean(installingAgentId)}>{installing ? "安装中…" : installed ? "更新" : "一键安装"}</button>
+              {output && !("error" in output) && <pre className={`command-output ${output.exitCode === 0 ? "" : "error"}`}>{(output.stdout || output.stderr || `exit ${output.exitCode}`).trim()}</pre>}
+              {output && "error" in output && <pre className="command-output error">{output.error}</pre>}
+            </div>;
+          })}
+        </div>
+        <div className="agent-title"><Command size={15} />环境命令</div>
+        {project.commands.length === 0 && <p className="muted">暂无环境检查任务</p>}
+        {project.commands.map((c: Project["commands"][number]) => {
+          const output = commandOutputs[c.id];
+          return <div className="command-item" key={c.id}><Command size={16} /><div><b>{c.name}{toolPaths[c.program] ? "" : " · 未检测"}</b><code>{c.program} {c.args.join(" ")}</code>
+            {output && !("error" in output) && <pre className="command-output">exit {output.exitCode} · {output.durationMs}ms{"\n"}{(output.stdout || output.stderr || "(无输出)").trim()}</pre>}
+            {output && "error" in output && <pre className="command-output error">{output.error}</pre>}
+          </div><button onClick={() => runTask(c)} disabled={runningId === c.id}>{runningId === c.id ? "运行中…" : "运行"}</button></div>;
+        })}
+      </div>
+    </div>
   </div>;
 }
 
@@ -1429,6 +1572,98 @@ function KnowledgeManagerModal({ project, updateProject, updateBlock, notify, cl
   </div>;
 }
 
+function WebSearchModal({ project, block, updateProject, notify, close }: any) {
+  const [webQuery, setWebQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchAttempted, setSearchAttempted] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const updateSourceContext = (sourceId: string, source?: SourceRecord, mode: "add" | "remove" | "toggle" = "add") => {
+    updateProject((p: Project) => {
+      const currentRefs = p.sections[0]?.blocks[0]?.sourceRefs ?? [];
+      const included = currentRefs.includes(sourceId);
+      const shouldInclude = mode === "toggle" ? !included : mode === "add";
+      const sourceRefs = shouldInclude
+        ? (included ? currentRefs : [...currentRefs, sourceId])
+        : currentRefs.filter((id: string) => id !== sourceId);
+      const sources = source && !p.sources.some((item: SourceRecord) => item.id === source.id)
+        ? [...p.sources, source]
+        : p.sources;
+      const sections = p.sections.map((section: any, sectionIndex: number) => sectionIndex === 0 ? {
+        ...section,
+        blocks: section.blocks.map((item: any, blockIndex: number) => blockIndex === 0 ? { ...item, sourceRefs } : item),
+      } : section);
+      return { ...p, sources, sections };
+    });
+  };
+
+  const runWebSearch = async () => {
+    if (!webQuery.trim()) return;
+    if (!confirm(`即将向 ${project.search.provider} 发送查询：\n\n${webQuery}`)) return;
+    setSearching(true);
+    setSearchAttempted(true);
+    try { setResults(await searchWeb(webQuery, project.search)); } catch (e: any) { notify(e.message); } finally { setSearching(false); }
+  };
+
+  const saveResult = (r: SearchResult, includeInContext = false) => {
+    const existing = (project.sources as SourceRecord[]).find(source => source.kind === "web" && source.location === r.url);
+    const source = existing ?? { id: makeId(), kind: "web" as const, title: r.title, location: r.url, excerpt: r.excerpt, fingerprint: btoa(unescape(encodeURIComponent(r.url))).slice(0, 32), accessedAt: new Date().toISOString() };
+    if (includeInContext) {
+      updateSourceContext(source.id, source);
+      notify(existing ? "来源已加入上下文" : "来源已保存并加入上下文");
+      return;
+    }
+    if (!existing) updateProject((p: Project) => ({ ...p, sources: [...p.sources, source] }));
+    notify(existing ? "该来源已保存" : "来源已保存");
+  };
+
+  const openWebSource = async (url: string) => {
+    try { await openExternalUrl(url); } catch (e: any) { notify(e?.message ?? "无法打开来源链接"); }
+  };
+
+  const saveToKnowledge = async (result: SearchResult) => {
+    if (!project.workspace) return notify("请先配置工作目录");
+    setSaving(true);
+    try { await importKnowledgeWeb(project.workspace, result.url); notify("网页全文已存入知识库"); }
+    catch (e: any) { notify(e?.message ?? "网页入库失败"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={close}>
+      <div className="modal wide web-search-modal" onMouseDown={e => e.stopPropagation()}>
+        <div className="modal-title"><div><Globe2 size={19} /><span>联网搜索</span></div><IconButton title="关闭" onClick={close}><X size={18} /></IconButton></div>
+        <div className="search-row">
+          <input value={webQuery} onChange={e => setWebQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && void runWebSearch()} placeholder="联网搜索关键词" />
+          <button onClick={() => void runWebSearch()}><Search size={16} /></button>
+        </div>
+        <div className="web-search-body">
+          {searching && <div className="loading-line">正在联网检索…</div>}
+          {results.length > 0 && <div className="source-list">
+            {results.map(r => {
+              const savedSource = (project.sources as SourceRecord[]).find(source => source.kind === "web" && source.location === r.url);
+              const included = Boolean(savedSource && block.sourceRefs.includes(savedSource.id));
+              let host = r.url;
+              try { host = new URL(r.url).hostname; } catch { /* keep raw URL */ }
+              return <article key={r.url}>
+                <div><Globe2 size={15} /><span>{host}</span></div>
+                <button type="button" className="result-title" onClick={() => void openWebSource(r.url)}>{r.title}</button><p>{r.excerpt}</p>
+                <div className="source-item-actions">
+                  <button type="button" onClick={() => void openWebSource(r.url)}><ExternalLink size={12} />打开网页</button>
+                  <button type="button" disabled={saving} onClick={() => void saveToKnowledge(r)}>存入知识库</button>
+                  <button type="button" disabled={included} onClick={() => saveResult(r, true)}>{included ? "已在上下文" : "加入上下文"}</button>
+                </div>
+              </article>;
+            })}
+          </div>}
+          {!results.length && !searching && <p className="muted">{searchAttempted ? "搜索完成，没有返回结果（搜索引擎可能受限或超时）" : "输入关键词后按 Enter 或点击搜索图标"}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, notify, openSettings, close, openSource, refreshLibrary, terminalCwd, previewSource, setPreviewSource, previewMarkdown, setPreviewMarkdown, previewLoading, setPreviewLoading, previewError, setPreviewError }: any) {
   const [instruction, setInstruction] = useState("请结合上下文参考内容，帮我优化当前章节");
   const [aiUseContext, setAiUseContext] = useState(true);
@@ -1440,20 +1675,12 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
   const [query, setQuery] = useState("");
   const [knowledgeQualityFilters, setKnowledgeQualityFilters] = useState<Set<KnowledgeChunkQuality>>(() => new Set(["good", "normal"]));
   const [knowledgeSearchFields, setKnowledgeSearchFields] = useState<Set<KnowledgeSearchField>>(() => new Set(KNOWLEDGE_SEARCH_FIELDS.map(field => field.id)));
-  const [webQuery, setWebQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchAttempted, setSearchAttempted] = useState(false);
   const [sourceContents, setSourceContents] = useState<Record<string, string>>({});
   const [localSearching, setLocalSearching] = useState(false);
   const [knowledgeResults, setKnowledgeResults] = useState<KnowledgeResultView[]>([]);
   const [knowledgeChunks, setKnowledgeChunks] = useState<Record<string, KnowledgeChunk>>({});
   const [knowledgeBusy, setKnowledgeBusy] = useState(false);
-  const [runningId, setRunningId] = useState<string | null>(null);
-  const [commandOutputs, setCommandOutputs] = useState<Record<string, CommandResult | { error: string }>>({});
   const [toolPaths, setToolPaths] = useState<Record<string, string>>({});
-  const [installingAgentId, setInstallingAgentId] = useState<AgentToolId | null>(null);
-  const [installOutputs, setInstallOutputs] = useState<Partial<Record<AgentToolId, CommandResult | { error: string }>>>({});
   const [agentId, setAgentId] = useState<AgentToolId>("claude");
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentRunning, setAgentRunning] = useState(false);
@@ -1532,13 +1759,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
   }, [block.content, project.name]);
 
   const runAi = async () => { setLoading(true); try { setDraft(await improveBlock(block, instruction, aiUseContext ? context : [], project.model)); } catch (e: any) { notify(e.message); } finally { setLoading(false); } };
-  const runWebSearch = async () => {
-    if (!webQuery.trim()) return;
-    if (!confirm(`即将向 ${project.search.provider} 发送查询：\n\n${webQuery}`)) return;
-    setSearching(true);
-    setSearchAttempted(true);
-    try { setResults(await searchWeb(webQuery, project.search)); } catch (e: any) { notify(e.message); } finally { setSearching(false); }
-  };
   const updateSourceContext = (sourceId: string, source?: SourceRecord, mode: "add" | "remove" | "toggle" = "add") => {
     updateProject((p: Project) => {
       const currentRefs = p.sections[0]?.blocks[0]?.sourceRefs ?? [];
@@ -1556,17 +1776,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       } : section);
       return { ...p, sources, sections };
     });
-  };
-  const saveResult = (r: SearchResult, includeInContext = false) => {
-    const existing = (project.sources as SourceRecord[]).find(source => source.kind === "web" && source.location === r.url);
-    const source = existing ?? { id: makeId(), kind: "web" as const, title: r.title, location: r.url, excerpt: r.excerpt, fingerprint: btoa(unescape(encodeURIComponent(r.url))).slice(0, 32), accessedAt: new Date().toISOString() };
-    if (includeInContext) {
-      updateSourceContext(source.id, source);
-      notify(existing ? "来源已加入上下文" : "来源已保存并加入上下文");
-      return;
-    }
-    if (!existing) updateProject((p: Project) => ({ ...p, sources: [...p.sources, source] }));
-    notify(existing ? "该来源已保存" : "来源已保存");
   };
   const removeFromContext = (sourceId: string) => updateSourceContext(sourceId, undefined, "remove");
   const addManualContext = () => {
@@ -1588,9 +1797,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     setManualContextContent("");
     setManualContextOpen(false);
     notify("内容已加入上下文");
-  };
-  const openWebSource = async (url: string) => {
-    try { await openExternalUrl(url); } catch (e: any) { notify(e?.message ?? "无法打开来源链接"); }
   };
   const openSourcePreview = async (source: SourceRecord) => {
     setPreviewSource(source);
@@ -1627,20 +1833,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       setPreviewLoading(false);
     }
   };
-  const runTask = async (command: Project["commands"][number]) => {
-    if (!desktop) return notify("请在 Tauri 桌面端运行此任务");
-    setRunningId(command.id);
-    try {
-      const result = await runCommand(command);
-      setCommandOutputs(prev => ({ ...prev, [command.id]: result }));
-      notify(result.exitCode === 0 ? `${command.name} 完成` : `${command.name} 退出码 ${result.exitCode}`);
-    } catch (e: any) {
-      setCommandOutputs(prev => ({ ...prev, [command.id]: { error: e?.message ?? String(e) } }));
-      notify(e?.message ?? "任务执行失败");
-    } finally {
-      setRunningId(null);
-    }
-  };
   const runAgent = async () => {
     if (!desktop) return notify("请在 Tauri 桌面端运行此任务");
     if (!agentPrompt.trim()) return notify("请先填写提示词");
@@ -1659,6 +1851,11 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     } finally {
       setAgentRunning(false);
     }
+  };
+  const applyAgentOutput = () => {
+    if (!agentResult || !("stdout" in agentResult)) return;
+    updateBlock((b: DocumentBlock) => ({ ...b, content: agentResult.stdout }));
+    notify("Agent 输出已写入当前章节");
   };
   const addKnowledgeScopeToContext = (scope: KnowledgeSectionScope) => {
     const chunk = chunkFromScope(scope);
@@ -1743,35 +1940,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
     catch (e: any) { notify(e?.message ?? "网页入库失败"); }
     finally { setKnowledgeBusy(false); }
   };
-  const installAgent = async (tool: (typeof agentTools)[number]) => {
-    if (!desktop) return notify("请在 Tauri 桌面端安装 CLI 工具");
-    setInstallingAgentId(tool.id);
-    setInstallOutputs(current => ({ ...current, [tool.id]: undefined }));
-    try {
-      const result = await runCommand(buildAgentInstallCommand(tool));
-      setInstallOutputs(current => ({ ...current, [tool.id]: result }));
-      if (result.exitCode !== 0) {
-        notify(`${tool.name} 安装失败，退出码 ${result.exitCode}`);
-        return;
-      }
-      setToolPaths(await detectTools());
-      notify(`${tool.name} 已安装`);
-    } catch (e: any) {
-      const error = e?.message ?? String(e);
-      setInstallOutputs(current => ({ ...current, [tool.id]: { error } }));
-      notify(error);
-    } finally {
-      setInstallingAgentId(null);
-    }
-  };
-  const applyAgentOutput = () => {
-    if (!agentResult || "error" in agentResult) return;
-    const text = cleanCommandOutput(agentResult.stdout || "");
-    if (!text) return notify("没有可应用的输出");
-    updateBlock((b: DocumentBlock) => ({ ...b, content: text, status: "review" as const }));
-    notify("已写入当前章节");
-  };
-
   return <aside className="right-panel">
     <div className="inspector-top">
       <div className="tabs">
@@ -1779,8 +1947,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
         <button className={tab === "commands" ? "active" : ""} onClick={() => setTab("commands")}><TerminalSquare size={15} />CLI</button>
         <button className={tab === "context" ? "active" : ""} onClick={() => setTab("context")}><Layers3 size={15} />上下文</button>
         <button className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}><BookOpen size={15} />知识库</button>
-        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}><Search size={15} />联网</button>
-        <button className={tab === "env" ? "active" : ""} onClick={() => setTab("env")}><Command size={15} />环境检查</button>
       </div>
       <IconButton title="关闭侧栏" onClick={close}><PanelRightClose size={17} /></IconButton>
     </div>
@@ -1813,7 +1979,7 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
         <textarea value={agentPrompt} onChange={e => setAgentPrompt(e.target.value)} spellCheck={false} />
       </label>
       <div className="cli-command-preview">
-        <code>{selectedAgent.program} {selectedAgent.id === "claude" ? "-p" : selectedAgent.id === "codex" ? "exec" : "run"}</code>
+        <code>{selectedAgent.program} {selectedAgent.id === "claude" || selectedAgent.id === "codebuddy" ? "-p" : selectedAgent.id === "codex" ? "exec" : "run"}</code>
         <span>{Math.round(selectedAgent.timeoutMs / 1000)}s</span>
       </div>
       <label className="cli-context-toggle"><span><input type="checkbox" checked={cliUseContext} onChange={e => setCliUseContext(e.target.checked)} />携带上下文</span><b>{!cliUseContext ? "不发送" : pendingCliContext ? "正在加载全文…" : `${context.length} 条 · ${contextCharCount.toLocaleString()} 字`}</b></label>
@@ -1891,7 +2057,7 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       {localSearching && <div className="loading-line">正在检索知识切片…</div>}
       {!!knowledgeResults.length && <div className="source-list knowledge-results">
         {knowledgeResults.map((result, index) => <article key={result.chunk.id}>
-          <div className="knowledge-result-title"><span className="knowledge-result-level">H{result.scope.level}</span><b>{result.scope.title}{result.scope.sectionCount > 1 ? `（含 ${result.scope.sectionCount} 个章节）` : ""}</b><span className="knowledge-path-hint" title={`H${result.scope.level} · ${result.scope.headingPath}`} aria-label={`章节路径：H${result.scope.level} · ${result.scope.headingPath}`}><Info size={13} /></span><em className={`knowledge-quality-badge ${result.chunk.quality}`}>{result.chunk.quality === "good" ? "优质" : result.chunk.quality === "bad" ? "劣质" : "普通"}</em></div><p>{result.scope.content.replace(/^#{1,6}\s+.*\n*/, "").replace(/\s+/g, " ").slice(0, 220) || "（该章节暂无正文）"}</p>
+          <div className="knowledge-result-title"><span className="knowledge-result-level">H{result.scope.level}</span><b onClick={() => previewKnowledgeScope(result.scope)}>{result.scope.title}{result.scope.sectionCount > 1 ? `（含 ${result.scope.sectionCount} 个章节）` : ""}</b><span className="knowledge-path-hint" title={`H${result.scope.level} · ${result.scope.headingPath}`} aria-label={`章节路径：H${result.scope.level} · ${result.scope.headingPath}`}><Info size={13} /></span><em className={`knowledge-quality-badge ${result.chunk.quality}`}>{result.chunk.quality === "good" ? "优质" : result.chunk.quality === "bad" ? "劣质" : "普通"}</em></div><p>{result.scope.content.replace(/^#{1,6}\s+.*\n*/, "").replace(/\s+/g, " ").slice(0, 220) || "（该章节暂无正文）"}</p>
           <div className="knowledge-result-footer">
             <div className="source-item-actions"><button onClick={() => previewKnowledgeScope(result.scope)}>预览</button><button className={block.sourceRefs.includes(result.scope.id) ? "context-added" : ""} onClick={() => addKnowledgeScopeToContext(result.scope)}>{block.sourceRefs.includes(result.scope.id) ? <><Check size={12} />已加入上下文</> : <><Layers3 size={12} />加入上下文</>}</button><small className="knowledge-result-char-count">{result.scope.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div>
             <div className="knowledge-scope-actions" role="group" aria-label="调整章节范围">
@@ -1910,63 +2076,15 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       {!localSearching && !knowledgeResults.length && <div className="knowledge-search-empty"><BookOpen size={25} /><b>{query.trim() ? "没有匹配结果" : "输入关键词检索知识库"}</b><span>{query.trim() ? "尝试更短的关键词或章节名称" : "检索标题、章节和正文"}</span></div>}
       </>}
     </div>}
-    {tab === "search" && <div className="inspector-content sources-panel">
-      <div className="search-row">
-        <input value={webQuery} onChange={e => setWebQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && void runWebSearch()} placeholder="联网搜索关键词" />
-        <button onClick={() => void runWebSearch()}><Search size={16} /></button>
-      </div>
-      {searching && <div className="loading-line">正在联网检索…</div>}
-      {results.length > 0 && <div className="source-list">
-        {results.map(r => {
-          const savedSource = (project.sources as SourceRecord[]).find(source => source.kind === "web" && source.location === r.url);
-          const saved = Boolean(savedSource);
-          const included = Boolean(savedSource && block.sourceRefs.includes(savedSource.id));
-          let host = r.url;
-          try { host = new URL(r.url).hostname; } catch { /* keep raw URL */ }
-          return <article key={r.url}>
-            <div><Globe2 size={15} /><span>{host}</span></div>
-            <b>{r.title}</b><p>{r.excerpt}</p>
-            <div className="source-item-actions">
-              <button type="button" onClick={() => void openWebSource(r.url)}><ExternalLink size={12} />打开网页</button>
-              <button type="button" disabled={knowledgeBusy} onClick={() => void saveWebToKnowledge(r)}>存入知识库</button>
-              <button type="button" disabled={included} onClick={() => saveResult(r, true)}>{included ? "已在上下文" : "加入上下文"}</button>
-            </div>
-          </article>;
-        })}
-      </div>}
-      {!results.length && !searching && <p className="muted">{searchAttempted ? "搜索完成，没有返回结果（搜索引擎可能受限或超时）" : "输入关键词后按 Enter 或点击搜索图标"}</p>}
-    </div>}
-    {tab === "env" && <div className="inspector-content">
-      <div className="agent-title system-tasks"><Download size={15} />Agent CLI</div>
-      <div className="installer-list">
-        {agentTools.map(tool => {
-          const installed = Boolean(toolPaths[tool.program]);
-          const output = installOutputs[tool.id];
-          const installing = installingAgentId === tool.id;
-          return <div className={`installer-item ${installed ? "ready" : "missing"}`} key={tool.id}>
-            <div className="installer-status"><span /><b>{tool.name}</b><em>{installed ? "已安装" : "未检测"}</em></div>
-            <code title={installed ? toolPaths[tool.program] : undefined}>{installed ? toolPaths[tool.program] : `npm i -g ${tool.installPackage}`}</code>
-            <button type="button" onClick={() => void installAgent(tool)} disabled={Boolean(installingAgentId)}>{installing ? "安装中…" : installed ? "更新" : "一键安装"}</button>
-            {output && !("error" in output) && <pre className={`command-output ${output.exitCode === 0 ? "" : "error"}`}>{(output.stdout || output.stderr || `exit ${output.exitCode}`).trim()}</pre>}
-            {output && "error" in output && <pre className="command-output error">{output.error}</pre>}
-          </div>;
-        })}
-      </div>
-      <div className="agent-title system-tasks"><Command size={15} />环境命令</div>
-      {project.commands.length === 0 && <p className="muted">暂无环境检查任务</p>}
-      {project.commands.map((c: Project["commands"][number]) => {
-        const output = commandOutputs[c.id];
-        return <div className="command-item" key={c.id}><Command size={16} /><div><b>{c.name}{toolPaths[c.program] ? "" : " · 未检测"}</b><code>{c.program} {c.args.join(" ")}</code>
-          {output && !("error" in output) && <pre className="command-output">exit {output.exitCode} · {output.durationMs}ms{"\n"}{(output.stdout || output.stderr || "(无输出)").trim()}</pre>}
-          {output && "error" in output && <pre className="command-output error">{output.error}</pre>}
-        </div><button onClick={() => runTask(c)} disabled={runningId === c.id}>{runningId === c.id ? "运行中…" : "运行"}</button></div>;
-      })}
-    </div>}
   </aside>;
 }
 
 function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project) => void | Promise<void> }) {
-  const [draft, setDraft] = useState(structuredClone(project));
+  const [draft, setDraft] = useState(() => {
+    const next = structuredClone(project);
+    if (!next.mineru) next.mineru = createProject().mineru;
+    return next;
+  });
   const desktop = isDesktop();
   const workspace = draft.workspace ?? { root: "", historyDir: "" };
 
@@ -1991,8 +2109,9 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
   };
 
   return <div className="modal-backdrop" onMouseDown={close}>
-    <div className="modal wide" onMouseDown={e => e.stopPropagation()}>
+    <div className="modal wide settings-modal" onMouseDown={e => e.stopPropagation()}>
       <div className="modal-title"><div><Settings size={19} /><span>连接、工作区与隐私</span></div><IconButton title="关闭" onClick={close}><X size={18} /></IconButton></div>
+      <div className="settings-modal-body">
       <div className="notice"><Globe2 size={18} /><div><b>联网模型已启用</b><span>当前章节和明确选择的引用会发送至此服务。连接配置保存在工作区 <code>.gouan/connections.json</code>。</span></div><input type="checkbox" checked={draft.model.enabled} onChange={e => setDraft({ ...draft, model: { ...draft.model, enabled: e.target.checked } })} /></div>
       <div className="form-grid">
         <label>API 地址<input value={draft.model.baseUrl} onChange={e => setDraft({ ...draft, model: { ...draft.model, baseUrl: e.target.value } })} /></label>
@@ -2022,6 +2141,29 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
         <label className="wide">搜索 API Key<input type="password" value={draft.search.apiKey} placeholder="写入工作区 .gouan/connections.json" onChange={e => setDraft({ ...draft, search: { ...draft.search, apiKey: e.target.value } })} /></label>
       </div>
       <div className="workspace-settings">
+        <div className="agent-title"><FilePlus2 size={15} /><span>文档解析 (MinerU)</span></div>
+        <p className="muted">将 Word/PDF 转为 Markdown 时调用 MinerU 云端 API（默认 https://mineru.net）。API Key 写入工作区 <code>.gouan/connections.json</code>。</p>
+        <div className="form-grid">
+          <label className="wide">API 地址<input value={draft.mineru.baseUrl} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, baseUrl: e.target.value } })} placeholder="https://mineru.net" /></label>
+          <label className="wide">API Key<input type="password" value={draft.mineru.apiKey} placeholder="MinerU Token" onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, apiKey: e.target.value } })} /></label>
+          <label>模型版本
+            <select value={draft.mineru.modelVersion} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, modelVersion: e.target.value } })}>
+              <option value="vlm">VLM 精准模型</option>
+              <option value="pipeline">Pipeline 通用模型</option>
+              <option value="MinerU-HTML">MinerU HTML</option>
+            </select>
+          </label>
+          <label>解析语言<input value={draft.mineru.language} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, language: e.target.value } })} placeholder="ch" /></label>
+          <label>超时秒数<input type="number" min={30} max={1800} value={draft.mineru.timeoutSeconds} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, timeoutSeconds: Number(e.target.value) || 300 } })} /></label>
+          <label>轮询间隔秒<input type="number" min={1} max={30} value={draft.mineru.pollIntervalSeconds} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, pollIntervalSeconds: Number(e.target.value) || 3 } })} /></label>
+          <label className="wide" style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <span><input type="checkbox" checked={draft.mineru.isOcr} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, isOcr: e.target.checked } })} /> OCR（扫描件）</span>
+            <span><input type="checkbox" checked={draft.mineru.enableTable} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, enableTable: e.target.checked } })} /> 表格识别</span>
+            <span><input type="checkbox" checked={draft.mineru.enableFormula} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, enableFormula: e.target.checked } })} /> 公式识别</span>
+          </label>
+        </div>
+      </div>
+      <div className="workspace-settings">
         <div className="agent-title"><FolderOpen size={15} /><span>工作区目录</span></div>
         <p className="muted">工作目录根下的 `.md` 是可打开/保存的方案正文；历史资料目录仅作引用材料库。粘贴图片会保存到工作目录 `assets/`。API / 搜索配置保存在工作目录 `.gouan/connections.json`（不进 localStorage）。</p>
         <label className="wide path-field">工作目录
@@ -2037,6 +2179,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
           </div>
         </label>
         {!desktop && <p className="muted">浏览器模式无法选择真实磁盘目录；请使用桌面端。</p>}
+      </div>
       </div>
       <div className="modal-actions"><button onClick={close}>取消</button><button className="primary" onClick={() => void save(draft)}>保存设置</button></div>
     </div>

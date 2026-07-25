@@ -4,10 +4,13 @@ import {
   Document,
   HeadingLevel,
   ImageRun,
+  LineRuleType,
+  PageBreak,
   Packer,
   Paragraph,
   Table,
   TableCell,
+  TableOfContents,
   TableRow,
   TextRun,
   WidthType,
@@ -144,6 +147,10 @@ function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolea
   }
   return new Paragraph({
     children: runsFromInline(line, { font: BODY_FONT, size: SIZE_BODY }),
+    // 正文首行缩进 2 字符 ≈ 480 twips
+    indent: { firstLine: 480 },
+    // 正文 1.5 倍行距
+    spacing: { line: 360, lineRule: LineRuleType.AUTO },
   });
 }
 
@@ -164,8 +171,22 @@ function parseTableRows(block: string[]): string[][] {
 function tableFromMarkdown(rows: string[][]): Table {
   const colCount = Math.max(...rows.map((r) => r.length), 1);
   const width = Math.floor(9000 / colCount);
+  // 表格边框：1pt(=size 8) 实线，深灰，确保网格线清晰可见
+  const cellBorder = {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: "808080",
+  } as const;
   return new Table({
     width: { size: 9000, type: WidthType.DXA },
+    borders: {
+      top: cellBorder,
+      bottom: cellBorder,
+      left: cellBorder,
+      right: cellBorder,
+      insideHorizontal: cellBorder,
+      insideVertical: cellBorder,
+    },
     rows: rows.map(
       (row, ri) =>
         new TableRow({
@@ -174,10 +195,10 @@ function tableFromMarkdown(rows: string[][]): Table {
             return new TableCell({
               width: { size: width, type: WidthType.DXA },
               borders: {
-                top: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
-                bottom: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
-                left: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
-                right: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" },
+                top: cellBorder,
+                bottom: cellBorder,
+                left: cellBorder,
+                right: cellBorder,
               },
               children: [
                 new Paragraph({
@@ -415,7 +436,7 @@ function headingParagraph(level: number, title: string, centeredTitle: boolean):
         }),
       ],
       heading: HeadingLevel.TITLE,
-      spacing: { after: 200 },
+      spacing: { after: 200, line: 360, lineRule: LineRuleType.AUTO },
       alignment: AlignmentType.CENTER,
     });
   }
@@ -430,7 +451,7 @@ function headingParagraph(level: number, title: string, centeredTitle: boolean):
       }),
     ],
     heading: HEADING_LEVELS[Math.min(level, 6) - 1],
-    spacing: { before: 240, after: 120 },
+    spacing: { before: 240, after: 120, line: 360, lineRule: LineRuleType.AUTO },
   });
 }
 
@@ -476,8 +497,13 @@ export async function buildDocx(project: Project): Promise<Document> {
       const level = heading[1].length;
       const title = plainText(heading[2].trim());
       if (level === 1 && !sawTitle) {
-        children.push(headingParagraph(1, title, true));
         sawTitle = true;
+        // 文档标题已放在封面页，正文中不再重复渲染（仅当与项目名一致时）
+        if (title && title === (project.name || "").trim()) {
+          i += 1;
+          continue;
+        }
+        children.push(headingParagraph(1, title, true));
       } else {
         children.push(headingParagraph(level, title, false));
       }
@@ -547,8 +573,8 @@ export async function buildDocx(project: Project): Promise<Document> {
       continue;
     }
 
+    // 跳过空行：标题/段落间距已由各段 spacing 控制，避免标题与正文间出现多余空行
     if (!line.trim()) {
-      children.push(new Paragraph({ text: "" }));
       i += 1;
       continue;
     }
@@ -558,17 +584,53 @@ export async function buildDocx(project: Project): Promise<Document> {
   }
 
   if (!children.length) {
+    // 空文档：仅保留封面与目录，正文占位标题也放到封面逻辑中处理
     children.push(
-      headingParagraph(1, project.name || "未命名技术方案", true),
+      new Paragraph({
+        children: [new TextRun({ text: "（正文为空）", font: BODY_FONT, size: SIZE_BODY, color: "999999" })],
+      }),
     );
   }
+
+  const projectName = project.name || "未命名技术方案";
+  const today = formatDocDate(project.updatedAt);
+
+  // 封面页：标题居中、日期与署名靠下，整页结束后分页
+  const coverChildren: FileChild[] = [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 3200 },
+      children: [
+        new TextRun({ text: projectName, font: HEADING_FONT, bold: true, size: 56, color: "000000" }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 1600 },
+      children: [new TextRun({ text: today, font: BODY_FONT, size: 24, color: "666666" })],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 200 },
+      children: [new TextRun({ text: "构案 · TechProposal Studio", font: BODY_FONT, size: 20, color: "999999" })],
+    }),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  // 目录页：基于标题样式 1-3 级生成，超链接可点击，结束后分页
+  const tocChildren: FileChild[] = [
+    new TableOfContents("目录", { hyperlink: true, headingStyleRange: "1-3" }),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  const documentChildren: FileChild[] = [...coverChildren, ...tocChildren, ...children];
 
   return new Document({
     styles: {
       default: {
         document: {
           run: { font: BODY_FONT, size: SIZE_BODY, color: "000000" },
-          paragraph: { spacing: { line: 360 } },
+          paragraph: { spacing: { line: 360, lineRule: LineRuleType.AUTO } },
         },
       },
       paragraphStyles: [
@@ -578,7 +640,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H1, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 0, after: 200 }, alignment: AlignmentType.CENTER },
+          paragraph: { spacing: { before: 0, after: 200, line: 360, lineRule: LineRuleType.AUTO }, alignment: AlignmentType.CENTER, outlineLevel: 0 },
         },
         {
           id: "Heading1",
@@ -586,7 +648,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H1, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 280, after: 140 } },
+          paragraph: { spacing: { before: 280, after: 140, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 0 },
         },
         {
           id: "Heading2",
@@ -594,7 +656,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H2, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 240, after: 120 } },
+          paragraph: { spacing: { before: 240, after: 120, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 1 },
         },
         {
           id: "Heading3",
@@ -602,7 +664,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H3, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 200, after: 100 } },
+          paragraph: { spacing: { before: 200, after: 100, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 2 },
         },
         {
           id: "Heading4",
@@ -610,7 +672,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H4, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 180, after: 100 } },
+          paragraph: { spacing: { before: 180, after: 100, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 3 },
         },
         {
           id: "Heading5",
@@ -618,7 +680,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H5, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 160, after: 80 } },
+          paragraph: { spacing: { before: 160, after: 80, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 4 },
         },
         {
           id: "Heading6",
@@ -626,7 +688,7 @@ export async function buildDocx(project: Project): Promise<Document> {
           basedOn: "Normal",
           next: "Normal",
           run: { font: HEADING_FONT, size: SIZE_H6, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 140, after: 80 } },
+          paragraph: { spacing: { before: 140, after: 80, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 5 },
         },
         {
           id: "Code",
@@ -642,10 +704,23 @@ export async function buildDocx(project: Project): Promise<Document> {
         properties: {
           page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } },
         },
-        children,
+        children: documentChildren,
       },
     ],
   });
+}
+
+/** 文档日期：优先使用更新时间，回退到本地日期 */
+function formatDocDate(ts?: number | string): string {
+  let d: Date;
+  if (typeof ts === "number") d = new Date(ts);
+  else if (typeof ts === "string" && !Number.isNaN(Date.parse(ts))) d = new Date(ts);
+  else d = new Date();
+  if (Number.isNaN(d.getTime())) d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y} 年 ${m} 月 ${day} 日`;
 }
 
 function safeFileName(name: string): string {

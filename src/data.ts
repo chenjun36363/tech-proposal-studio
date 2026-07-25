@@ -11,12 +11,24 @@ export function createProject(): Project {
     id: makeId(), name, updatedAt: new Date().toISOString(), markdown: defaultProposalMarkdown(name), sections, sources: [],
     model: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4.1-mini", timeoutMs: 60000, headers: {}, enabled: true },
     search: { provider: "searxng", endpoint: "", apiKey: "", engines: ["baidu", "360search", "bing"] },
+    mineru: {
+      baseUrl: "https://mineru.net",
+      apiKey: "",
+      modelVersion: "vlm",
+      language: "ch",
+      isOcr: false,
+      enableTable: true,
+      enableFormula: true,
+      timeoutSeconds: 300,
+      pollIntervalSeconds: 3,
+    },
     workspace: { root: "", historyDir: "" },
     commands: [
       { id: makeId(), name: "检查 Node 版本", program: "node", args: ["--version"], cwd: ".", timeoutMs: 15000, allowShell: false },
       { id: makeId(), name: "检查 Claude CLI", program: "claude", args: ["--version"], cwd: ".", timeoutMs: 20000, allowShell: false },
       { id: makeId(), name: "检查 Codex CLI", program: "codex", args: ["--version"], cwd: ".", timeoutMs: 20000, allowShell: false },
       { id: makeId(), name: "检查 OpenCode CLI", program: "opencode", args: ["--version"], cwd: ".", timeoutMs: 20000, allowShell: false },
+      { id: makeId(), name: "检查 CodeBuddy CLI", program: "codebuddy", args: ["--version"], cwd: ".", timeoutMs: 20000, allowShell: false },
     ]
   };
 }

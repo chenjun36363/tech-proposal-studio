@@ -4,7 +4,7 @@ import { defaultProposalMarkdown } from "./markdownDoc";
 const KEY = "tech-proposal-studio.project.v1";
 const LEGACY_KEY = "schematic-writer.project.v1";
 function ensureCommands(project: Project): Project {
-  const hasAgentChecks = ["claude", "codex", "opencode"].every(p => project.commands?.some(c => c.program === p));
+  const hasAgentChecks = ["claude", "codex", "opencode", "codebuddy"].every(p => project.commands?.some(c => c.program === p));
   if (hasAgentChecks && project.commands?.length) return project;
   const base = createProject();
   const existing = project.commands ?? [];
@@ -19,8 +19,29 @@ function ensureMarkdown(project: Project): Project {
   }
   return { ...project, markdown: defaultProposalMarkdown(project.name || "未命名技术方案") };
 }
+function ensureMineru(project: Project): Project {
+  if (project.mineru && typeof project.mineru === "object") {
+    const base = createProject().mineru;
+    return {
+      ...project,
+      mineru: {
+        baseUrl: typeof project.mineru.baseUrl === "string" ? project.mineru.baseUrl : base.baseUrl,
+        apiKey: typeof project.mineru.apiKey === "string" ? project.mineru.apiKey : "",
+        modelVersion: typeof project.mineru.modelVersion === "string" ? project.mineru.modelVersion : base.modelVersion,
+        language: typeof project.mineru.language === "string" ? project.mineru.language : base.language,
+        isOcr: typeof project.mineru.isOcr === "boolean" ? project.mineru.isOcr : base.isOcr,
+        enableTable: typeof project.mineru.enableTable === "boolean" ? project.mineru.enableTable : base.enableTable,
+        enableFormula: typeof project.mineru.enableFormula === "boolean" ? project.mineru.enableFormula : base.enableFormula,
+        timeoutSeconds: typeof project.mineru.timeoutSeconds === "number" ? project.mineru.timeoutSeconds : base.timeoutSeconds,
+        pollIntervalSeconds: typeof project.mineru.pollIntervalSeconds === "number" ? project.mineru.pollIntervalSeconds : base.pollIntervalSeconds,
+      },
+    };
+  }
+  return { ...project, mineru: createProject().mineru };
+}
+
 function normalizeProject(raw: Project): Project {
-  return ensureCommands(ensureMarkdown(raw));
+  return ensureCommands(ensureMarkdown(ensureMineru(raw)));
 }
 export function loadProject(): Project {
   try {
@@ -42,6 +63,7 @@ export function saveProject(project: Project) {
     updatedAt: new Date().toISOString(),
     model: { ...project.model, apiKey: "" },
     search: { ...project.search, apiKey: "" },
+    mineru: { ...(project.mineru ?? createProject().mineru), apiKey: "" },
   }));
 }
 export function exportMarkdown(project: Project) {

@@ -50,6 +50,32 @@ export async function pickMarkdownFile(title: string, defaultPath?: string): Pro
   return invoke<string | null>("pick_markdown_file", { title, defaultPath: defaultPath || null });
 }
 
+export async function pickDocumentFile(title: string, defaultPath?: string): Promise<string | null> {
+  if (!isDesktop()) return null;
+  return invoke<string | null>("pick_document_file", { title, defaultPath: defaultPath || null });
+}
+
+export interface MinerUConvertResult {
+  markdown: string;
+  assetRelativeDir: string | null;
+  sourceFileName: string;
+}
+
+export async function convertDocumentWithMineru(
+  sourcePath: string,
+  workspaceRoot: string,
+  config: import("./types").MinerUConfig,
+): Promise<MinerUConvertResult> {
+  if (!isDesktop()) throw new Error("Word/PDF 导入仅在桌面端可用");
+  return invoke<MinerUConvertResult>("convert_document_with_mineru", {
+    request: {
+      sourcePath,
+      workspaceRoot,
+      config,
+    },
+  });
+}
+
 export async function getDefaultWorkspaceRoot(): Promise<string> {
   if (!isDesktop()) return "";
   return invoke<string>("default_workspace_root");

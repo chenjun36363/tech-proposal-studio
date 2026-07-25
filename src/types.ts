@@ -4,10 +4,23 @@ export interface Section { id: string; title: string; order: number; blocks: Doc
 export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
 export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; }
 export interface SearchConfig { provider: "searxng" | "brave"; endpoint: string; apiKey: string; engines?: string[]; }
+/** MinerU cloud document → Markdown (Word/PDF). Stored under workspace `.gouan/connections.json`. */
+export interface MinerUConfig {
+  baseUrl: string;
+  apiKey: string;
+  modelVersion: string;
+  language: string;
+  isOcr: boolean;
+  enableTable: boolean;
+  enableFormula: boolean;
+  timeoutSeconds: number;
+  pollIntervalSeconds: number;
+}
 /** API / search connection config stored under workspace `.gouan/connections.json`. */
 export interface ConnectionSettings {
   model: OpenAICompatibleConfig;
   search: SearchConfig;
+  mineru: MinerUConfig;
 }
 export interface CommandPreset { id: string; name: string; program: string; args: string[]; cwd: string; timeoutMs: number; allowShell: boolean; stdin?: string; }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string; durationMs: number; }
@@ -26,6 +39,8 @@ export interface Project {
   sources: SourceRecord[];
   model: OpenAICompatibleConfig;
   search: SearchConfig;
+  /** MinerU 文档解析配置（与 connections 同步；apiKey 不写入 project localStorage） */
+  mineru: MinerUConfig;
   commands: CommandPreset[];
   workspace?: WorkspacePaths;
   /** 当前打开的工作区 Markdown 绝对路径 */

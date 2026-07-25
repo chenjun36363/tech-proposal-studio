@@ -19,12 +19,13 @@ use tauri_plugin_dialog::DialogExt;
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 mod knowledge;
+mod mineru;
 
 const CREDENTIAL_SERVICE: &str = "com.techproposal.studio";
 const LEGACY_CREDENTIAL_SERVICE: &str = "cn.gouan.writer";
 
 const ALLOWED_PROGRAMS: &[&str] = &[
-    "node", "npm", "npx", "pnpm", "git", "claude", "codex", "opencode", "pwsh", "powershell",
+    "node", "npm", "npx", "pnpm", "git", "claude", "codex", "opencode", "codebuddy", "pwsh", "powershell",
 ];
 
 struct TerminalSession {
@@ -746,6 +747,31 @@ fn pick_markdown_file(
 }
 
 #[tauri::command]
+fn pick_document_file(
+    app: AppHandle,
+    title: String,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title(&title)
+        .add_filter("Word / PDF", &["pdf", "doc", "docx"]);
+    if let Some(path) = default_path.filter(|s| !s.trim().is_empty()) {
+        dialog = dialog.set_directory(path);
+    }
+    let file = dialog.blocking_pick_file();
+    Ok(file.map(|p| p.to_string()))
+}
+
+#[tauri::command]
+async fn convert_document_with_mineru(
+    request: mineru::ConvertDocumentRequest,
+) -> Result<mineru::ConvertDocumentResult, String> {
+    mineru::convert_document(request).await
+}
+
+#[tauri::command]
 fn list_workspace_markdown(root: String) -> Result<Vec<LibraryFile>, String> {
     if root.trim().is_empty() {
         return Ok(vec![]);
@@ -1296,6 +1322,8 @@ pub fn run() {
             ensure_workspace,
             pick_directory,
             pick_markdown_file,
+            pick_document_file,
+            convert_document_with_mineru,
             list_workspace_markdown,
             list_library_markdown,
             list_proposals,

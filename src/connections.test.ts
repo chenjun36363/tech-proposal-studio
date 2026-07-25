@@ -22,6 +22,7 @@ describe("workspace connections", () => {
     const conn = normalizeConnections({
       model: { baseUrl: "http://localhost:11434/v1", model: "qwen", apiKey: "k1" },
       search: { provider: "brave", endpoint: "https://api.search.brave.com", apiKey: "k2" },
+      mineru: { apiKey: "k3", modelVersion: "pipeline", timeoutSeconds: 120 },
     });
     expect(conn.model.baseUrl).toBe("http://localhost:11434/v1");
     expect(conn.model.model).toBe("qwen");
@@ -30,6 +31,11 @@ describe("workspace connections", () => {
     expect(conn.search.provider).toBe("brave");
     expect(conn.search.apiKey).toBe("k2");
     expect(conn.search.engines).toEqual(["baidu", "360search", "bing"]);
+    expect(conn.mineru.apiKey).toBe("k3");
+    expect(conn.mineru.modelVersion).toBe("pipeline");
+    expect(conn.mineru.baseUrl).toBe("https://mineru.net");
+    expect(conn.mineru.timeoutSeconds).toBe(120);
+    expect(conn.mineru.enableTable).toBe(true);
   });
 
   it("applies connections onto a project", () => {
@@ -37,22 +43,26 @@ describe("workspace connections", () => {
     const next = applyConnections(project, {
       model: { ...project.model, baseUrl: "http://127.0.0.1:8080/v1", apiKey: "mk", model: "local" },
       search: { provider: "searxng", endpoint: "http://searx.local", apiKey: "" },
+      mineru: { ...project.mineru, apiKey: "mu" },
     });
     expect(next.model.baseUrl).toBe("http://127.0.0.1:8080/v1");
     expect(next.model.apiKey).toBe("mk");
     expect(next.search.endpoint).toBe("http://searx.local");
     expect(next.search.engines).toEqual(["baidu", "360search", "bing"]);
+    expect(next.mineru.apiKey).toBe("mu");
   });
 
   it("round-trips browser connections including keys", async () => {
     const project = createProject();
     project.model.apiKey = "browser-model-key";
     project.search.apiKey = "browser-search-key";
+    project.mineru.apiKey = "browser-mineru-key";
     project.search.endpoint = "http://searx";
     await saveWorkspaceConnections(undefined, connectionsFromProject(project));
     const loaded = await loadWorkspaceConnections();
     expect(loaded?.model.apiKey).toBe("browser-model-key");
     expect(loaded?.search.apiKey).toBe("browser-search-key");
+    expect(loaded?.mineru.apiKey).toBe("browser-mineru-key");
     expect(loaded?.search.endpoint).toBe("http://searx");
     expect(loaded?.search.engines).toEqual(["baidu", "360search", "bing"]);
   });
