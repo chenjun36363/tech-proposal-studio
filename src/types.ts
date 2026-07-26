@@ -3,6 +3,7 @@ export interface DocumentBlock { id: string; sectionId: string; type: BlockType;
 export interface Section { id: string; title: string; order: number; blocks: DocumentBlock[]; }
 export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
 export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; }
+export interface ModelOption { id: string; displayName: string; ownedBy?: string; }
 export interface SearchConfig { provider: "searxng" | "brave"; endpoint: string; apiKey: string; engines?: string[]; }
 /** MinerU cloud document → Markdown (Word/PDF). Stored under workspace `.gouan/connections.json`. */
 export interface MinerUConfig {
@@ -24,6 +25,8 @@ export interface ConnectionSettings {
 }
 export interface CommandPreset { id: string; name: string; program: string; args: string[]; cwd: string; timeoutMs: number; allowShell: boolean; stdin?: string; }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string; durationMs: number; }
+export type SessionEventKind = "status" | "output" | "tool" | "error" | "done";
+export interface SessionEvent { id: string; kind: SessionEventKind; label: string; content?: string; channel?: "stdout" | "stderr"; at: number; }
 export interface WorkspacePaths {
   root: string;
   /** 历史资料 Markdown 目录（引用材料，非当前编辑正文） */

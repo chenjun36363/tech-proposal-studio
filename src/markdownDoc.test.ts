@@ -13,8 +13,11 @@ import {
 describe("heading numbering", () => {
   it("strips chapter and dotted prefixes", () => {
     expect(stripHeadingPrefix("第1章 背景")).toBe("背景");
+    expect(stripHeadingPrefix("第一章 背景")).toBe("背景");
     expect(stripHeadingPrefix("1.1 范围")).toBe("范围");
     expect(stripHeadingPrefix("1.1.1 细节")).toBe("细节");
+    expect(stripHeadingPrefix("**第1章 背景**")).toBe("**背景**");
+    expect(stripHeadingPrefix("***1.1.1 细节***")).toBe("***细节***");
   });
 
   it("formats fixed prefixes", () => {
@@ -49,6 +52,28 @@ describe("heading numbering", () => {
     expect(markdown).toContain("## 第1章 背景与目标");
     expect(markdown).toContain("## 第2章 范围与约束");
     expect(markdown).toContain("正文");
+  });
+
+  it("does not duplicate numbering inside emphasized imported headings", () => {
+    const md = [
+      "# **方案**",
+      "",
+      "## **第1章 建设概述**",
+      "",
+      "### **1.1 建设背景**",
+      "",
+      "#### ***1.1.1 服务模式说明***",
+    ].join("\n");
+
+    expect(renumberHeadings(md)).toBe([
+      "# **方案**",
+      "",
+      "## 第1章 **建设概述**",
+      "",
+      "### 1.1 **建设背景**",
+      "",
+      "#### 1.1.1 ***服务模式说明***",
+    ].join("\n"));
   });
 
   it("preserves section text while typing instead of inserting trailing newlines", () => {

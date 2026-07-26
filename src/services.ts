@@ -1,8 +1,40 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiDraft, CommandPreset, CommandResult, DocumentBlock, OpenAICompatibleConfig, Project, SearchConfig, SearchResult } from "./types";
+import { listen } from "@tauri-apps/api/event";
+import type { AiDraft, CommandPreset, CommandResult, DocumentBlock, ModelOption, OpenAICompatibleConfig, Project, SearchConfig, SearchResult } from "./types";
+import { applyHeadingAdaptDecisions, collectHeadingAdaptCandidates, type HeadingAdaptDecision } from "./headingAdapt";
+import { isLocalModelEndpoint, modelListHeaders, modelsEndpoint, normalizeModelList } from "./modelCatalog";
 
 const inTauri = () => "__TAURI_INTERNALS__" in window;
 export const isDesktop = () => inTauri();
+export async function listModels(config: OpenAICompatibleConfig): Promise<ModelOption[]> {
+  const baseUrl = config.baseUrl.trim();
+  if (!baseUrl) throw new Error("请先填写模型服务 API 地址");
+  if (inTauri()) {
+    const payload = await invoke<unknown>("list_models", { config });
+    const models = normalizeModelList(payload);
+    if (!models.length) throw new Error("上游未返回可识别的模型列表");
+    return models;
+  }
+  if (!config.apiKey.trim() && !isLocalModelEndpoint(baseUrl)) throw new Error("请先在设置中填写 API Key");
+  const response = await fetch(modelsEndpoint(baseUrl), {
+    headers: modelListHeaders(config),
+    signal: AbortSignal.timeout(config.timeoutMs),
+  });
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text.trim()) {
+    try { payload = JSON.parse(text); } catch { throw new Error("上游模型列表不是有效 JSON"); }
+  }
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "error" in payload
+      ? (payload.error as { message?: unknown })?.message
+      : undefined;
+    throw new Error(`模型列表请求返回 ${response.status}${typeof detail === "string" && detail ? `：${detail}` : ""}`);
+  }
+  const models = normalizeModelList(payload);
+  if (!models.length) throw new Error("上游未返回可识别的模型列表");
+  return models;
+}
 export async function improveBlock(block: DocumentBlock, instruction: string, context: string[], config: OpenAICompatibleConfig): Promise<AiDraft> {
   if (!config.enabled) throw new Error("当前项目已禁用联网 AI");
   if (!config.apiKey && !config.baseUrl.includes("localhost")) throw new Error("请先在设置中填写 API Key");
@@ -34,6 +66,61 @@ export async function searchWeb(query: string, config: SearchConfig): Promise<Se
   }
   const r = await fetch(`${config.endpoint || "https://api.search.brave.com/res/v1/web/search"}?q=${encodeURIComponent(query)}`, { headers: { "X-Subscription-Token": config.apiKey } });
   const j = await r.json(); return (j.web?.results ?? []).slice(0, 8).map((x: any) => ({ title: x.title, url: x.url, excerpt: x.description ?? "" }));
+}
+type StreamUpdate = (content: string) => void;
+async function streamModel(blockId: string, before: string, instruction: string, payload: Record<string, unknown>, config: OpenAICompatibleConfig, onUpdate: StreamUpdate): Promise<AiDraft> {
+  const runId = crypto.randomUUID();
+  if (inTauri()) {
+    const unlisten = await listen<{ runId: string; content: string }>("session://ai", event => {
+      if (event.payload.runId === runId) onUpdate(event.payload.content);
+    });
+    try { return await invoke<AiDraft>("generate_text_stream", { runId, blockId, config, payload, instruction, before }); }
+    finally { unlisten(); }
+  }
+  const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}`, ...config.headers }, body: JSON.stringify({ ...payload, stream: true }), signal: AbortSignal.timeout(config.timeoutMs) });
+  if (!response.ok) throw new Error(`模型服务返回 ${response.status}`);
+  if (!response.body) throw new Error("模型服务未返回可读取的内容流");
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let pending = ""; let after = "";
+  while (true) {
+    const { done, value } = await reader.read(); if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split(/\r?\n/); pending = lines.pop() ?? "";
+    for (const line of lines) {
+      const data = line.startsWith("data:") ? line.slice(5).trim() : ""; if (!data || data === "[DONE]") continue;
+      try { const chunk = JSON.parse(data).choices?.[0]?.delta?.content ?? ""; if (chunk) { after += chunk; onUpdate(chunk); } } catch { /* wait for the next valid SSE frame */ }
+    }
+  }
+  return { blockId, before, after, instruction };
+}
+export async function improveBlockStream(block: DocumentBlock, instruction: string, context: string[], config: OpenAICompatibleConfig, onUpdate: StreamUpdate): Promise<AiDraft> {
+  if (!config.enabled) throw new Error("当前项目已禁用联网 AI");
+  if (!config.apiKey && !config.baseUrl.includes("localhost")) throw new Error("请先在设置中填写 API Key");
+  const payload = { model: config.model, messages: [
+    { role: "system", content: "你是软件技术方案编辑。只返回修改后的正文，不解释，不添加 Markdown 围栏。" },
+    { role: "user", content: `编辑要求：${instruction}\n\n参考上下文：\n${context.join("\n---\n")}\n\n待修改内容：\n${block.content}` },
+  ] };
+  return streamModel(block.id, block.content, instruction, payload, config, onUpdate);
+}
+export async function adaptDocumentHeadings(markdown: string, config: OpenAICompatibleConfig, onUpdate?: StreamUpdate): Promise<{ markdown: string; candidateCount: number; headingCount: number }> {
+  if (!config.enabled) throw new Error("当前项目已禁用联网 AI");
+  if (!config.apiKey && !config.baseUrl.includes("localhost")) throw new Error("请先在设置中填写 API Key");
+  const candidates = collectHeadingAdaptCandidates(markdown);
+  if (!candidates.length) throw new Error("全文中没有可识别的标题候选");
+  const instruction = "识别全文标题层级";
+  const payload = { model: config.model, messages: [
+    { role: "system", content: "你是中文软件技术方案的文档结构编辑。根据候选行及相邻上下文判断标题层级。只返回严格 JSON：{\"decisions\":[{\"line\":0,\"selected\":true,\"level\":1}]}。必须逐项返回所有候选，line 原样保留；文档总标题为 H1，章为 H2，节为 H3，依次到 H6；正文、列表项和说明文字 selected=false。不要返回 Markdown 围栏或解释。" },
+    { role: "user", content: JSON.stringify({ candidates }) },
+  ] };
+  let raw = "";
+  const result = await streamModel("heading-adapt", "", instruction, payload, config, chunk => { raw += chunk; onUpdate?.(chunk); });
+  raw = result.after || raw;
+  const normalized = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let parsed: { decisions?: HeadingAdaptDecision[] };
+  try { parsed = JSON.parse(normalized); } catch { throw new Error("AI 未返回有效的标题结构 JSON"); }
+  const candidateLines = new Set(candidates.map(item => item.line));
+  const decisions = (parsed.decisions ?? []).filter(item => candidateLines.has(item.line) && typeof item.selected === "boolean" && Number.isFinite(item.level));
+  if (!decisions.length) throw new Error("AI 未返回可用的标题判断");
+  return { markdown: applyHeadingAdaptDecisions(markdown, decisions), candidateCount: candidates.length, headingCount: decisions.filter(item => item.selected).length };
 }
 export async function openExternalUrl(url: string): Promise<void> {
   if (!/^https?:\/\//i.test(url.trim())) throw new Error("仅允许打开 http/https 来源链接");
@@ -81,6 +168,15 @@ export async function terminalResize(id: number, cols: number, rows: number): Pr
 export async function terminalClose(id: number): Promise<void> {
   if (!inTauri()) return;
   await invoke("terminal_close", { id });
+}
+export async function runCommandStream(preset: CommandPreset, onUpdate: (channel: "stdout" | "stderr", content: string) => void): Promise<CommandResult> {
+  if (!inTauri()) throw new Error("请在 Tauri 桌面端运行此任务");
+  const runId = crypto.randomUUID();
+  const unlisten = await listen<{ runId: string; channel: "stdout" | "stderr"; content: string }>("session://command", event => {
+    if (event.payload.runId === runId) onUpdate(event.payload.channel, event.payload.content);
+  });
+  try { return await invoke<CommandResult>("run_command_stream", { runId, preset: { program: preset.program, args: preset.args, cwd: preset.cwd || ".", timeoutMs: preset.timeoutMs, allowShell: preset.allowShell, stdin: preset.stdin } }); }
+  finally { unlisten(); }
 }
 
 export async function openWorkspacePowerShell(cwd: string): Promise<void> {

@@ -688,6 +688,19 @@ pub async fn knowledge_import_markdown(app:AppHandle,workspace:WorkspacePaths,so
 }
 
 #[tauri::command]
+pub async fn knowledge_move_workspace_markdown(app:AppHandle,workspace:WorkspacePaths,source_path:String)->Result<KnowledgeDocument,String>{
+    let root=fs::canonicalize(&workspace.root).map_err(|e|format!("工作区路径无效: {e}"))?;
+    let source=fs::canonicalize(resolve_workspace_path(&workspace,&source_path)).map_err(|e|format!("工作区文档不存在: {e}"))?;
+    if source.parent()!=Some(root.as_path()) || !source.extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("md")||x.eq_ignore_ascii_case("markdown")){return Err("只能移动工作区根目录下的 Markdown 文档".into());}
+    let doc=knowledge_import_markdown(app,workspace.clone(),source.to_string_lossy().into_owned()).await?;
+    if let Err(error)=fs::remove_file(&source){
+        let rollback=knowledge_delete_file(workspace.clone(),doc.location.clone(),Some(doc.id.clone()));
+        return Err(match rollback{Ok(())=>format!("删除工作区原文档失败，知识库写入已回滚: {error}"),Err(rollback_error)=>format!("删除工作区原文档失败: {error}；知识库回滚也失败: {rollback_error}")});
+    }
+    Ok(doc)
+}
+
+#[tauri::command]
 pub async fn knowledge_index_pending(app:AppHandle,workspace:WorkspacePaths,paths:Vec<String>)->Result<Vec<KnowledgeDocument>,String>{
     let mut result=Vec::new();for path in paths{result.push(knowledge_import_markdown(app.clone(),workspace.clone(),path).await?);}Ok(result)
 }

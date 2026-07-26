@@ -130,9 +130,9 @@ export function fileNameFromTitle(title: string): string {
 /** Strip fixed chapter/section number prefixes so renumbering can re-apply them. */
 export function stripHeadingPrefix(title: string): string {
   return title
-    .replace(/^第\s*\d+\s*章[\s、.．:：\-]*/u, "")
-    .replace(/^(?:\d+\.)+\d*[\s、.．:：\-]*/u, "")
-    .replace(/^\d+[\s、.．:：\-]+/u, "")
+    .replace(/^((?:\*{1,3}|_{1,3}|~~)?\s*)第\s*(?:\d+|[一二三四五六七八九十百零〇两]+)\s*章[\s、.．:：\-]*/u, "$1")
+    .replace(/^((?:\*{1,3}|_{1,3}|~~)?\s*)(?:\d+\.)+\d*[\s、.．:：\-]*/u, "$1")
+    .replace(/^((?:\*{1,3}|_{1,3}|~~)?\s*)\d+[\s、.．:：\-]+/u, "$1")
     .trim();
 }
 

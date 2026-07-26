@@ -11,6 +11,17 @@ pnpm dev
 
 桌面端还需要 Rust stable 和 Windows WebView2，然后运行 `pnpm tauri dev`。浏览器开发模式使用 `localStorage`；Tauri 模式由 Rust 后端处理模型请求、系统凭据、SQLite 和受控进程。
 
+## 构建 Windows EXE
+
+安装 Rust stable（MSVC 工具链）以及 Visual Studio Build Tools 的“使用 C++ 的桌面开发”工作负载后，执行：
+
+```powershell
+pnpm install
+pnpm build:exe
+```
+
+脚本会初始化 MSVC 编译环境，并只生成 NSIS 安装程序。构建产物位于 `src-tauri/target/release/bundle/nsis/*.exe`。
+
 正文和索引默认留在本机。方案正文优化只发送当前内容块和明确加入的引用；知识文档结构识别可能发送低置信度标题及相邻上下文，但知识入库和索引不会把正文切片发送给模型。联网搜索执行前显示实际查询词；API Key 不写入项目文件。
 
 ## 知识库存储与索引

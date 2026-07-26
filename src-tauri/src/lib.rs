@@ -1,4 +1,5 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use futures_util::StreamExt;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,7 +17,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
-use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command, time::timeout};
 
 mod knowledge;
 mod mineru;
@@ -105,6 +106,13 @@ struct CommandResult {
     stdout: String,
     stderr: String,
     duration_ms: u128,
+}
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct StreamEvent {
+    run_id: String,
+    channel: String,
+    content: String,
 }
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -431,6 +439,69 @@ fn open_workspace_powershell(cwd: String) -> Result<(), String> {
     }
 }
 
+fn model_list_endpoint(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.to_ascii_lowercase().ends_with("/models") {
+        base.to_string()
+    } else {
+        format!("{base}/models")
+    }
+}
+
+fn is_anthropic_model_endpoint(base_url: &str) -> bool {
+    base_url
+        .to_ascii_lowercase()
+        .contains("api.anthropic.com")
+}
+
+#[tauri::command]
+async fn list_models(mut config: ModelConfig) -> Result<Value, String> {
+    if config.base_url.trim().is_empty() {
+        return Err("请先填写模型服务 API 地址".into());
+    }
+    if config.api_key.trim().is_empty() {
+        config.api_key = load_secret("openai-api-key");
+    }
+    if config.api_key.trim().is_empty()
+        && !config.base_url.contains("localhost")
+        && !config.base_url.contains("127.0.0.1")
+        && !config.base_url.contains("[::1]")
+    {
+        return Err("API Key 未配置".into());
+    }
+
+    let mut request = reqwest::Client::new().get(model_list_endpoint(&config.base_url));
+    if !config.api_key.is_empty() {
+        if is_anthropic_model_endpoint(&config.base_url) {
+            request = request
+                .header("x-api-key", &config.api_key)
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            request = request.bearer_auth(&config.api_key);
+        }
+    }
+    for (key, value) in &config.headers {
+        request = request.header(key, value);
+    }
+    let response = request
+        .timeout(Duration::from_millis(config.timeout_ms))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let detail = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|value| value.pointer("/error/message").and_then(Value::as_str).map(str::to_string));
+        return Err(match detail {
+            Some(detail) if !detail.is_empty() => format!("模型列表请求返回 {status}：{detail}"),
+            _ => format!("模型列表请求返回 {status}"),
+        });
+    }
+    serde_json::from_str(&body).map_err(|e| format!("上游模型列表不是有效 JSON: {e}"))
+}
+
 #[tauri::command]
 async fn generate_text(
     block_id: String,
@@ -478,6 +549,56 @@ async fn generate_text(
             .to_string(),
         instruction,
     })
+}
+
+#[tauri::command]
+async fn generate_text_stream(
+    app: AppHandle,
+    run_id: String,
+    block_id: String,
+    mut config: ModelConfig,
+    mut payload: Value,
+    instruction: String,
+    before: String,
+) -> Result<AiDraft, String> {
+    if config.api_key.is_empty() {
+        config.api_key = load_secret("openai-api-key");
+    }
+    if config.api_key.is_empty()
+        && !config.base_url.contains("localhost")
+        && !config.base_url.contains("127.0.0.1")
+    {
+        return Err("API Key 未配置".into());
+    }
+    payload["stream"] = Value::Bool(true);
+    let mut request = reqwest::Client::new()
+        .post(format!("{}/chat/completions", config.base_url.trim_end_matches('/')))
+        .bearer_auth(&config.api_key)
+        .json(&payload);
+    for (key, value) in &config.headers { request = request.header(key, value); }
+    let response = request.timeout(Duration::from_millis(config.timeout_ms)).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() { return Err(format!("模型服务返回 {}", status)); }
+
+    let mut stream = response.bytes_stream();
+    let mut pending = String::new();
+    let mut output = String::new();
+    while let Some(chunk) = stream.next().await {
+        pending.push_str(&String::from_utf8_lossy(&chunk.map_err(|e| e.to_string())?));
+        while let Some(index) = pending.find('\n') {
+            let line = pending[..index].trim().trim_end_matches('\r').to_string();
+            pending.drain(..=index);
+            let Some(data) = line.strip_prefix("data:").map(str::trim) else { continue; };
+            if data == "[DONE]" { continue; }
+            let Ok(value) = serde_json::from_str::<Value>(data) else { continue; };
+            let content = value.pointer("/choices/0/delta/content").and_then(Value::as_str).unwrap_or_default();
+            if !content.is_empty() {
+                output.push_str(content);
+                let _ = app.emit("session://ai", StreamEvent { run_id: run_id.clone(), channel: "output".into(), content: content.into() });
+            }
+        }
+    }
+    Ok(AiDraft { block_id, before, after: output, instruction })
 }
 
 #[tauri::command]
@@ -1159,6 +1280,63 @@ async fn run_command(app: AppHandle, preset: CommandPreset) -> Result<CommandRes
 }
 
 #[tauri::command]
+async fn run_command_stream(app: AppHandle, run_id: String, preset: CommandPreset) -> Result<CommandResult, String> {
+    if preset.allow_shell { return Err("首版不允许 Shell 模式".into()); }
+    ensure_allowed(&preset.program)?;
+    let resolved = resolve_executable(&preset.program)?;
+    let cwd = resolve_workdir(&preset.cwd)?;
+    let started = std::time::Instant::now();
+    let use_cmd = resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat")).unwrap_or(false);
+    let mut command = if use_cmd {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.arg("/D").arg("/S").arg("/C");
+        let mut line = quote_cmd_arg(&resolved.to_string_lossy());
+        for arg in &preset.args { line.push(' '); line.push_str(&quote_cmd_arg(arg)); }
+        cmd.arg(line); cmd
+    } else {
+        let mut cmd = Command::new(&resolved); cmd.args(&preset.args); cmd
+    };
+    command.current_dir(&cwd)
+        .stdin(if preset.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    if let Some(path) = child_path_env() { command.env("PATH", path); }
+    let mut child = command.spawn().map_err(|e| format!("启动失败: {e}（程序：{}）", resolved.display()))?;
+    if let Some(data) = preset.stdin.as_deref() {
+        if let Some(mut stdin) = child.stdin.take() { stdin.write_all(data.as_bytes()).await.map_err(|e| format!("写入 stdin 失败: {e}"))?; }
+    }
+    let mut stdout = child.stdout.take().ok_or("无法读取标准输出")?;
+    let mut stderr = child.stderr.take().ok_or("无法读取错误输出")?;
+    let app_out = app.clone(); let stdout_run = run_id.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut all = Vec::new(); let mut buffer = [0u8; 2048];
+        loop { let n = stdout.read(&mut buffer).await.map_err(|e| e.to_string())?; if n == 0 { break; }
+            all.extend_from_slice(&buffer[..n]);
+            let content = redact(&String::from_utf8_lossy(&buffer[..n]));
+            let _ = app_out.emit("session://command", StreamEvent { run_id: stdout_run.clone(), channel: "stdout".into(), content });
+        } Ok::<Vec<u8>, String>(all)
+    });
+    let app_err = app.clone(); let stderr_run = run_id.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut all = Vec::new(); let mut buffer = [0u8; 2048];
+        loop { let n = stderr.read(&mut buffer).await.map_err(|e| e.to_string())?; if n == 0 { break; }
+            all.extend_from_slice(&buffer[..n]);
+            let content = redact(&String::from_utf8_lossy(&buffer[..n]));
+            let _ = app_err.emit("session://command", StreamEvent { run_id: stderr_run.clone(), channel: "stderr".into(), content });
+        } Ok::<Vec<u8>, String>(all)
+    });
+    let status = match timeout(Duration::from_millis(preset.timeout_ms.max(1_000)), child.wait()).await {
+        Ok(result) => result.map_err(|e| e.to_string())?,
+        Err(_) => { let _ = child.kill().await; return Err("命令执行超时".into()); }
+    };
+    let stdout = stdout_task.await.map_err(|e| e.to_string())??;
+    let stderr = stderr_task.await.map_err(|e| e.to_string())??;
+    let result = CommandResult { exit_code: status.code().unwrap_or(-1), stdout: redact(&String::from_utf8_lossy(&stdout)), stderr: redact(&String::from_utf8_lossy(&stderr)), duration_ms: started.elapsed().as_millis() };
+    let db = rusqlite::Connection::open(app_dir(&app)?.join("workspace.db")).map_err(|e| e.to_string())?;
+    db.execute("INSERT INTO command_runs(program,exit_code,stdout,stderr,duration_ms) VALUES(?1,?2,?3,?4,?5)", rusqlite::params![resolved.to_string_lossy().to_string(), result.exit_code, result.stdout, result.stderr, result.duration_ms as i64]).map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+#[tauri::command]
 fn detect_tools() -> Result<HashMap<String, String>, String> {
     let mut found = HashMap::new();
     for name in ALLOWED_PROGRAMS {
@@ -1305,13 +1483,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            list_models,
             generate_text,
+            generate_text_stream,
             store_secret,
             search_web,
             save_markdown,
             save_binary_file,
             save_docx_export,
             run_command,
+            run_command_stream,
             detect_tools,
             terminal_open,
             terminal_write,
@@ -1338,6 +1519,7 @@ pub fn run() {
             save_image_to_workspace
             ,knowledge::knowledge_scan
             ,knowledge::knowledge_import_markdown
+            ,knowledge::knowledge_move_workspace_markdown
             ,knowledge::knowledge_index_pending
             ,knowledge::knowledge_list
             ,knowledge::knowledge_sections

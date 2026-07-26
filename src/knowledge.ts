@@ -13,6 +13,9 @@ export async function scanKnowledge(workspace: WorkspacePaths): Promise<Knowledg
 export async function importKnowledgeMarkdown(workspace: WorkspacePaths, sourcePath: string): Promise<KnowledgeDocument> {
   desktopOnly(); return invoke("knowledge_import_markdown", { workspace, sourcePath });
 }
+export async function moveWorkspaceMarkdownToKnowledge(workspace: WorkspacePaths, sourcePath: string): Promise<KnowledgeDocument> {
+  desktopOnly(); return invoke("knowledge_move_workspace_markdown", { workspace, sourcePath });
+}
 export async function indexPendingKnowledge(workspace: WorkspacePaths, paths: string[]): Promise<KnowledgeDocument[]> {
   desktopOnly(); return invoke("knowledge_index_pending", { workspace, paths });
 }
