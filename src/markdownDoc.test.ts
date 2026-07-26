@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  alignHeadingsToRules,
   applyHeadingLevel,
   formatHeadingPrefix,
   moveSection,
@@ -11,6 +12,38 @@ import {
 } from "./markdownDoc";
 
 describe("heading numbering", () => {
+  it("demotes numbered H1 chapters while preserving an optional document title", () => {
+    const markdown = ["# 项目方案", "", "# 1 项目必要性分析", "", "## 第1章 项目背景", "", "### 1.1 建设依据", "", "# 2 项目需求分析"].join("\n");
+    expect(alignHeadingsToRules(markdown)).toEqual({
+      markdown: ["# 项目方案", "", "## 第1章 项目必要性分析", "", "## 第2章 项目背景", "", "### 2.1 建设依据", "", "## 第3章 项目需求分析"].join("\n"),
+      headingCount: 5,
+      demotedCount: 2,
+      titlePreserved: true,
+      titleCreated: false,
+    });
+  });
+
+  it("preserves the only H1 as the document title", () => {
+    const markdown = "# 项目方案\n\n## 第5章 项目背景\n\n### 8.3 建设依据";
+    expect(alignHeadingsToRules(markdown)).toEqual({
+      markdown: "# 项目方案\n\n## 第1章 项目背景\n\n### 1.1 建设依据",
+      headingCount: 3,
+      demotedCount: 0,
+      titlePreserved: true,
+      titleCreated: false,
+    });
+  });
+
+  it("promotes the first preamble line when numbered H1 chapters leave no title", () => {
+    const markdown = "项目可行性研究报告\n\n申报单位：某某单位\n\n# 1 项目必要性分析\n\n# 2 项目需求分析";
+    expect(alignHeadingsToRules(markdown)).toEqual({
+      markdown: "# 项目可行性研究报告\n\n申报单位：某某单位\n\n## 第1章 项目必要性分析\n\n## 第2章 项目需求分析",
+      headingCount: 3,
+      demotedCount: 2,
+      titlePreserved: false,
+      titleCreated: true,
+    });
+  });
   it("strips chapter and dotted prefixes", () => {
     expect(stripHeadingPrefix("第1章 背景")).toBe("背景");
     expect(stripHeadingPrefix("第一章 背景")).toBe("背景");

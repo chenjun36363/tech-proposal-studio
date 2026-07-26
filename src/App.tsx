@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Bot, Braces, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Copy, Download, ExternalLink, Eye, FilePlus2, FolderOpen, FolderSearch, Globe2, GripVertical, Highlighter, Info, Italic, Layers3, Maximize2, Minimize2, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, TerminalSquare, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { Bold, BookOpen, Bot, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Copy, Download, ExternalLink, Eye, FilePlus2, FolderOpen, FolderSearch, Globe2, Highlighter, Info, Italic, Layers3, Maximize2, Minimize2, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, TerminalSquare, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { toggleTheme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext, type AgentToolId } from "./agents";
-import { adaptDocumentHeadings, detectTools, improveBlockStream, isDesktop, listModels, openExternalUrl, openWorkspacePowerShell, runCommand, runCommandStream, saveMarkdown, searchWeb } from "./services";
+import { detectTools, improveBlockStream, isDesktop, listModels, openExternalUrl, openWorkspacePowerShell, runCommand, runCommandStream, saveMarkdown, searchWeb } from "./services";
 import { downloadDocx } from "./docxExport";
 import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./findReplace";
 import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./markdownEditor";
 import {
   applyHeadingLevel,
+  alignHeadingsToRules,
   buildHeadingTree,
   defaultProposalMarkdown,
   fileNameFromTitle,
-  moveSection,
   parseMarkdownHeadings,
   renumberHeadings,
   replaceSection,
@@ -306,8 +306,6 @@ export default function App() {
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findIndex, setFindIndex] = useState(0);
   const [collapsedHeadings, setCollapsedHeadings] = useState<Set<string>>(new Set());
-  const [draggedHeadingId, setDraggedHeadingId] = useState<string | null>(null);
-  const [headingDrop, setHeadingDrop] = useState<{ id: string; position: "before" | "after" } | null>(null);
   const [previewSource, setPreviewSource] = useState<SourceRecord | null>(null);
   const [previewMarkdown, setPreviewMarkdown] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -514,23 +512,6 @@ export default function App() {
     setCollapsedHeadings(next);
   };
 
-  const dropHeading = (targetId: string, position: "before" | "after") => {
-    const source = headings.find(h => h.id === draggedHeadingId);
-    const target = headings.find(h => h.id === targetId);
-    setHeadingDrop(null);
-    setDraggedHeadingId(null);
-    if (!source || !target || source.id === target.id) return;
-    const moved = moveSection(markdown, source, target, position);
-    if (moved === markdown) return notify("不能将章节移动到自身的子章节中");
-    const next = renumberHeadings(moved);
-    const sourceTitle = stripHeadingPrefix(source.title);
-    const nextHeading = parseMarkdownHeadings(next).find(h => h.level === source.level && stripHeadingPrefix(h.title) === sourceTitle);
-    setMarkdown(next);
-    setSelectedHeadingId(nextHeading?.id ?? null);
-    setEditorMode("section");
-    notify("章节已移动并重新编号");
-  };
-
   const renderHeadingNodes = (nodes: typeof headingTree): React.ReactNode[] => {
     return nodes.flatMap(node => {
       const hasCh = node.children.length > 0;
@@ -538,29 +519,10 @@ export default function App() {
       const item = (
         <button
           key={node.heading.id}
-          draggable
-          className={`toc-item level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""} ${draggedHeadingId === node.heading.id ? "dragging" : ""} ${headingDrop?.id === node.heading.id ? `drop-${headingDrop.position}` : ""}`}
+          className={`toc-item level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""}`}
           onClick={() => { setSelectedHeadingId(node.heading.id); setEditorMode("section"); }}
-          onDragStart={event => {
-            setDraggedHeadingId(node.heading.id);
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData("text/plain", node.heading.id);
-          }}
-          onDragOver={event => {
-            if (!draggedHeadingId || draggedHeadingId === node.heading.id) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
-            const rect = event.currentTarget.getBoundingClientRect();
-            setHeadingDrop({ id: node.heading.id, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" });
-          }}
-          onDrop={event => {
-            event.preventDefault();
-            dropHeading(node.heading.id, headingDrop?.id === node.heading.id ? headingDrop.position : "before");
-          }}
-          onDragEnd={() => { setDraggedHeadingId(null); setHeadingDrop(null); }}
-          title={`${node.heading.title}（拖拽可移动章节）`}
+          title={node.heading.title}
         >
-          <GripVertical className="toc-drag-handle" size={13} aria-hidden="true" />
           <span className="toc-chevron" onMouseDown={hasCh ? (e => { e.stopPropagation(); e.preventDefault(); }) : undefined} onClick={hasCh ? () => toggleCollapse(node.heading.id) : undefined}>
             {hasCh ? (collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />) : null}
           </span>
@@ -594,13 +556,15 @@ export default function App() {
   };
 
   const renumberAllHeadings = () => {
-    const next = renumberHeadings(markdown);
+    const fallbackTitle = project.filePath?.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || project.name;
+    const result = alignHeadingsToRules(markdown, fallbackTitle);
+    const next = result.markdown;
     if (next === markdown) {
       notify("标题编号已是最新");
       return;
     }
     setMarkdown(next);
-    notify("已按固定样式重新编号全部标题");
+    notify(result.titleCreated ? "已生成全文标题并重新编号" : "已按固定样式重新编号全部标题");
   };
 
   const openFindBar = (withReplace = false) => {
@@ -1174,39 +1138,42 @@ export default function App() {
           </div>
         </div>
         <div className="heading-toolbar" title="选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）">
-          <div className="toolbar-history">
-            <IconButton title="撤销 (Ctrl+Z)" onClick={undo}><Undo2 size={16} /></IconButton>
-            <IconButton title="重做 (Ctrl+Y / Ctrl+Shift+Z)" onClick={redo}><Redo2 size={16} /></IconButton>
+          <div className="heading-toolbar-row">
+            <span className="heading-toolbar-label">设置标题</span>
+            <div className="heading-level-group">
+            {[1, 2, 3, 4, 5, 6].map(level => (
+              <button
+                key={level}
+                type="button"
+                className="heading-level-btn"
+                onClick={() => applyHeadingToSelection(level)}
+                title={level === 1 ? "H1 文档总标题" : `H${level} → ${level === 2 ? "第N章" : Array.from({ length: level - 1 }, (_, i) => i + 1).join(".")}`}
+              >
+                H{level}
+              </button>
+            ))}
+            </div>
+            <button type="button" className="heading-renumber-btn" onClick={renumberAllHeadings}>重编号</button>
+            <span className="format-divider" />
+            <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("*", "*")} title="斜体 (Ctrl+I)"><Italic size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("~~", "~~")} title="删除线"><Strikethrough size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("`", "`")} title="行内代码"><Code2 size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("==", "==")} title="标黄高亮"><Highlighter size={14} /></button>
           </div>
-          <span className="format-divider" />
-          <span className="heading-toolbar-label">设置标题</span>
-          <div className="heading-level-group">
-          {[1, 2, 3, 4, 5, 6].map(level => (
-            <button
-              key={level}
-              type="button"
-              className="heading-level-btn"
-              onClick={() => applyHeadingToSelection(level)}
-              title={level === 1 ? "H1 文档总标题" : `H${level} → ${level === 2 ? "第N章" : Array.from({ length: level - 1 }, (_, i) => i + 1).join(".")}`}
-            >
-              H{level}
+          <div className="heading-toolbar-row">
+            <div className="toolbar-history">
+              <IconButton title="撤销 (Ctrl+Z)" onClick={undo}><Undo2 size={16} /></IconButton>
+              <IconButton title="重做 (Ctrl+Y / Ctrl+Shift+Z)" onClick={redo}><Redo2 size={16} /></IconButton>
+            </div>
+            <span className="heading-toolbar-spacer" />
+            <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(false)} title="查找 (Ctrl+F)">
+              <Search size={14} /> 查找
             </button>
-          ))}
+            <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(true)} title="替换 (Ctrl+H)">
+              <Replace size={14} /> 替换
+            </button>
           </div>
-          <button type="button" className="heading-renumber-btn" onClick={renumberAllHeadings}>重编号</button>
-          <span className="format-divider" />
-          <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
-          <button type="button" className="format-btn" onClick={() => wrapSelection("*", "*")} title="斜体 (Ctrl+I)"><Italic size={14} /></button>
-          <button type="button" className="format-btn" onClick={() => wrapSelection("~~", "~~")} title="删除线"><Strikethrough size={14} /></button>
-          <button type="button" className="format-btn" onClick={() => wrapSelection("`", "`")} title="行内代码"><Code2 size={14} /></button>
-          <button type="button" className="format-btn" onClick={() => wrapSelection("==", "==")} title="标黄高亮"><Highlighter size={14} /></button>
-          <span className="heading-toolbar-spacer" />
-          <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(false)} title="查找 (Ctrl+F)">
-            <Search size={14} /> 查找
-          </button>
-          <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(true)} title="替换 (Ctrl+H)">
-            <Replace size={14} /> 替换
-          </button>
         </div>
         {findOpen && (
           <div className="find-replace-bar">
@@ -1830,7 +1797,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
   const [manualContextContent, setManualContextContent] = useState("");
   const [draft, setDraft] = useState<AiDraft | null>(null);
   const [loading, setLoading] = useState(false);
-  const [headingAdapting, setHeadingAdapting] = useState(false);
   const [aiSession, setAiSession] = useState<SessionEvent[]>([]);
   const [query, setQuery] = useState("");
   const [knowledgeQualityFilters, setKnowledgeQualityFilters] = useState<Set<KnowledgeChunkQuality>>(() => new Set(["good", "normal"]));
@@ -1933,21 +1899,6 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       setDraft(result); setAiSession(current => [...current, event("done", "生成完成", `${result.after.length.toLocaleString()} 字符，等待确认`) ]);
     } catch (e: any) { setAiSession(current => [...current, event("error", "会话中断", e.message)]); notify(e.message); }
     finally { setLoading(false); }
-  };
-  const adaptFullDocumentHeadings = async () => {
-    if (!project.markdown?.trim()) return notify("当前文档为空");
-    setHeadingAdapting(true); setAiSession([event("status", "建立当前会话", `${project.model.model} · 全文结构`), event("tool", "扫描标题候选", `${project.markdown.split(/\r?\n/).length} 行文档`) ]);
-    try {
-      const result = await adaptDocumentHeadings(project.markdown, project.model, chunk => appendOutput(setAiSession, chunk));
-      updateProject((value: Project) => ({ ...value, markdown: result.markdown, name: titleFromMarkdown(result.markdown, value.name), updatedAt: new Date().toISOString() }));
-      setAiSession(current => [...current, event("tool", "应用标题层级", `${result.headingCount} / ${result.candidateCount} 个候选`), event("done", "全文结构已更新")]);
-      notify(`已自适应 ${result.headingCount} 个标题（检查 ${result.candidateCount} 个候选）`);
-    } catch (e: any) {
-      setAiSession(current => [...current, event("error", "标题识别失败", e?.message ?? "未知错误")]);
-      notify(e?.message ?? "全文标题自适应失败");
-    } finally {
-      setHeadingAdapting(false);
-    }
   };
   const updateSourceContext = (sourceId: string, source?: SourceRecord, mode: "add" | "remove" | "toggle" = "add") => {
     updateProject((p: Project) => {
@@ -2147,12 +2098,8 @@ function RightPanel({ tab, setTab, project, block, updateProject, updateBlock, n
       <div className="context-line"><span><Bot size={17} />{project.model.model}</span><button onClick={openSettings}>配置</button></div>
       <label>编辑要求<textarea value={instruction} onChange={e => setInstruction(e.target.value)} /></label>
       <label className="context-box context-send-toggle"><span><input type="checkbox" checked={aiUseContext} onChange={e => setAiUseContext(e.target.checked)} />发送上下文</span><b>{aiUseContext ? `${context.length} 条引用 + 当前章节` : "仅当前章节"}</b></label>
-      <button className="primary" onClick={runAi} disabled={loading || headingAdapting}>{loading ? "正在生成…" : <><Sparkles size={16} />优化当前章节</>}</button>
-      <div className="ai-document-tool">
-        <div><Braces size={15} /><span>文档结构</span></div>
-        <button type="button" disabled={headingAdapting || loading} onClick={() => void adaptFullDocumentHeadings()}>{headingAdapting ? <><RefreshCw className="spinning" size={14} />识别中…</> : <><Sparkles size={14} />全文标题自适应</>}</button>
-      </div>
-      <SessionTrace title={headingAdapting ? "全文标题自适应" : "章节优化会话"} events={aiSession} running={loading || headingAdapting} />
+      <button className="primary" onClick={runAi} disabled={loading}>{loading ? "正在生成…" : <><Sparkles size={16} />优化当前章节</>}</button>
+      <SessionTrace title="章节优化会话" events={aiSession} running={loading} />
       {draft && <div className="diff"><div className="diff-title"><span>修改建议</span><button onClick={() => setDraft(null)}><X size={14} /></button></div><div className="removed">{draft.before || "（空内容）"}</div><div className="added">{draft.after}</div><div className="diff-actions"><button onClick={() => setDraft(null)}>拒绝</button><button onClick={() => { updateBlock((b: DocumentBlock) => ({ ...b, content: draft.after })); setDraft(null); notify("修改已应用"); }}><Check size={14} />接受修改</button></div></div>}
     </div>}
     {tab === "commands" && <div className="inspector-content cli-task-panel">

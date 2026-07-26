@@ -2,7 +2,7 @@
   "model": {
     "baseUrl": "http://www.newxuu.top:8317/v1",
     "apiKey": "sk-gvAFqxFL7DzNaGyBz",
-    "model": "deepseek-v4-flash-free",
+    "model": "oc/deepseek-v4-flash-free",
     "timeoutMs": 60000,
     "headers": {},
     "enabled": true

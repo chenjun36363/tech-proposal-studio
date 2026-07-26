@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AiDraft, CommandPreset, CommandResult, DocumentBlock, ModelOption, OpenAICompatibleConfig, Project, SearchConfig, SearchResult } from "./types";
-import { applyHeadingAdaptDecisions, collectHeadingAdaptCandidates, type HeadingAdaptDecision } from "./headingAdapt";
 import { isLocalModelEndpoint, modelListHeaders, modelsEndpoint, normalizeModelList } from "./modelCatalog";
 
 const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -100,27 +99,6 @@ export async function improveBlockStream(block: DocumentBlock, instruction: stri
     { role: "user", content: `编辑要求：${instruction}\n\n参考上下文：\n${context.join("\n---\n")}\n\n待修改内容：\n${block.content}` },
   ] };
   return streamModel(block.id, block.content, instruction, payload, config, onUpdate);
-}
-export async function adaptDocumentHeadings(markdown: string, config: OpenAICompatibleConfig, onUpdate?: StreamUpdate): Promise<{ markdown: string; candidateCount: number; headingCount: number }> {
-  if (!config.enabled) throw new Error("当前项目已禁用联网 AI");
-  if (!config.apiKey && !config.baseUrl.includes("localhost")) throw new Error("请先在设置中填写 API Key");
-  const candidates = collectHeadingAdaptCandidates(markdown);
-  if (!candidates.length) throw new Error("全文中没有可识别的标题候选");
-  const instruction = "识别全文标题层级";
-  const payload = { model: config.model, messages: [
-    { role: "system", content: "你是中文软件技术方案的文档结构编辑。根据候选行及相邻上下文判断标题层级。只返回严格 JSON：{\"decisions\":[{\"line\":0,\"selected\":true,\"level\":1}]}。必须逐项返回所有候选，line 原样保留；文档总标题为 H1，章为 H2，节为 H3，依次到 H6；正文、列表项和说明文字 selected=false。不要返回 Markdown 围栏或解释。" },
-    { role: "user", content: JSON.stringify({ candidates }) },
-  ] };
-  let raw = "";
-  const result = await streamModel("heading-adapt", "", instruction, payload, config, chunk => { raw += chunk; onUpdate?.(chunk); });
-  raw = result.after || raw;
-  const normalized = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  let parsed: { decisions?: HeadingAdaptDecision[] };
-  try { parsed = JSON.parse(normalized); } catch { throw new Error("AI 未返回有效的标题结构 JSON"); }
-  const candidateLines = new Set(candidates.map(item => item.line));
-  const decisions = (parsed.decisions ?? []).filter(item => candidateLines.has(item.line) && typeof item.selected === "boolean" && Number.isFinite(item.level));
-  if (!decisions.length) throw new Error("AI 未返回可用的标题判断");
-  return { markdown: applyHeadingAdaptDecisions(markdown, decisions), candidateCount: candidates.length, headingCount: decisions.filter(item => item.selected).length };
 }
 export async function openExternalUrl(url: string): Promise<void> {
   if (!/^https?:\/\//i.test(url.trim())) throw new Error("仅允许打开 http/https 来源链接");

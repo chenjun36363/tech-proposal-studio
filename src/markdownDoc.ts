@@ -176,6 +176,79 @@ export function renumberHeadings(markdown: string): string {
   return lines.join("\n");
 }
 
+export interface HeadingAlignmentResult {
+  markdown: string;
+  headingCount: number;
+  demotedCount: number;
+  titlePreserved: boolean;
+  titleCreated: boolean;
+}
+
+function isTitleCandidate(value: string): boolean {
+  const text = value.trim();
+  if (!text || text.length > 120) return false;
+  if (/^(?:<|[-+*]\s|\d+[.)、]\s|>|\||!\[)/u.test(text)) return false;
+  if (/^(?:(?:申报|编制|建设|承建|项目|报告)?(?:单位|日期|时间|负责人|联系人|地址)|(?:申报|编制)部门)[：:]/u.test(text)) return false;
+  return true;
+}
+
+/** Ensure one document title, demote chapter-like H1s, then apply fixed numbering. */
+export function alignHeadingsToRules(markdown: string, fallbackTitle = "未命名技术方案"): HeadingAlignmentResult {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  let inCode = false;
+  const headings: { line: number; level: number; title: string }[] = [];
+  let demotedCount = 0;
+  let titlePreserved = false;
+  let titleCreated = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) continue;
+    const heading = lines[index].match(HEADING_RE);
+    if (!heading) continue;
+    headings.push({ line: index, level: heading[1].length, title: heading[2].trim() });
+  }
+
+  const h1s = headings.filter(heading => heading.level === 1);
+  let titleLine: number | null = null;
+  if (h1s.length === 1) {
+    titleLine = h1s[0].line;
+  } else if (h1s.length > 1) {
+    const unnumbered = h1s.filter(heading => stripHeadingPrefix(heading.title) === heading.title);
+    if (unnumbered.length === 1) titleLine = unnumbered[0].line;
+  }
+  titlePreserved = titleLine !== null;
+
+  for (const heading of h1s) {
+    if (heading.line === titleLine) continue;
+    lines[heading.line] = headingLine(2, heading.title);
+    demotedCount += 1;
+  }
+
+  if (titleLine === null) {
+    const firstHeadingLine = headings[0]?.line ?? lines.length;
+    const candidateLine = lines.findIndex((line, index) => index < firstHeadingLine && isTitleCandidate(line));
+    if (candidateLine >= 0) {
+      lines[candidateLine] = headingLine(1, lines[candidateLine]);
+    } else {
+      lines.unshift(headingLine(1, fallbackTitle.trim() || "未命名技术方案"), "");
+    }
+    titleCreated = true;
+  }
+
+  return {
+    markdown: renumberHeadings(lines.join("\n")),
+    headingCount: headings.length + (titleCreated ? 1 : 0),
+    demotedCount,
+    titlePreserved,
+    titleCreated,
+  };
+}
+
 function expandToLineRange(text: string, start: number, end: number): { start: number; end: number } {
   let s = Math.max(0, Math.min(start, text.length));
   let e = Math.max(0, Math.min(end, text.length));
