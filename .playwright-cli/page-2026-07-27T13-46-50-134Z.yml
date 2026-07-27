@@ -1,0 +1,165 @@
+- generic [ref=f2e3]:
+  - banner [ref=f2e4]:
+    - generic [ref=f2e5]: 构案
+    - generic [ref=f2e7]:
+      - textbox [ref=f2e8]: 未命名技术方案
+      - generic [ref=f2e9]: 未关联文件 · 自动缓存 2026/7/27
+    - generic [ref=f2e10]:
+      - button "知识管理" [disabled] [ref=f2e11] [cursor=pointer]
+      - button "联网搜索" [ref=f2e14] [cursor=pointer]
+      - button "PowerShell 仅在桌面端可用" [disabled] [ref=f2e20] [cursor=pointer]
+      - button "保存" [ref=f2e24] [cursor=pointer]
+      - button "导出" [ref=f2e30] [cursor=pointer]
+      - button "收起右侧面板" [ref=f2e36] [cursor=pointer]
+      - button "切换到暗色" [ref=f2e40] [cursor=pointer]
+      - button "设置" [ref=f2e43] [cursor=pointer]
+      - button "文件操作" [ref=f2e48] [cursor=pointer]
+  - generic [ref=f2e53]:
+    - complementary [ref=f2e54]:
+      - generic [ref=f2e55]:
+        - generic [ref=f2e56]: 目录
+        - generic [ref=f2e57]:
+          - button "新建 Markdown 文件" [ref=f2e58] [cursor=pointer]
+          - button "打开工作区 Markdown" [ref=f2e62] [cursor=pointer]
+          - button "未关联磁盘文件" [ref=f2e65] [cursor=pointer]
+      - generic [ref=f2e71]:
+        - button "按章节" [ref=f2e72] [cursor=pointer]
+        - button "全文" [ref=f2e73] [cursor=pointer]
+      - generic [ref=f2e75]:
+        - generic [ref=f2e76]: 显示级别
+        - generic [ref=f2e77]:
+          - button "1级" [ref=f2e78] [cursor=pointer]
+          - button "2级" [ref=f2e79] [cursor=pointer]
+          - button "3级" [ref=f2e80] [cursor=pointer]
+          - button "4级" [ref=f2e81] [cursor=pointer]
+          - button "全部" [ref=f2e82] [cursor=pointer]
+      - navigation [ref=f2e83]:
+        - button "H1 未命名技术方案" [ref=f2e84] [cursor=pointer]:
+          - generic [ref=f2e88]: H1
+          - generic [ref=f2e89]: 未命名技术方案
+        - button "H2 背景与目标" [ref=f2e90] [cursor=pointer]:
+          - generic [ref=f2e91]: H2
+          - generic [ref=f2e92]: 背景与目标
+        - button "H2 范围与约束" [ref=f2e93] [cursor=pointer]:
+          - generic [ref=f2e94]: H2
+          - generic [ref=f2e95]: 范围与约束
+        - button "H2 总体架构" [ref=f2e96] [cursor=pointer]:
+          - generic [ref=f2e97]: H2
+          - generic [ref=f2e98]: 总体架构
+        - button "H2 详细设计" [ref=f2e99] [cursor=pointer]:
+          - generic [ref=f2e100]: H2
+          - generic [ref=f2e101]: 详细设计
+        - button "H2 接口与数据" [ref=f2e102] [cursor=pointer]:
+          - generic [ref=f2e103]: H2
+          - generic [ref=f2e104]: 接口与数据
+        - button "H2 安全设计" [ref=f2e105] [cursor=pointer]:
+          - generic [ref=f2e106]: H2
+          - generic [ref=f2e107]: 安全设计
+        - button "H2 部署与迁移" [ref=f2e108] [cursor=pointer]:
+          - generic [ref=f2e109]: H2
+          - generic [ref=f2e110]: 部署与迁移
+        - button "H2 风险与应对" [ref=f2e111] [cursor=pointer]:
+          - generic [ref=f2e112]: H2
+          - generic [ref=f2e113]: 风险与应对
+        - button "H2 测试与验收" [ref=f2e114] [cursor=pointer]:
+          - generic [ref=f2e115]: H2
+          - generic [ref=f2e116]: 测试与验收
+    - generic "拖动调整左侧面板宽度" [ref=f2e117]
+    - main [ref=f2e118]:
+      - generic [ref=f2e119]:
+        - generic [ref=f2e120]:
+          - generic [ref=f2e121]: H1
+          - textbox [ref=f2e122]: 未命名技术方案
+        - generic [ref=f2e123]:
+          - button "源码" [ref=f2e124] [cursor=pointer]
+          - button "分栏" [ref=f2e125] [cursor=pointer]
+          - button "预览" [ref=f2e126] [cursor=pointer]
+      - generic "选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）" [ref=f2e127]:
+        - generic [ref=f2e128]:
+          - generic [ref=f2e129]: 设置标题
+          - generic [ref=f2e130]:
+            - button "H1" [ref=f2e131] [cursor=pointer]
+            - button "H2" [ref=f2e132] [cursor=pointer]
+            - button "H3" [ref=f2e133] [cursor=pointer]
+            - button "H4" [ref=f2e134] [cursor=pointer]
+            - button "H5" [ref=f2e135] [cursor=pointer]
+            - button "H6" [ref=f2e136] [cursor=pointer]
+          - button "重编号" [ref=f2e137] [cursor=pointer]
+          - button "加粗 (Ctrl+B)" [ref=f2e139] [cursor=pointer]
+          - button "斜体 (Ctrl+I)" [ref=f2e142] [cursor=pointer]
+          - button "删除线" [ref=f2e145] [cursor=pointer]
+          - button "行内代码" [ref=f2e149] [cursor=pointer]
+          - button "标黄高亮" [ref=f2e154] [cursor=pointer]
+        - generic [ref=f2e158]:
+          - generic [ref=f2e159]:
+            - button "撤销 (Ctrl+Z)" [ref=f2e160] [cursor=pointer]
+            - button "重做 (Ctrl+Y / Ctrl+Shift+Z)" [ref=f2e164] [cursor=pointer]
+          - button "查找" [ref=f2e168] [cursor=pointer]
+          - button "替换" [ref=f2e172] [cursor=pointer]
+      - generic [ref=f2e181]:
+        - generic [ref=f2e183]:
+          - generic:
+            - generic: "# 未命名技术方案"
+            - generic: "## 背景与目标"
+            - generic: 在此编写本章内容…
+            - generic: "## 范围与约束"
+            - generic: 在此编写本章内容…
+            - generic: "## 总体架构"
+            - generic: 在此编写本章内容…
+            - generic: "## 详细设计"
+            - generic: 在此编写本章内容…
+            - generic: "## 接口与数据"
+            - generic: 在此编写本章内容…
+            - generic: "## 安全设计"
+            - generic: 在此编写本章内容…
+            - generic: "## 部署与迁移"
+            - generic: 在此编写本章内容…
+            - generic: "## 风险与应对"
+            - generic: 在此编写本章内容…
+            - generic: "## 测试与验收"
+            - generic: 在此编写本章内容…
+          - textbox "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片" [ref=f2e184]: "# 未命名技术方案 ## 背景与目标 在此编写本章内容… ## 范围与约束 在此编写本章内容… ## 总体架构 在此编写本章内容… ## 详细设计 在此编写本章内容… ## 接口与数据 在此编写本章内容… ## 安全设计 在此编写本章内容… ## 部署与迁移 在此编写本章内容… ## 风险与应对 在此编写本章内容… ## 测试与验收 在此编写本章内容…"
+        - generic [ref=f2e186]:
+          - heading "未命名技术方案" [level=1] [ref=f2e244]
+          - heading "背景与目标" [level=2] [ref=f2e245]
+          - paragraph [ref=f2e246]: 在此编写本章内容…
+          - heading "范围与约束" [level=2] [ref=f2e247]
+          - paragraph [ref=f2e248]: 在此编写本章内容…
+          - heading "总体架构" [level=2] [ref=f2e249]
+          - paragraph [ref=f2e250]: 在此编写本章内容…
+          - heading "详细设计" [level=2] [ref=f2e251]
+          - paragraph [ref=f2e252]: 在此编写本章内容…
+          - heading "接口与数据" [level=2] [ref=f2e253]
+          - paragraph [ref=f2e254]: 在此编写本章内容…
+          - heading "安全设计" [level=2] [ref=f2e255]
+          - paragraph [ref=f2e256]: 在此编写本章内容…
+          - heading "部署与迁移" [level=2] [ref=f2e257]
+          - paragraph [ref=f2e258]: 在此编写本章内容…
+          - heading "风险与应对" [level=2] [ref=f2e259]
+          - paragraph [ref=f2e260]: 在此编写本章内容…
+          - heading "测试与验收" [level=2] [ref=f2e261]
+          - paragraph [ref=f2e262]: 在此编写本章内容…
+    - generic "拖动调整右侧面板宽度" [ref=f2e206]
+    - complementary [ref=f2e207]:
+      - generic [ref=f2e208]:
+        - generic [ref=f2e209]:
+          - button "AI" [ref=f2e210] [cursor=pointer]
+          - button "Agent" [active] [ref=f2e213] [cursor=pointer]
+          - button "上下文" [ref=f2e217] [cursor=pointer]
+          - button "知识库" [ref=f2e222] [cursor=pointer]
+        - button "关闭侧栏" [ref=f2e225] [cursor=pointer]
+      - generic [ref=f2e263]:
+        - generic [ref=f2e264]:
+          - generic [ref=f2e267]:
+            - generic [ref=f2e268]: 方案 Agent
+            - generic [ref=f2e269]: gpt-4.1-mini
+          - generic [ref=f2e270]: 0 份资料
+        - generic [ref=f2e271]:
+          - text: 任务目标
+          - textbox "任务目标" [ref=f2e272]: 分析当前章节，结合项目资料补全关键设计，并提交一版可审阅的修改稿。
+        - generic [ref=f2e273]:
+          - button "质量检查" [ref=f2e274] [cursor=pointer]
+          - button "开始执行" [ref=f2e275] [cursor=pointer]
+        - generic [ref=f2e278]:
+          - generic [ref=f2e282]: 等待任务
+          - generic [ref=f2e283]: Agent 的读取、检索和修改步骤会显示在这里

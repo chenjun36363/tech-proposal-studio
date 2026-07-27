@@ -1,6 +1,7 @@
-import type { Project } from "./types";
+import type { DocumentBlock, Project } from "./types";
 import { createProject } from "./data";
 import { defaultProposalMarkdown } from "./markdownDoc";
+import { normalizeAgentSettings } from "./agent/settings";
 const KEY = "tech-proposal-studio.project.v1";
 const LEGACY_KEY = "schematic-writer.project.v1";
 function ensureCommands(project: Project): Project {
@@ -11,10 +12,20 @@ function ensureCommands(project: Project): Project {
   const extras = base.commands.filter(c => !existing.some(e => e.program === c.program && e.args.join(" ") === c.args.join(" ")));
   return { ...project, commands: [...existing, ...extras] };
 }
-function ensureMarkdown(project: Project): Project {
+interface LegacySection {
+  title?: string;
+  blocks?: DocumentBlock[];
+}
+
+type StoredProject = Omit<Project, "contextSourceRefs"> & {
+  contextSourceRefs?: string[];
+  sections?: LegacySection[];
+};
+
+function ensureMarkdown(project: StoredProject): StoredProject {
   if (typeof project.markdown === "string" && project.markdown.trim()) return project;
   if (project.sections?.length) {
-    const md = `# ${project.name || "未命名技术方案"}\n\n${project.sections.map(s => `## ${s.title}\n\n${s.blocks.map(b => b.content).join("\n\n")}`).join("\n\n")}`;
+    const md = `# ${project.name || "未命名技术方案"}\n\n${project.sections.map(s => `## ${s.title ?? "未命名章节"}\n\n${(s.blocks ?? []).map(b => b.content).join("\n\n")}`).join("\n\n")}`;
     return { ...project, markdown: md };
   }
   return { ...project, markdown: defaultProposalMarkdown(project.name || "未命名技术方案") };
@@ -40,8 +51,18 @@ function ensureMineru(project: Project): Project {
   return { ...project, mineru: createProject().mineru };
 }
 
-function normalizeProject(raw: Project): Project {
-  return ensureCommands(ensureMarkdown(ensureMineru(raw)));
+function migrateLegacyStructure(raw: StoredProject): Project {
+  const contextSourceRefs = Array.isArray(raw.contextSourceRefs)
+    ? raw.contextSourceRefs.filter(id => typeof id === "string")
+    : raw.sections?.[0]?.blocks?.[0]?.sourceRefs ?? [];
+  const { sections: _legacySections, ...project } = raw;
+  return { ...project, contextSourceRefs };
+}
+
+function normalizeProject(raw: StoredProject): Project {
+  const markdownReady = ensureMarkdown(raw);
+  const migrated = migrateLegacyStructure(markdownReady);
+  return ensureCommands(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) }));
 }
 export function loadProject(): Project {
   try {
@@ -68,5 +89,5 @@ export function saveProject(project: Project) {
 }
 export function exportMarkdown(project: Project) {
   if (typeof project.markdown === "string" && project.markdown.trim()) return project.markdown;
-  return `# ${project.name}\n\n${project.sections.map(s => `## ${s.title}\n\n${s.blocks.map(b => b.content).join("\n\n")}`).join("\n\n")}`;
+  return defaultProposalMarkdown(project.name || "未命名技术方案");
 }

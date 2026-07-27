@@ -57,9 +57,8 @@ export const agentTools: AgentTool[] = [
 ];
 
 export function defaultAgentPrompt(project: Project, block: DocumentBlock): string {
-  const section = project.sections.find((s) => s.id === block.sectionId);
   const markdownTitle = block.content.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim();
-  const title = section?.title ?? markdownTitle ?? "当前章节";
+  const title = markdownTitle ?? "当前章节";
   const body = block.content.trim() || "（当前内容块为空，请直接起草）";
   return [
     "你是软件技术方案写作助手。",

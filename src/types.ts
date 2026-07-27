@@ -1,6 +1,5 @@
 export type BlockType = "text" | "table" | "code" | "mermaid" | "quote" | "decision" | "evidence";
 export interface DocumentBlock { id: string; sectionId: string; type: BlockType; content: string; order: number; status: "draft" | "review" | "done"; sourceRefs: string[]; metadata?: Record<string, string>; }
-export interface Section { id: string; title: string; order: number; blocks: DocumentBlock[]; }
 export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
 export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; }
 export interface ModelOption { id: string; displayName: string; ownedBy?: string; }
@@ -29,7 +28,7 @@ export type SessionEventKind = "status" | "output" | "tool" | "error" | "done";
 export interface SessionEvent { id: string; kind: SessionEventKind; label: string; content?: string; channel?: "stdout" | "stderr"; at: number; }
 export interface WorkspacePaths {
   root: string;
-  /** 历史资料 Markdown 目录（引用材料，非当前编辑正文） */
+  /** 知识库 Markdown 目录（引用材料，非当前编辑正文）。字段名保留以兼容旧配置。 */
   historyDir: string;
 }
 export interface Project {
@@ -38,12 +37,15 @@ export interface Project {
   updatedAt: string;
   /** 当前方案正文（Markdown，来自工作目录下的 .md 文件） */
   markdown: string;
-  sections: Section[];
+  /** 用户明确加入 AI 上下文的资料 ID；当前按项目共享。 */
+  contextSourceRefs: string[];
   sources: SourceRecord[];
   model: OpenAICompatibleConfig;
   search: SearchConfig;
   /** MinerU 文档解析配置（与 connections 同步；apiKey 不写入 project localStorage） */
   mineru: MinerUConfig;
+  /** Agent 会话、上下文和工具策略。 */
+  agent: import("./agent/settings").AgentSettings;
   commands: CommandPreset[];
   workspace?: WorkspacePaths;
   /** 当前打开的工作区 Markdown 绝对路径 */

@@ -1,0 +1,46 @@
+.memory-section-content { max-width: none; height: 100%; }
+.memory-settings-panel { display: flex; min-height: 0; height: 100%; flex-direction: column; }
+.memory-settings-toolbar { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.memory-settings-toolbar > div { display: flex; align-items: baseline; gap: 6px; }
+.memory-settings-toolbar b { font-size: 18px; }
+.memory-settings-toolbar span, .memory-settings-toolbar em { font-size: 10px; color: hsl(var(--muted-foreground)); font-style: normal; }
+.memory-settings-toolbar em { padding: 2px 6px; border-radius: 4px; background: hsl(38 92% 50% / .12); color: hsl(32 80% 42%); }
+.memory-settings-toolbar button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--foreground)); border-radius: 6px; padding: 0 9px; }
+.memory-settings-toolbar button:first-child { width: 30px; padding: 0; }
+.memory-storage-path { margin: 6px 0 12px; font-size: 10px; color: hsl(var(--muted-foreground)); }
+.memory-storage-path code { word-break: break-all; }
+.memory-settings-error { flex: none; margin-bottom: 8px; padding: 7px 9px; border-left: 2px solid hsl(var(--destructive)); background: hsl(var(--destructive) / .07); color: hsl(var(--destructive)); font-size: 10px; }
+.memory-settings-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); flex: 1 1 auto; min-height: 390px; overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 7px; background: hsl(var(--background)); }
+.memory-settings-list { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid hsl(var(--border)); background: hsl(var(--muted) / .18); }
+.memory-filter-row { display: grid; grid-template-columns: minmax(0,1fr) 76px; gap: 6px; padding: 8px; border-bottom: 1px solid hsl(var(--border)); }
+.memory-filter-row label { height: 30px; display: flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid hsl(var(--input)); border-radius: 5px; background: hsl(var(--background)); color: hsl(var(--muted-foreground)); }
+.memory-filter-row input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: hsl(var(--foreground)); font-size: 10px; }
+.memory-filter-row select { border: 1px solid hsl(var(--input)); border-radius: 5px; background: hsl(var(--background)); color: hsl(var(--foreground)); font-size: 10px; }
+.memory-entry-scroll { min-height: 0; flex: 1; overflow: auto; padding: 6px; }
+.memory-entry-scroll > button { position: relative; width: 100%; display: block; margin-bottom: 3px; padding: 9px 8px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: hsl(var(--foreground)); text-align: left; }
+.memory-entry-scroll > button:hover { background: hsl(var(--foreground) / .045); }
+.memory-entry-scroll > button.active { border-color: hsl(var(--primary) / .25); background: hsl(var(--primary) / .08); }
+.memory-entry-scroll button > span { display: flex; align-items: center; gap: 6px; padding-right: 46px; }
+.memory-entry-scroll button b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.memory-entry-scroll button small { flex: none; font-size: 8px; color: hsl(var(--muted-foreground)); }
+.memory-entry-scroll button p { margin: 5px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: hsl(var(--muted-foreground)); }
+.memory-entry-scroll button > em { position: absolute; right: 7px; top: 8px; font-size: 8px; font-style: normal; color: hsl(var(--success)); }
+.memory-entry-scroll button > em.pending_review { color: hsl(32 80% 45%); }
+.memory-empty, .memory-editor-empty { height: 100%; display: grid; place-items: center; color: hsl(var(--muted-foreground)); font-size: 10px; text-align: center; }
+.memory-settings-editor { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.memory-settings-editor > header { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 12px; border-bottom: 1px solid hsl(var(--border)); }
+.memory-settings-editor > header > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.memory-settings-editor header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.memory-settings-editor header small { font-size: 8px; color: hsl(var(--muted-foreground)); }
+.memory-settings-editor header button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid hsl(var(--success) / .4); border-radius: 5px; background: hsl(var(--success) / .08); color: hsl(var(--success)); padding: 6px 8px; font-size: 10px; }
+.memory-editor-fields { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 10px; flex: 1; min-height: 0; padding: 12px; }
+.memory-editor-fields label { display: flex; flex-direction: column; gap: 5px; color: hsl(var(--muted-foreground)); font-size: 10px; }
+.memory-editor-fields .wide { grid-column: 1 / -1; }
+.memory-editor-fields input, .memory-editor-fields select, .memory-editor-fields textarea { border: 1px solid hsl(var(--input)); border-radius: 5px; background: hsl(var(--background)); color: hsl(var(--foreground)); padding: 8px; outline: 0; }
+.memory-content-field { min-height: 0; }
+.memory-editor-fields textarea { flex: 1; min-height: 180px; resize: none; line-height: 1.6; }
+.memory-settings-editor > footer { min-height: 48px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-top: 1px solid hsl(var(--border)); }
+.memory-settings-editor > footer span { flex: 1; }
+.memory-settings-editor > footer button { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid hsl(var(--border)); border-radius: 5px; background: hsl(var(--card)); color: hsl(var(--foreground)); padding: 0 11px; }
+.memory-settings-editor > footer button.danger { color: hsl(var(--destructive)); }
+@media (max-width: 720px) { .memory-settings-workspace { grid-template-columns: 1fr; overflow: auto; } .memory-settings-list { min-height: 220px; border-right: 0; border-bottom: 1px solid hsl(var(--border)); } .memory-settings-editor { min-height: 360px; } }

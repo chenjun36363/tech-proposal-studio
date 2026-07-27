@@ -1,0 +1,311 @@
+@layer components {
+  .context-manager {
+    padding-top: 14px;
+  }
+  .context-manager-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .context-manager-head > div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: hsl(var(--primary));
+  }
+  .context-manager-head span {
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .context-manager-head b {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+    font: 10px ui-monospace, Consolas, monospace;
+  }
+  .context-manager-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .context-manager-actions button {
+    border: 0;
+    background: transparent;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px;
+    color: hsl(var(--primary));
+  }
+  .context-manager-actions .context-clear-action {
+    color: hsl(var(--destructive));
+  }
+  .context-manager-actions button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .manual-context-form {
+    padding: 12px 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .manual-context-form label + label {
+    margin-top: 10px;
+  }
+  .manual-context-form input,
+  .manual-context-form textarea {
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    border: 1px solid hsl(var(--input));
+    border-radius: 10px;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    outline: 0;
+    padding: 8px 9px;
+  }
+  .manual-context-form input {
+    height: 34px;
+  }
+  .manual-context-form textarea {
+    min-height: 112px;
+    resize: vertical;
+    line-height: 1.55;
+  }
+  .manual-context-form input:focus,
+  .manual-context-form textarea:focus {
+    border-color: hsl(var(--primary) / 0.5);
+  }
+  .manual-context-form > div {
+    display: flex;
+    justify-content: flex-end;
+    gap: 7px;
+    margin-top: 10px;
+  }
+  .manual-context-form > div button {
+    height: 32px;
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--card));
+    border-radius: 10px;
+    padding: 0 10px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: hsl(var(--foreground) / 0.85);
+  }
+  .manual-context-form > div button:hover {
+    background: hsl(var(--muted));
+  }
+  .manual-context-form > div .primary {
+    min-height: 32px;
+  }
+  .context-source-list article {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 8px;
+    padding: 13px 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .context-source-index {
+    font: 10px ui-monospace, Consolas, monospace;
+    color: hsl(var(--muted-foreground));
+    padding-top: 2px;
+  }
+  .context-source-body {
+    min-width: 0;
+  }
+  .context-source-body > span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    color: hsl(var(--muted-foreground));
+  }
+  .context-source-char-count {
+    margin-left: auto;
+    white-space: nowrap;
+    font-size: 9px;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+  }
+  .context-source-body > b {
+    display: block;
+    font-size: 12px;
+    color: hsl(var(--foreground));
+    margin: 6px 0 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .context-source-body > p {
+    font-size: 11px;
+    line-height: 1.5;
+    color: hsl(var(--muted-foreground));
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .context-source-body > div {
+    display: flex;
+    gap: 10px;
+    margin-top: 7px;
+  }
+  .context-source-body button {
+    border: 0;
+    background: transparent;
+    color: hsl(var(--primary));
+    font-size: 10px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .context-source-body button:last-child {
+    color: hsl(var(--destructive));
+  }
+  .context-empty {
+    height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+  }
+  .session-trace {
+    margin-top: 12px;
+    border: 1px solid hsl(var(--border));
+    border-radius: 7px;
+    background: hsl(var(--card));
+    overflow: hidden;
+  }
+  .session-trace.running { border-color: hsl(var(--primary) / 0.42); }
+  .session-trace > header {
+    min-height: 34px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.45);
+  }
+  .session-trace > header span,
+  .session-trace > header em { display: inline-flex; align-items: center; gap: 6px; }
+  .session-trace > header span { font-size: 11px; font-weight: 700; }
+  .session-trace > header em { font-size: 10px; font-style: normal; color: hsl(var(--muted-foreground)); }
+  .session-trace.running > header em { color: hsl(var(--primary)); }
+  .session-steps { padding: 8px 10px 4px; display: grid; gap: 5px; }
+  .session-step { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: start; }
+  .session-step i { width: 14px; height: 14px; display: grid; place-items: center; color: hsl(var(--muted-foreground)); }
+  .session-step i > span { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--primary) / 0.65); }
+  .session-step.done i { color: hsl(var(--success)); }
+  .session-step.error i { color: hsl(var(--destructive)); }
+  .session-step div { min-width: 0; display: flex; justify-content: space-between; gap: 8px; }
+  .session-step b { font-size: 10px; line-height: 15px; font-weight: 620; color: hsl(var(--foreground) / 0.82); }
+  .session-step small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 15px; color: hsl(var(--muted-foreground)); }
+  .session-output { border-top: 1px solid hsl(var(--border)); }
+  .session-output > div { height: 27px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font-size: 9px; color: hsl(var(--muted-foreground)); }
+  .session-output > div span { text-transform: uppercase; font-weight: 700; }
+  .session-output > div b { font-weight: 500; }
+  .session-output pre {
+    margin: 0;
+    padding: 9px 10px 11px;
+    max-height: 210px;
+    min-height: 52px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: hsl(var(--foreground) / 0.035);
+    color: hsl(var(--foreground) / 0.88);
+    font: 10px/1.55 Consolas, monospace;
+  }
+  .stream-caret { display: inline-block; width: 5px; height: 11px; margin-left: 2px; vertical-align: -2px; background: hsl(var(--primary)); animation: stream-blink .85s steps(1) infinite; }
+  .session-trace:not(.running) .stream-caret { display: none; }
+  @keyframes stream-blink { 50% { opacity: 0; } }
+  .context-box {
+    display: flex;
+    justify-content: space-between;
+    margin: 12px 0 14px;
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+  }
+  .context-box b {
+    font-weight: 500;
+    color: hsl(var(--foreground) / 0.7);
+  }
+  /* ---- AI diff ---- */
+  .diff {
+    margin-top: 17px;
+    border-top: 1px solid hsl(var(--border));
+    padding-top: 12px;
+  }
+  .diff-title {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: hsl(var(--foreground) / 0.85);
+  }
+  .diff-title button {
+    border: 0;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+  }
+  .diff-title button:hover {
+    color: hsl(var(--primary));
+  }
+  .removed,
+  .added {
+    font-size: 11px;
+    line-height: 1.55;
+    padding: 9px;
+    border-left: 2px solid;
+    margin: 6px 0;
+    white-space: pre-wrap;
+  }
+  .removed {
+    background: hsl(var(--destructive) / 0.08);
+    border-color: hsl(var(--destructive));
+    text-decoration: line-through;
+    color: hsl(var(--foreground) / 0.7);
+  }
+  .added {
+    background: hsl(var(--success) / 0.1);
+    border-color: hsl(var(--success));
+    color: hsl(var(--foreground));
+  }
+  .diff-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .diff-actions button {
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--card));
+    border-radius: 10px;
+    padding: 7px 10px;
+    font-size: 11px;
+    color: hsl(var(--foreground) / 0.8);
+  }
+  .diff-actions button:last-child {
+    border-color: hsl(var(--primary) / 0.5);
+    background: hsl(var(--primary) / 0.08);
+    color: hsl(var(--primary));
+    font-weight: 600;
+  }
+
+}

@@ -19,7 +19,7 @@ import {
 } from "docx";
 import type { Project } from "./types";
 import { exportMarkdown } from "./storage";
-import { isDesktop } from "./services";
+import { isDesktop } from "./services/runtime";
 import { invoke } from "@tauri-apps/api/core";
 import { readBinaryFile } from "./workspace";
 

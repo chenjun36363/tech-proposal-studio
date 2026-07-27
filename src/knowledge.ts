@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope, OpenAICompatibleConfig, WorkspacePaths } from "./types";
-import { isDesktop } from "./services";
+import { isDesktop } from "./services/runtime";
 
 function desktopOnly() {
   if (!isDesktop()) throw new Error("知识库仅在桌面端可用");
@@ -51,6 +51,10 @@ export async function deleteKnowledgeFile(workspace: WorkspacePaths, path: strin
 }
 export async function importKnowledgeWeb(workspace: WorkspacePaths, url: string): Promise<KnowledgeDocument> {
   desktopOnly(); return invoke("knowledge_import_web", { workspace, url });
+}
+export interface WebPageContent { title: string; url: string; markdown: string; }
+export async function fetchKnowledgeWebPage(url: string): Promise<WebPageContent> {
+  desktopOnly(); return invoke("knowledge_fetch_web_page", { url });
 }
 export async function onKnowledgeProgress(handler: (progress: KnowledgeProgress) => void): Promise<UnlistenFn> {
   desktopOnly(); return listen<KnowledgeProgress>("knowledge://progress", event => handler(event.payload));

@@ -954,25 +954,127 @@
   .settings-modal {
     display: flex;
     flex-direction: column;
+    width: min(1040px, calc(100vw - 40px));
+    height: min(700px, calc(100vh - 56px));
     max-height: 90vh;
+    padding: 0;
+    overflow: hidden;
   }
   .settings-modal .settings-modal-body {
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr);
     flex: 1 1 auto;
     min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: 4px;
-    margin-right: -4px;
+    overflow: hidden;
   }
   .settings-modal .modal-title {
     flex-shrink: 0;
+    min-height: 54px;
+    margin: 0;
+    padding: 0 16px;
+    border-bottom: 1px solid hsl(var(--border));
   }
   .settings-modal .modal-actions {
     flex-shrink: 0;
-    margin-top: 14px;
-    padding-top: 12px;
+    min-height: 58px;
+    margin: 0;
+    padding: 11px 16px;
     border-top: 1px solid hsl(var(--border));
   }
+  .settings-section-nav {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 14px 10px 12px;
+    border-right: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.28);
+  }
+  .settings-section-nav > span {
+    padding: 0 9px 7px;
+    color: hsl(var(--muted-foreground) / 0.72);
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .settings-section-nav > button {
+    width: 100%;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    text-align: left;
+    font-size: 12px;
+  }
+  .settings-section-nav > button:hover {
+    background: hsl(var(--foreground) / 0.055);
+    color: hsl(var(--foreground));
+  }
+  .settings-section-nav > button.active {
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+    font-weight: 650;
+  }
+  .settings-section-nav > button i {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    background: hsl(var(--foreground) / 0.045);
+    font-style: normal;
+  }
+  .settings-section-nav > button.active i {
+    background: hsl(var(--primary) / 0.12);
+  }
+  .settings-section-nav > div {
+    margin-top: auto;
+    padding: 10px 9px 2px;
+    border-top: 1px solid hsl(var(--border));
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .settings-section-nav > div b { font-size: 10px; color: hsl(var(--foreground) / 0.72); }
+  .settings-section-nav > div span { font-size: 9px; line-height: 1.45; color: hsl(var(--muted-foreground)); }
+  .settings-section-detail {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: hsl(var(--background));
+  }
+  .settings-section-header {
+    min-height: 66px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 0 22px;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .settings-section-header > div {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 7px;
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+  }
+  .settings-section-header > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .settings-section-header b { font-size: 14px; color: hsl(var(--foreground)); }
+  .settings-section-header small { font-size: 10px; color: hsl(var(--muted-foreground)); }
+  .settings-section-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 20px 22px 28px;
+  }
+  .settings-section-content { max-width: 760px; }
 
   .notice {
     background: hsl(var(--primary) / 0.06);
@@ -1412,7 +1514,9 @@
   }
   .md-source-heading {
     color: hsl(var(--primary));
-    font-weight: 750;
+  }
+  .search-settings-notice {
+    grid-template-columns: 24px 1fr;
   }
 
   /* ---- markdown preview ---- */
@@ -1630,14 +1734,18 @@
     flex: 0 0 28px;
     text-align: center;
   }
-  .toc-item > b {
+  .toc-item > .toc-title {
     font-size: 12px;
     font-weight: 600;
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
     min-width: 0;
+  }
+  .toc-title strong {
+    font-weight: 750;
   }
   .toc-item.level-1 {
     padding-left: 8px;
@@ -2307,130 +2415,6 @@
     accent-color: hsl(var(--primary));
   }
 
-  /* ---- knowledge manager modal ---- */
-  .knowledge-manager-backdrop {
-    z-index: 65;
-  }
-  .knowledge-manager-modal {
-    width: min(1180px, calc(100vw - 48px));
-    height: min(800px, calc(100vh - 48px));
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 18px;
-  }
-  .knowledge-manager-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 10px 12px;
-    background: hsl(var(--muted));
-    border: 1px solid hsl(var(--border));
-    margin-bottom: 10px;
-    border-radius: 12px;
-  }
-  .knowledge-manager-toolbar > div {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .knowledge-manager-toolbar b {
-    font: 15px ui-monospace, monospace;
-    color: hsl(var(--primary));
-  }
-  .knowledge-manager-toolbar span {
-    font-size: 11px;
-    color: hsl(var(--muted-foreground));
-    margin-right: 8px;
-  }
-  .knowledge-manager-toolbar button {
-    height: 32px;
-    border: 1px solid hsl(var(--input));
-    background: hsl(var(--card));
-    border-radius: 10px;
-    padding: 0 10px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: hsl(var(--foreground) / 0.85);
-  }
-  .knowledge-manager-toolbar button:hover {
-    background: hsl(var(--muted));
-  }
-  .knowledge-manager-toolbar button.primary {
-    min-height: 32px;
-  }
-  .knowledge-manager-body {
-    display: grid;
-    grid-template-columns: minmax(280px, 0.72fr) minmax(480px, 1.28fr);
-    gap: 12px;
-    flex: 1;
-    min-height: 0;
-    margin-top: 10px;
-  }
-  .knowledge-manager-column {
-    border: 1px solid hsl(var(--border));
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-    background: hsl(var(--card));
-    border-radius: 12px;
-  }
-  .knowledge-manager-heading {
-    height: 38px;
-    flex: none;
-    padding: 0 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: hsl(var(--muted));
-    border-bottom: 1px solid hsl(var(--border));
-  }
-  .knowledge-manager-heading span {
-    font-size: 12px;
-    font-weight: 700;
-    color: hsl(var(--muted-foreground));
-  }
-  .knowledge-manager-heading b {
-    font: 10px ui-monospace, monospace;
-    min-width: 20px;
-    height: 18px;
-    display: grid;
-    place-items: center;
-    background: hsl(var(--primary) / 0.12);
-    color: hsl(var(--primary));
-    border-radius: 9px;
-  }
-  .knowledge-manager-scroll {
-    flex: 1 1 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-    padding: 8px;
-    scrollbar-gutter: stable;
-  }
-  .knowledge-manager-pending {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px 10px;
-    padding: 10px 4px;
-    border-bottom: 1px solid hsl(var(--border));
-  }
-  .knowledge-manager-pending > div:first-child {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-  }
-  .knowledge-manager-pending b {
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
   /* ---- heading review modal ---- */
   .heading-review-backdrop {
     z-index: 70;
@@ -2772,6 +2756,43 @@
     border-top: 1px solid hsl(var(--border));
     padding-top: 14px;
   }
+  .agent-runtime-settings .muted {
+    margin: 6px 0 12px;
+  }
+  .agent-capability-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 16px;
+    padding: 10px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.35);
+    border-radius: 8px;
+  }
+  .agent-capability-options label {
+    flex-direction: row;
+    align-items: center;
+    gap: 7px;
+    color: hsl(var(--foreground) / 0.82);
+  }
+  .agent-capability-options input {
+    margin: 0;
+  }
+  .form-grid textarea.agent-instructions {
+    min-height: 76px;
+  }
+
+  @media (max-width: 720px) {
+    .settings-modal { width: calc(100vw - 20px); height: calc(100vh - 20px); max-height: none; }
+    .settings-modal .settings-modal-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    .settings-section-nav { flex-direction: row; gap: 4px; overflow-x: auto; padding: 8px; border-right: 0; border-bottom: 1px solid hsl(var(--border)); }
+    .settings-section-nav > span, .settings-section-nav > div { display: none; }
+    .settings-section-nav > button { width: auto; flex: none; padding: 0 10px; }
+    .settings-section-header { min-height: 58px; padding-inline: 14px; }
+    .settings-section-scroll { padding: 16px 14px 24px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .form-grid .wide { grid-column: auto; }
+    .agent-capability-options { grid-template-columns: 1fr; }
+  }
   .path-field {
     display: flex;
     flex-direction: column;
@@ -3053,191 +3074,6 @@
     font-weight: 500;
     color: hsl(var(--muted-foreground));
   }
-  .context-manager {
-    padding-top: 14px;
-  }
-  .context-manager-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 12px;
-    border-bottom: 1px solid hsl(var(--border));
-  }
-  .context-manager-head > div {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: hsl(var(--primary));
-  }
-  .context-manager-head span {
-    font-size: 12px;
-    font-weight: 700;
-  }
-  .context-manager-head b {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 18px;
-    padding: 0 5px;
-    border-radius: 9px;
-    background: hsl(var(--primary) / 0.12);
-    color: hsl(var(--primary));
-    font: 10px ui-monospace, Consolas, monospace;
-  }
-  .context-manager-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .context-manager-actions button {
-    border: 0;
-    background: transparent;
-    font-size: 10px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px;
-    color: hsl(var(--primary));
-  }
-  .context-manager-actions .context-clear-action {
-    color: hsl(var(--destructive));
-  }
-  .context-manager-actions button:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .manual-context-form {
-    padding: 12px 0;
-    border-bottom: 1px solid hsl(var(--border));
-  }
-  .manual-context-form label + label {
-    margin-top: 10px;
-  }
-  .manual-context-form input,
-  .manual-context-form textarea {
-    display: block;
-    width: 100%;
-    margin-top: 6px;
-    border: 1px solid hsl(var(--input));
-    border-radius: 10px;
-    background: hsl(var(--background));
-    color: hsl(var(--foreground));
-    outline: 0;
-    padding: 8px 9px;
-  }
-  .manual-context-form input {
-    height: 34px;
-  }
-  .manual-context-form textarea {
-    min-height: 112px;
-    resize: vertical;
-    line-height: 1.55;
-  }
-  .manual-context-form input:focus,
-  .manual-context-form textarea:focus {
-    border-color: hsl(var(--primary) / 0.5);
-  }
-  .manual-context-form > div {
-    display: flex;
-    justify-content: flex-end;
-    gap: 7px;
-    margin-top: 10px;
-  }
-  .manual-context-form > div button {
-    height: 32px;
-    border: 1px solid hsl(var(--input));
-    background: hsl(var(--card));
-    border-radius: 10px;
-    padding: 0 10px;
-    font-size: 11px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    color: hsl(var(--foreground) / 0.85);
-  }
-  .manual-context-form > div button:hover {
-    background: hsl(var(--muted));
-  }
-  .manual-context-form > div .primary {
-    min-height: 32px;
-  }
-  .context-source-list article {
-    display: grid;
-    grid-template-columns: 28px 1fr;
-    gap: 8px;
-    padding: 13px 0;
-    border-bottom: 1px solid hsl(var(--border));
-  }
-  .context-source-index {
-    font: 10px ui-monospace, Consolas, monospace;
-    color: hsl(var(--muted-foreground));
-    padding-top: 2px;
-  }
-  .context-source-body {
-    min-width: 0;
-  }
-  .context-source-body > span {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 9px;
-    color: hsl(var(--muted-foreground));
-  }
-  .context-source-char-count {
-    margin-left: auto;
-    white-space: nowrap;
-    font-size: 9px;
-    font-weight: 600;
-    color: hsl(var(--muted-foreground));
-  }
-  .context-source-body > b {
-    display: block;
-    font-size: 12px;
-    color: hsl(var(--foreground));
-    margin: 6px 0 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .context-source-body > p {
-    font-size: 11px;
-    line-height: 1.5;
-    color: hsl(var(--muted-foreground));
-    margin: 0;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .context-source-body > div {
-    display: flex;
-    gap: 10px;
-    margin-top: 7px;
-  }
-  .context-source-body button {
-    border: 0;
-    background: transparent;
-    color: hsl(var(--primary));
-    font-size: 10px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-  }
-  .context-source-body button:last-child {
-    color: hsl(var(--destructive));
-  }
-  .context-empty {
-    height: 180px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    color: hsl(var(--muted-foreground));
-    font-size: 11px;
-  }
   .knowledge-scope-actions {
     display: flex;
     gap: 2px;
@@ -3252,83 +3088,6 @@
     opacity: 0.35;
     cursor: default;
   }
-  .knowledge-manager-section {
-    min-height: 30px;
-    border-bottom: 1px solid hsl(var(--border));
-    display: grid;
-    grid-template-columns: 25px minmax(0, 1fr) 56px 28px 22px;
-    gap: 6px;
-    align-items: center;
-    padding-right: 4px;
-  }
-  .knowledge-manager-section span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11px;
-    color: hsl(var(--foreground) / 0.85);
-  }
-  .knowledge-manager-section i {
-    font: 9px Consolas, monospace;
-    color: hsl(var(--success));
-    font-style: normal;
-  }
-  .knowledge-manager-section small {
-    font-size: 8px;
-    color: hsl(var(--muted-foreground));
-    white-space: nowrap;
-    text-align: right;
-  }
-  .knowledge-manager-section .icon-button {
-    width: 24px;
-    height: 24px;
-    min-height: 24px;
-    display: grid;
-    grid-template-columns: none;
-    place-items: center;
-    justify-self: center;
-    padding: 0;
-    border: 0;
-    background: transparent;
-  }
-  .knowledge-manager-section em {
-    font-style: normal;
-    color: hsl(var(--muted-foreground));
-    font-size: 10px;
-    text-align: right;
-  }
-  .knowledge-manager-section {
-    grid-template-columns: 25px minmax(0, 1fr) 56px 36px 78px 28px 22px;
-  }
-  .knowledge-manager-section > .knowledge-quality-badge {
-    margin: 0;
-    justify-self: center;
-  }
-  .knowledge-manager-quality {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-  .knowledge-manager-section .knowledge-manager-quality .icon-button {
-    width: 24px;
-    height: 24px;
-    border: 1px solid transparent;
-  }
-  .knowledge-manager-section .knowledge-manager-quality .icon-button.active {
-    border-color: hsl(var(--primary) / 0.4);
-    background: hsl(var(--primary) / 0.08);
-  }
-  .knowledge-manager-section
-    .knowledge-manager-quality
-    .icon-button:last-child.active {
-    border-color: hsl(var(--destructive) / 0.4);
-    background: hsl(var(--destructive) / 0.1);
-    color: hsl(var(--destructive));
-  }
-  .knowledge-manager-section .knowledge-manager-quality .icon-button:disabled {
-    opacity: 0.5;
-  }
-
   /* ---- right inspector panel ---- */
   .inspector-top {
     height: 52px;
@@ -3395,136 +3154,12 @@
     font-weight: 650;
     color: hsl(var(--foreground) / 0.85);
   }
-  .session-trace {
-    margin-top: 12px;
-    border: 1px solid hsl(var(--border));
-    border-radius: 7px;
-    background: hsl(var(--card));
-    overflow: hidden;
-  }
-  .session-trace.running { border-color: hsl(var(--primary) / 0.42); }
-  .session-trace > header {
-    min-height: 34px;
-    padding: 0 10px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid hsl(var(--border));
-    background: hsl(var(--muted) / 0.45);
-  }
-  .session-trace > header span,
-  .session-trace > header em { display: inline-flex; align-items: center; gap: 6px; }
-  .session-trace > header span { font-size: 11px; font-weight: 700; }
-  .session-trace > header em { font-size: 10px; font-style: normal; color: hsl(var(--muted-foreground)); }
-  .session-trace.running > header em { color: hsl(var(--primary)); }
-  .session-steps { padding: 8px 10px 4px; display: grid; gap: 5px; }
-  .session-step { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: start; }
-  .session-step i { width: 14px; height: 14px; display: grid; place-items: center; color: hsl(var(--muted-foreground)); }
-  .session-step i > span { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--primary) / 0.65); }
-  .session-step.done i { color: hsl(var(--success)); }
-  .session-step.error i { color: hsl(var(--destructive)); }
-  .session-step div { min-width: 0; display: flex; justify-content: space-between; gap: 8px; }
-  .session-step b { font-size: 10px; line-height: 15px; font-weight: 620; color: hsl(var(--foreground) / 0.82); }
-  .session-step small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 15px; color: hsl(var(--muted-foreground)); }
-  .session-output { border-top: 1px solid hsl(var(--border)); }
-  .session-output > div { height: 27px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font-size: 9px; color: hsl(var(--muted-foreground)); }
-  .session-output > div span { text-transform: uppercase; font-weight: 700; }
-  .session-output > div b { font-weight: 500; }
-  .session-output pre {
-    margin: 0;
-    padding: 9px 10px 11px;
-    max-height: 210px;
-    min-height: 52px;
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    background: hsl(var(--foreground) / 0.035);
-    color: hsl(var(--foreground) / 0.88);
-    font: 10px/1.55 Consolas, monospace;
-  }
-  .stream-caret { display: inline-block; width: 5px; height: 11px; margin-left: 2px; vertical-align: -2px; background: hsl(var(--primary)); animation: stream-blink .85s steps(1) infinite; }
-  .session-trace:not(.running) .stream-caret { display: none; }
-  @keyframes stream-blink { 50% { opacity: 0; } }
-  .context-box {
-    display: flex;
-    justify-content: space-between;
-    margin: 12px 0 14px;
-    font-size: 10px;
-    color: hsl(var(--muted-foreground));
-  }
-  .context-box b {
-    font-weight: 500;
-    color: hsl(var(--foreground) / 0.7);
-  }
   .muted {
     font-size: 11px;
     color: hsl(var(--muted-foreground));
   }
   .muted {
     padding: 12px;
-  }
-
-  /* ---- AI diff ---- */
-  .diff {
-    margin-top: 17px;
-    border-top: 1px solid hsl(var(--border));
-    padding-top: 12px;
-  }
-  .diff-title {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    font-weight: 700;
-    margin-bottom: 8px;
-    color: hsl(var(--foreground) / 0.85);
-  }
-  .diff-title button {
-    border: 0;
-    background: transparent;
-    color: hsl(var(--muted-foreground));
-  }
-  .diff-title button:hover {
-    color: hsl(var(--primary));
-  }
-  .removed,
-  .added {
-    font-size: 11px;
-    line-height: 1.55;
-    padding: 9px;
-    border-left: 2px solid;
-    margin: 6px 0;
-    white-space: pre-wrap;
-  }
-  .removed {
-    background: hsl(var(--destructive) / 0.08);
-    border-color: hsl(var(--destructive));
-    text-decoration: line-through;
-    color: hsl(var(--foreground) / 0.7);
-  }
-  .added {
-    background: hsl(var(--success) / 0.1);
-    border-color: hsl(var(--success));
-    color: hsl(var(--foreground));
-  }
-  .diff-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 6px;
-    margin-top: 10px;
-  }
-  .diff-actions button {
-    border: 1px solid hsl(var(--input));
-    background: hsl(var(--card));
-    border-radius: 10px;
-    padding: 7px 10px;
-    font-size: 11px;
-    color: hsl(var(--foreground) / 0.8);
-  }
-  .diff-actions button:last-child {
-    border-color: hsl(var(--primary) / 0.5);
-    background: hsl(var(--primary) / 0.08);
-    color: hsl(var(--primary));
-    font-weight: 600;
   }
 
   /* ---- agent CLI (任务 tab) ---- */

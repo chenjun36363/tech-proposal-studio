@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isDesktop } from "./services";
+import { isDesktop } from "./services/runtime";
 import { saveImageToWorkspace } from "./workspace";
 
 marked.setOptions({ gfm: true, breaks: true });

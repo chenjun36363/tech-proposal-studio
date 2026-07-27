@@ -1,0 +1,172 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { runProposalAgent } from "./runner";
+import { AgentToolRegistry, objectSchema } from "./toolRegistry";
+import type { AgentEvent, AgentMessage } from "./protocol";
+
+const agentCompletion = vi.fn();
+vi.mock("../services/model", () => ({ agentCompletion: (...args: unknown[]) => agentCompletion(...args) }));
+
+const config = { baseUrl: "http://localhost:1234/v1", apiKey: "", model: "test-model", timeoutMs: 1000, headers: {}, enabled: true };
+
+describe("runProposalAgent", () => {
+  beforeEach(() => agentCompletion.mockReset());
+
+  it("feeds tool results into the next model round", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "read", arguments: "{\"path\":\"proposal.md\"}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "任务完成" } }] });
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } },
+      execute: () => ({ content: "章节正文", data: { blockId: "section-1" }, isError: false }),
+    });
+    const events: AgentEvent[] = [];
+    const result = await runProposalAgent({ task: "检查方案", messages: [{ role: "system", content: "system" }, { role: "user", content: "上一轮" }, { role: "assistant", content: "上一轮回复" }], config, registry, signal: new AbortController().signal, onEvent: event => events.push(event), temperature: 0.7 });
+
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
+    const secondPayload = agentCompletion.mock.calls[1][0] as { messages: Array<{ role: string; content: string }> };
+    expect(secondPayload.messages).toContainEqual(expect.objectContaining({ role: "tool", content: "章节正文" }));
+    expect(secondPayload.messages).not.toContainEqual(expect.objectContaining({ tool_result_data: expect.anything() }));
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_result_data: { blockId: "section-1" }, tool_result_is_error: false }));
+    expect(events.some(event => event.type === "tool_result")).toBe(true);
+    expect(secondPayload.messages).toContainEqual(expect.objectContaining({ role: "user", content: "上一轮" }));
+    expect(events.at(-1)?.type).toBe("run_completed");
+    expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({ temperature: 0.7 }));
+  });
+
+  it("forces the configured planning tool in the first model round, then returns to auto", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-1", type: "function", function: { name: "write_todo", arguments: '{"todos":[{"content":"搜索资料","status":"in_progress"}]}' } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      execute: () => ({ content: "计划已更新", isError: false }),
+    });
+
+    await runProposalAgent({ task: "联网搜索", config, registry, signal: new AbortController().signal, onEvent: () => undefined, firstRoundToolName: "write_todo" });
+
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
+    expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({
+      tool_choice: "auto",
+      tools: [expect.objectContaining({ function: expect.objectContaining({ name: "write_todo" }) })],
+    }));
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ tool_choice: "auto" }));
+  });
+
+  it("retries planning when the model returns text before the required first tool", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "我先分析任务" } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-2", type: "function", function: { name: "write_todo", arguments: '{"todos":[]}' } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      execute: () => ({ content: "计划已更新", isError: false }),
+    });
+
+    await runProposalAgent({ task: "完成任务", config, registry, signal: new AbortController().signal, onEvent: () => undefined, firstRoundToolName: "write_todo" });
+
+    expect(agentCompletion).toHaveBeenCalledTimes(3);
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({
+      messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.stringContaining("必须先调用 write_todo") })]),
+    }));
+  });
+
+  it("persists a completed todo snapshot before finishing", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-3", type: "function", function: { name: "write_todo", arguments: JSON.stringify({ todos: [
+        { content: "读取章节", status: "in_progress", activeForm: "正在读取章节" },
+        { content: "提交修改", status: "pending", activeForm: "正在提交修改" },
+      ] }) } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "任务完成" } }] });
+    const execute = vi.fn(args => ({ content: "计划已更新", data: args.todos, isError: false }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      execute,
+    });
+    const events: AgentEvent[] = [];
+
+    const result = await runProposalAgent({ task: "优化章节", config, registry, signal: new AbortController().signal, onEvent: event => events.push(event), firstRoundToolName: "write_todo" });
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[1][0]).toEqual({ todos: [
+      { content: "读取章节", status: "completed", activeForm: "正在读取章节" },
+      { content: "提交修改", status: "completed", activeForm: "正在提交修改" },
+    ] });
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_result_data: expect.arrayContaining([expect.objectContaining({ status: "completed" })]) }));
+    expect(events.filter(event => event.type === "tool_result")).toHaveLength(2);
+  });
+
+  it("continues tool execution until the model finishes", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call-2", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已完成收尾" } }] });
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } },
+      execute: () => ({ content: "资料", isError: false }),
+    });
+
+    const result = await runProposalAgent({ task: "研究", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
+
+    expect(result.summary).toBe("已完成收尾");
+    expect(agentCompletion).toHaveBeenCalledTimes(3);
+  });
+
+  it("executes DSML tool calls returned as assistant text", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: '<|DSML|tool_calls>\n<|DSML|invoke name="submit">\n<|DSML|parameter name="content" string="true">优化稿</|DSML|parameter>\n</|DSML|invoke>\n</|DSML|tool_calls>' } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已提交" } }] });
+    const execute = vi.fn(() => ({ content: "待审批", isError: false }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "submit", description: "submit", parameters: objectSchema({}) } },
+      execute,
+    });
+
+    const result = await runProposalAgent({ task: "优化", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
+
+    expect(execute).toHaveBeenCalledWith({ content: "优化稿" }, expect.any(AbortSignal));
+    expect(result.messages).toContainEqual(expect.objectContaining({ content: null, tool_calls: [expect.objectContaining({ function: expect.objectContaining({ name: "submit" }) })] }));
+  });
+
+  it("executes a DSML proposal after multiple tool rounds", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: '方案已整理。\n<|DSML|invoke name="submit"><|DSML|parameter name="content">最终稿</|DSML|parameter></|DSML|invoke>' } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "修改稿已提交" } }] });
+    const submit = vi.fn(() => ({ content: "待审批", isError: false }));
+    const registry = new AgentToolRegistry()
+      .register({ definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } }, execute: () => ({ content: "原文", isError: false }) })
+      .register({ definition: { type: "function", function: { name: "submit", description: "submit", parameters: objectSchema({}) } }, execute: submit });
+
+    const result = await runProposalAgent({ task: "优化", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
+
+    expect(submit).toHaveBeenCalledWith({ content: "最终稿" }, expect.any(AbortSignal));
+    expect(result.messages).not.toContainEqual(expect.objectContaining({ role: "user", content: expect.stringContaining("工具执行轮次已经用完") }));
+  });
+
+  it("compacts an oversized run context and continues", async () => {
+    agentCompletion.mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "压缩后完成" } }] });
+    const messages: AgentMessage[] = [{ role: "system", content: "system" }];
+    for (let index = 0; index < 24; index += 1) messages.push({ role: "user", content: `历史消息 ${index} ${"内容".repeat(120)}` });
+    const events: AgentEvent[] = [];
+
+    const result = await runProposalAgent({ task: "继续任务", messages, config, registry: new AgentToolRegistry(), signal: new AbortController().signal, onEvent: event => events.push(event), contextCompressionTokens: 800 });
+
+    expect(result.summary).toBe("压缩后完成");
+    expect(events).toContainEqual(expect.objectContaining({ type: "context_compacted" }));
+    const payload = agentCompletion.mock.calls[0][0] as { messages: Array<{ content: string }> };
+    expect(payload.messages.some(message => message.content?.includes("自动上下文压缩检查点"))).toBe(true);
+  });
+
+  it("does not execute or emit calls for unavailable tools", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "missing-1", type: "function", function: { name: "search_knowledge", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已改用可用信息完成任务" } }] });
+    const events: AgentEvent[] = [];
+
+    const result = await runProposalAgent({ task: "研究", config, registry: new AgentToolRegistry(), signal: new AbortController().signal, onEvent: event => events.push(event) });
+
+    expect(events.some(event => event.type === "tool_call")).toBe(false);
+    expect(result.messages).not.toContainEqual(expect.objectContaining({ tool_calls: expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: "search_knowledge" }) })]) }));
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.stringContaining("search_knowledge") })]) }));
+  });
+});

@@ -1,0 +1,10 @@
+[     172ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=55df6261:20102
+[     223ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=55df6261:14201
+[     434ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:1420/favicon.ico:0
+[  160946ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:1420/@vite/client:963
+[  163313ms] [ERROR] WebSocket connection to 'ws://localhost:1420/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:1420/@vite/client:1034
+[  166680ms] [ERROR] WebSocket connection to 'ws://localhost:1420/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:1420/@vite/client:1034
+[  192882ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=55df6261:20102
+[  192907ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=55df6261:14201
+[  610895ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=55df6261:20102
+[  610913ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=55df6261:14201

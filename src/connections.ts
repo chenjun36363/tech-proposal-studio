@@ -1,6 +1,6 @@
 import type { ConnectionSettings, MinerUConfig, OpenAICompatibleConfig, Project, SearchConfig } from "./types";
 import { createProject } from "./data";
-import { isDesktop } from "./services";
+import { isDesktop } from "./services/runtime";
 import { invoke } from "@tauri-apps/api/core";
 import { readTextFile, writeTextFile } from "./workspace";
 
@@ -149,4 +149,12 @@ export async function syncConnectionSecrets(conn: ConnectionSettings): Promise<v
   } catch {
     /* keyring optional */
   }
+}
+
+/** Persist every connection target as one transaction and return the normalized Project view. */
+export async function saveProjectConnections(project: Project, root?: string): Promise<Project> {
+  const connections = connectionsFromProject(project);
+  await saveWorkspaceConnections(root, connections);
+  await syncConnectionSecrets(connections);
+  return applyConnections(project, connections);
 }

@@ -1,6 +1,6 @@
 import type { LibraryFile, Project, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths } from "./types";
 import { makeId, normalizeWorkspacePaths } from "./data";
-import { isDesktop } from "./services";
+import { isDesktop } from "./services/runtime";
 import { invoke } from "@tauri-apps/api/core";
 
 const WORKSPACE_KEY = "tech-proposal-studio.workspace.v1";
@@ -140,7 +140,7 @@ export async function importMarkdownToWorkspace(sourcePath: string, root: string
 }
 
 export async function writeLibraryMarkdown(historyDir: string, title: string, content: string): Promise<LibraryFile> {
-  if (!isDesktop()) throw new Error("请在桌面端导入到历史资料目录");
+  if (!isDesktop()) throw new Error("请在桌面端导入到知识库目录");
   return invoke<LibraryFile>("write_library_markdown", { historyDir, title, content });
 }
 

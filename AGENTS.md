@@ -40,10 +40,10 @@ Tauri is not yet verified on machines without Rust; frontend can be developed fu
 
 ### Dual runtime
 
-Frontend is shared. `src/services.ts` branches on `__TAURI_INTERNALS__`:
+Frontend is shared. Modules under `src/services/` select Browser/Tauri adapters using `services/runtime.ts`:
 
 - **Browser**: `fetch` to OpenAI-compatible `/chat/completions` and search APIs; project state in `localStorage`; Markdown download via Blob; CLI / terminal / workspace disk IO are stubs or no-ops.
-- **Tauri**: `invoke(...)` to Rust commands in `src-tauri/src/lib.rs` for model proxy, search proxy, keyring secrets, sandboxed CLI runs, PTY terminal, and user workspace folders. SQLite (`workspace.db` under app data) still holds FTS5 sources and command run history.
+- **Tauri**: `invoke(...)` to Rust commands registered in `src-tauri/src/lib.rs`; model, search, credentials, export, process, terminal, memory, and knowledge implementations live in dedicated Rust modules. SQLite (`workspace.db` under app data) holds command run history.
 
 Prefer extending the service layer / `src/workspace.ts` + matching Tauri command rather than calling APIs only from React.
 
@@ -54,7 +54,7 @@ Defined in `src/types.ts`, factory in `src/data.ts`:
 ```
 Project
   markdown   (primary body — workspace .md file contents)
-  sections[] → Section → blocks[]  (legacy template; still used for AI sourceRefs)
+  contextSourceRefs[]  (project-level sources explicitly attached to AI context)
   sources[]  (history library Markdown + web search hits)
   model / search / commands
   workspace? { root, historyDir }
@@ -70,7 +70,7 @@ Default body is a Markdown template with H1 + nine `##` chapters (`src/markdownD
 | `workspace.root` | Working directory; open/save current proposal `.md` here; terminal `cwd`; paste images → `assets/` |
 | `workspace.historyDir` | Reference materials only (`*.md` auto-loaded into 资料) |
 
-Config: localStorage `tech-proposal-studio.workspace.v1`. Boot creates `history/` + `assets/` under root. Legacy `proposalsDir`/`libraryDir` normalize to `historyDir`.
+Config: localStorage `tech-proposal-studio.workspace.v1`. Boot creates `knowledge/` + `assets/` under root. Legacy `history/`, `proposalsDir`, and `libraryDir` normalize or migrate to `historyDir`.
 
 Toolbar **打开/保存** operate on Markdown under `root` (`list_workspace_markdown`, `read_text_file`, `write_text_file`, `pick_markdown_file`). History import still uses `write_library_markdown`.
 

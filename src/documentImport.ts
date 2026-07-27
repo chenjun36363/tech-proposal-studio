@@ -2,7 +2,7 @@ import type { MinerUConfig } from "./types";
 import { createProject } from "./data";
 import { renumberHeadings } from "./markdownDoc";
 import { loadWorkspaceConnections, normalizeMineru } from "./connections";
-import { isDesktop } from "./services";
+import { isDesktop } from "./services/runtime";
 import {
   convertDocumentWithMineru,
   listWorkspaceMarkdown,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext } from "./agents";
 import { createProject } from "./data";
+import type { DocumentBlock } from "./types";
 
 describe("agent install commands", () => {
   it.each([
@@ -48,7 +49,7 @@ describe("agent install commands", () => {
 
   it("uses the current Markdown heading to make the task explicit", () => {
     const project = createProject();
-    const block = { ...project.sections[0].blocks[0], sectionId: "markdown", content: "## 4.2 部署方案\n\n现有内容" };
+    const block: DocumentBlock = { id: "markdown", sectionId: "markdown", type: "text", content: "## 4.2 部署方案\n\n现有内容", order: 0, status: "draft", sourceRefs: [] };
     const prompt = defaultAgentPrompt(project, block);
     expect(prompt).toContain("任务：请结合上下文参考内容，帮我优化当前章节。");
     expect(prompt).toContain("章节：4.2 部署方案");
