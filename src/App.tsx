@@ -121,7 +121,7 @@ export default function App() {
   const { project, setProject, updateProject, setMarkdown, undo, redo, resetHistory } = useProposalDocumentController(
     () => withWorkspace(loadProject(), loadWorkspaceConfig()),
   );
-  const [rightTab, setRightTab] = useState<InspectorTab>("ai");
+  const [rightTab, setRightTab] = useState<InspectorTab>("commands");
   const [rightOpen, setRightOpen] = useState(true);
   const [themeDark, setThemeDark] = useState(() => document.documentElement.classList.contains("dark"));
   const [rightWidth, setRightWidth] = useState(RIGHT_PANEL_DEFAULT);

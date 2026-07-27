@@ -331,8 +331,8 @@ export function InspectorPanel({
   return <aside className="right-panel">
     <div className="inspector-top">
       <div className="tabs">
-        <button className={tab === "ai" ? "active" : ""} onClick={() => setTab("ai")}><Sparkles size={15} />AI</button>
         <button className={tab === "commands" ? "active" : ""} onClick={() => setTab("commands")}><Bot size={15} />Agent</button>
+        <button className={tab === "ai" ? "active" : ""} onClick={() => setTab("ai")}><Sparkles size={15} />AI</button>
         <button className={tab === "context" ? "active" : ""} onClick={() => setTab("context")}><Layers3 size={15} />上下文</button>
         <button className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}><BookOpen size={15} />知识库</button>
       </div>
