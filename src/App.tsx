@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FolderOpen, Globe2, Highlighter, Italic, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, TerminalSquare, Undo2, X } from "lucide-react";
-import { toggleTheme } from "./theme";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FolderOpen, Globe2, Highlighter, Italic, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, TerminalSquare, Undo2, X } from "lucide-react";
+import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { searchWeb } from "./services/search";
@@ -123,7 +123,7 @@ export default function App() {
   );
   const [rightTab, setRightTab] = useState<InspectorTab>("commands");
   const [rightOpen, setRightOpen] = useState(true);
-  const [themeDark, setThemeDark] = useState(() => document.documentElement.classList.contains("dark"));
+  const [theme, setTheme] = useState<Theme>(getAppliedTheme);
   const [rightWidth, setRightWidth] = useState(RIGHT_PANEL_DEFAULT);
   const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_DEFAULT);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -552,10 +552,10 @@ export default function App() {
           {rightOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
         </IconButton>
         <IconButton
-          title={themeDark ? "切换到亮色" : "切换到暗色"}
-          onClick={() => setThemeDark(toggleTheme() === "dark")}
+          title={"当前：" + (theme === "gouan" ? "构案" : theme === "light" ? "浅色" : "深色") + "；切换到" + (theme === "gouan" ? "浅色" : theme === "light" ? "深色" : "构案") + "主题"}
+          onClick={() => setTheme(cycleTheme(theme))}
         >
-          {themeDark ? <Sun size={18} /> : <Moon size={18} />}
+          {theme === "gouan" ? <Palette size={18} /> : theme === "light" ? <Sun size={18} /> : <Moon size={18} />}
         </IconButton>
         <IconButton title="设置" onClick={() => setSettingsOpen(true)}><Settings size={18} /></IconButton>
         <div className="file-menu" ref={fileMenuRef}>

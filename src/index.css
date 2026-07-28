@@ -4210,3 +4210,97 @@
   .ccswitch-provider-list label { grid-template-columns:20px minmax(0, 1fr); }
   .ccswitch-provider-list label em { grid-column:2; }
 }
+
+/* Gouan workbench: final editorial theme layer. */
+@layer base {
+  :root {
+    --background:0 0% 100%;--foreground:220 9% 13%;--card:0 0% 100%;--card-foreground:220 9% 13%;
+    --popover:0 0% 100%;--popover-foreground:220 9% 13%;--primary:213 94% 43%;--primary-foreground:0 0% 100%;
+    --secondary:220 14% 96%;--secondary-foreground:220 9% 18%;--muted:220 14% 96%;--muted-foreground:220 6% 43%;
+    --accent:214 95% 94%;--accent-foreground:213 94% 36%;--border:220 13% 87%;--input:220 13% 82%;--ring:213 94% 43%;
+    --sidebar-bg:220 14% 96%;--radius:.375rem;
+  }
+  .gouan {
+    --background:42 24% 97%;--foreground:215 18% 15%;--card:40 20% 99%;--card-foreground:215 18% 15%;
+    --popover:40 24% 99%;--popover-foreground:215 18% 15%;--primary:5 63% 43%;--primary-foreground:40 30% 98%;
+    --secondary:40 13% 93%;--secondary-foreground:215 14% 22%;--muted:40 12% 93%;--muted-foreground:215 8% 43%;
+    --accent:8 38% 91%;--accent-foreground:5 58% 36%;--border:38 11% 84%;--input:38 10% 78%;--ring:5 63% 43%;--sidebar-bg:38 16% 92%;
+  }
+  .dark {
+    --background:220 8% 10%;--foreground:220 12% 91%;--card:220 8% 12%;--card-foreground:220 12% 91%;
+    --popover:220 8% 14%;--popover-foreground:220 12% 91%;--primary:211 100% 66%;--primary-foreground:220 12% 9%;
+    --secondary:220 7% 17%;--secondary-foreground:220 10% 90%;--muted:220 7% 18%;--muted-foreground:220 7% 65%;
+    --accent:213 48% 22%;--accent-foreground:211 100% 78%;--border:220 7% 24%;--input:220 7% 30%;--ring:211 100% 66%;--sidebar-bg:220 8% 14%;
+  }
+}
+@layer components {
+  .app-shell{background:hsl(var(--background))}
+  .topbar{height:56px;grid-template-columns:minmax(180px,220px) minmax(220px,1fr) auto;padding:0 14px;background:hsl(var(--card)/.96);border-bottom:1px solid hsl(var(--border));box-shadow:0 1px 0 hsl(var(--foreground)/.025);backdrop-filter:blur(18px) saturate(120%)}
+  .brand-mark{gap:10px;color:hsl(var(--foreground));font-family:"STKaiti","KaiTi","PingFang SC",sans-serif;font-size:17px;font-weight:700}
+  .brand-mark img{width:30px;height:30px;border:1px solid hsl(var(--border)/.75);border-radius:6px;box-shadow:0 2px 8px hsl(var(--foreground)/.1)}
+  .project-identity input{width:min(440px,38vw);color:hsl(var(--foreground));font-size:13px;font-weight:650}
+  .project-identity span{max-width:min(520px,42vw);overflow:hidden;color:hsl(var(--muted-foreground));font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+  .top-actions{gap:1px}.top-actions .text-button{min-height:32px}
+  .top-actions .text-button:hover,.top-actions .icon-button:hover,.top-actions .icon-button.active{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+  .workspace{background:hsl(var(--border))}.left-panel{background:hsl(var(--sidebar-bg))}
+  .panel-heading{min-height:44px;padding:0 10px 0 14px;color:hsl(var(--foreground)/.78);font-size:11px;font-weight:700}
+  .toc-mode,.view-toggle,.right-panel .tabs{border:0;border-radius:5px;background:hsl(var(--foreground)/.055);box-shadow:inset 0 0 0 1px hsl(var(--border)/.65)}
+  .toc-mode button,.view-toggle button,.right-panel .tabs button{border-radius:4px}
+  .toc-mode button.active,.view-toggle button.active,.right-panel .tabs button.active{background:hsl(var(--card));color:hsl(var(--foreground));box-shadow:0 1px 3px hsl(var(--foreground)/.12)}
+  .toc-item{position:relative;min-height:29px;border-radius:4px;transition:background-color 120ms ease,color 120ms ease,transform 120ms ease}
+  .toc-item:hover{transform:translateX(1px)}.toc-item.selected{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+  .toc-item.selected::before{position:absolute;inset:6px auto 6px 0;width:2px;border-radius:2px;background:hsl(var(--primary));content:""}
+  .workspace-docs{border-top:1px solid hsl(var(--border))}.workspace-doc-row{border-radius:4px}
+  .workspace-doc-row.selected{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+  .left-splitter,.right-splitter{background:hsl(var(--border));transition:background-color 120ms ease}.left-splitter:hover,.right-splitter:hover{background:hsl(var(--primary)/.62)}
+  .editor-area{background:hsl(var(--background))}.editor-title{min-height:48px;padding:0 18px;background:hsl(var(--card))}
+  .editor-title>div:first-child>span{color:hsl(var(--primary));font-size:9px;font-weight:750}.editor-title input{font-size:14px;font-weight:680}
+  .heading-toolbar{padding:6px 16px;background:hsl(var(--card))}
+  .heading-level-btn,.heading-renumber-btn,.format-btn{border-radius:4px;transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease}
+  .heading-level-btn:hover,.heading-renumber-btn:hover,.format-btn:hover{border-color:hsl(var(--primary)/.35);background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+  .md-workspace{gap:1px;background:hsl(var(--border))}.md-pane{background:hsl(var(--card))}.source-pane{background:hsl(var(--background))}
+  .md-source,.md-source-highlight{padding:30px clamp(26px,4vw,58px) 72px;font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace;font-size:13px;line-height:1.85}
+  .md-source{caret-color:hsl(var(--primary))}.md-source::selection{background:hsl(var(--primary)/.18)}
+  .md-preview{max-width:860px;margin:0 auto;padding:48px clamp(42px,6vw,84px) 96px;color:hsl(var(--foreground)/.9);font-family:"Songti SC",SimSun,"PingFang SC",serif;font-size:14px;line-height:1.9}
+  .md-preview h1,.md-preview h2,.md-preview h3,.md-preview h4{color:hsl(var(--foreground));font-family:"STHeiti",SimHei,"PingFang SC",sans-serif}
+  .md-preview h1{margin-bottom:2.2rem;padding-bottom:1rem;border-bottom:2px solid hsl(var(--foreground))}.md-preview h2{margin-top:2.5rem}
+  .md-preview blockquote{border-left-color:hsl(var(--primary));background:hsl(var(--accent)/.6)}
+  .right-panel{background:hsl(var(--card))}.inspector-top{min-height:48px;background:hsl(var(--card))}
+  .right-panel .tabs{padding:2px}.right-panel .tabs button{padding:6px 9px}.right-panel .tabs button.active::after{background:hsl(var(--primary))}
+  button.primary,.diff-actions button:last-child,.apply-agent-output{border-color:hsl(var(--primary));border-radius:5px;background:hsl(var(--primary));box-shadow:0 1px 2px hsl(var(--primary)/.2)}
+  button.primary:hover:not(:disabled),.diff-actions button:last-child:hover,.apply-agent-output:hover{filter:brightness(.9)}
+  .file-dropdown,.export-dropdown,.modal,.preview-modal,.heading-review-modal,.knowledge-manager-modal{border-radius:6px}
+  .toast{border-left:3px solid hsl(var(--primary));border-radius:5px;animation:gouan-toast-in 180ms ease-out both}
+  .left-panel,.editor-area,.right-panel{animation:gouan-panel-in 240ms ease-out both}.editor-area{animation-delay:35ms}.right-panel{animation-delay:70ms}
+}
+@keyframes gouan-panel-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@keyframes gouan-toast-in{from{opacity:0;transform:translate(-50%,-6px)}to{opacity:1;transform:translate(-50%,0)}}
+@media(max-width:1320px){
+  .top-actions .text-button:nth-child(-n+2){width:32px;padding:0;overflow:hidden;color:transparent;gap:0}
+  .top-actions .text-button:nth-child(-n+2) svg{flex:none;color:hsl(var(--muted-foreground))}
+  .top-actions .text-button:nth-child(-n+2):hover svg{color:hsl(var(--accent-foreground))}
+}
+
+
+/* The central writing surface is continuous, never card-shaped. */
+@layer components {
+  .md-workspace,
+  .md-pane,
+  .md-source-editor,
+  .source-pane,
+  .preview-pane {
+    border-radius: 0;
+  }
+}
+
+/* Override the older, more specific split-view corner rules. */
+@layer components {
+  .editor-area,
+  .editor-area .md-workspace,
+  .md-workspace.mode-split .source-pane,
+  .md-workspace.mode-split .preview-pane,
+  .md-workspace.mode-edit .source-pane,
+  .md-workspace.mode-preview .preview-pane {
+    border-radius: 0;
+  }
+}

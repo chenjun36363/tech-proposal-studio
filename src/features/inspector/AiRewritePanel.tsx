@@ -3,7 +3,7 @@ import { Bot, Check, RefreshCw, Sparkles, X } from "lucide-react";
 import { makeId } from "../../data";
 import { improveBlockStream } from "../../services/model";
 import type { AiDraft, DocumentBlock, Project, SelectedModel, SessionEvent } from "../../types";
-import { resolveActiveModelConfig, tryResolveActiveModelConfig } from "../../services/llm/resolve";
+import { resolveActiveModelConfig } from "../../services/llm/resolve";
 import { ModelSelect } from "../../components/ModelSelect";
 
 function SessionTrace({ events, running }: { events: SessionEvent[]; running: boolean }) {
@@ -45,9 +45,6 @@ export function AiRewritePanel({ project, block, context, updateBlock, notify, o
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
   const aiEnabled = project.model?.enabled !== false;
 
-  const resolved = tryResolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
-  const modelLabel = resolved ? `${resolved.providerName} / ${resolved.model}` : (project.model?.model || "未选择模型");
-
   const run = async () => {
     let config;
     try {
@@ -71,7 +68,6 @@ export function AiRewritePanel({ project, block, context, updateBlock, notify, o
   };
 
   return <div className="inspector-content">
-    <div className="context-line"><span><Bot size={17} />{modelLabel}</span><button onClick={openSettings}>配置</button></div>
     <label className="wide">模型
       <ModelSelect providers={project.providers ?? []} value={selectedModel} onChange={setSelectedModel} disabled={!aiEnabled} />
     </label>
