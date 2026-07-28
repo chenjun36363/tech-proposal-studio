@@ -6,6 +6,6 @@ if errorlevel 1 (
 )
 where cl
 where link
-cd /d D:\nas\myproject\tech-proposal-studio
+cd /d "%~dp0.."
 set PATH=%USERPROFILE%\.cargo\bin;%PATH%
 pnpm tauri dev

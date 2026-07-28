@@ -178,6 +178,169 @@ pub(crate) async fn generate_text_stream(
     Ok(AiDraft { block_id, before, after: output, instruction })
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelProxyRequest {
+    url: String,
+    method: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    body: Option<Value>,
+    timeout_ms: u64,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    protocol: String,
+    #[serde(default)]
+    provider_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelProxyResponse {
+    status: u16,
+    body: String,
+}
+
+fn header_has(headers: &HashMap<String, String>, name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    headers.keys().any(|key| key.to_ascii_lowercase() == lower)
+}
+
+fn resolve_proxy_api_key(request: &ModelProxyRequest) -> String {
+    if !request.api_key.trim().is_empty() {
+        return request.api_key.clone();
+    }
+    if let Some(provider_id) = request.provider_id.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        let named = load_secret(&format!("llm-provider:{provider_id}"));
+        if !named.trim().is_empty() {
+            return named;
+        }
+    }
+    load_secret("openai-api-key")
+}
+
+fn inject_protocol_auth(headers: &mut HashMap<String, String>, protocol: &str, api_key: &str) {
+    if api_key.trim().is_empty() {
+        return;
+    }
+    match protocol {
+        "anthropic-messages" => {
+            if !header_has(headers, "x-api-key") {
+                headers.insert("x-api-key".into(), api_key.to_string());
+            }
+            if !header_has(headers, "anthropic-version") {
+                headers.insert("anthropic-version".into(), "2023-06-01".into());
+            }
+        }
+        "google-generative-ai" => {
+            if !header_has(headers, "x-goog-api-key") {
+                headers.insert("x-goog-api-key".into(), api_key.to_string());
+            }
+        }
+        _ => {
+            if !header_has(headers, "authorization") {
+                headers.insert("Authorization".into(), format!("Bearer {api_key}"));
+            }
+        }
+    }
+}
+
+fn build_proxy_request(request: &ModelProxyRequest) -> Result<reqwest::RequestBuilder, String> {
+    if request.url.trim().is_empty() {
+        return Err("模型请求 URL 为空".into());
+    }
+    let api_key = resolve_proxy_api_key(request);
+    let local = ["localhost", "127.0.0.1", "[::1]"]
+        .iter()
+        .any(|host| request.url.contains(host));
+    if api_key.trim().is_empty() && !local {
+        return Err("API Key 未配置".into());
+    }
+
+    let mut headers = request.headers.clone();
+    inject_protocol_auth(&mut headers, &request.protocol, &api_key);
+
+    let client = reqwest::Client::new();
+    let method = request.method.trim().to_ascii_uppercase();
+    let mut builder = match method.as_str() {
+        "GET" => client.get(&request.url),
+        "POST" => client.post(&request.url),
+        "PUT" => client.put(&request.url),
+        "DELETE" => client.delete(&request.url),
+        "PATCH" => client.patch(&request.url),
+        other => return Err(format!("不支持的 HTTP 方法: {other}")),
+    };
+    builder = builder.timeout(Duration::from_millis(if request.timeout_ms == 0 { 60_000 } else { request.timeout_ms }));
+    for (key, value) in &headers {
+        builder = builder.header(key, value);
+    }
+    if let Some(body) = &request.body {
+        if !body.is_null() {
+            builder = builder.json(body);
+        }
+    }
+    Ok(builder)
+}
+
+#[tauri::command]
+pub(crate) async fn model_proxy_json(request: ModelProxyRequest) -> Result<ModelProxyResponse, String> {
+    let response = build_proxy_request(&request)?.send().await.map_err(|error| error.to_string())?;
+    let status = response.status().as_u16();
+    let body = response.text().await.map_err(|error| error.to_string())?;
+    Ok(ModelProxyResponse { status, body })
+}
+
+#[tauri::command]
+pub(crate) async fn model_proxy_stream(app: AppHandle, run_id: String, request: ModelProxyRequest) -> Result<(), String> {
+    let response = build_proxy_request(&request)?.send().await.map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(upstream_error("模型服务返回", status, &body));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut pending = String::new();
+    while let Some(chunk) = stream.next().await {
+        pending.push_str(&String::from_utf8_lossy(&chunk.map_err(|error| error.to_string())?));
+        while let Some(index) = pending.find('\n') {
+            let line = pending[..index].trim_end_matches('\r').to_string();
+            pending.drain(..=index);
+            if line.is_empty() {
+                continue;
+            }
+            let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line.trim());
+            if data.is_empty() || data == "[DONE]" {
+                continue;
+            }
+            let _ = app.emit(
+                "session://ai",
+                StreamEvent {
+                    run_id: run_id.clone(),
+                    channel: "output".into(),
+                    content: data.to_string(),
+                },
+            );
+        }
+    }
+    if !pending.trim().is_empty() {
+        let data = pending.strip_prefix("data:").map(str::trim).unwrap_or(pending.trim());
+        if data != "[DONE]" && !data.is_empty() {
+            let _ = app.emit(
+                "session://ai",
+                StreamEvent {
+                    run_id: run_id.clone(),
+                    channel: "output".into(),
+                    content: data.to_string(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

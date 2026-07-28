@@ -6,7 +6,7 @@ import {
   prepareImportedMarkdown,
   resolveMineruConfig,
 } from "./documentImport";
-import { saveWorkspaceConnections } from "./connections";
+import { connectionsFromProject, saveWorkspaceConnections } from "./connections";
 import { createProject } from "./data";
 
 describe("documentImport helpers", () => {
@@ -58,11 +58,9 @@ describe("resolveMineruConfig", () => {
     const project = createProject();
     project.mineru.apiKey = "from-disk-key";
     project.mineru.modelVersion = "pipeline";
-    await saveWorkspaceConnections(undefined, {
-      model: project.model,
-      search: project.search,
-      mineru: project.mineru,
-    });
+    const conn = connectionsFromProject(project);
+    conn.mineru = project.mineru;
+    await saveWorkspaceConnections(undefined, conn);
     const cfg = await resolveMineruConfig("", null);
     expect(cfg.apiKey).toBe("from-disk-key");
     expect(cfg.modelVersion).toBe("pipeline");

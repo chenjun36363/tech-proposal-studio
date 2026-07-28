@@ -1,5 +1,6 @@
-import type { OpenAICompatibleConfig } from "../types";
+import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../types";
 import { agentCompletion } from "../services/model";
+import { resolvedFromLegacy } from "../services/llm/resolve";
 import type { AgentEvent, AgentMessage, AgentModelResponse, AgentToolCall } from "./protocol";
 import { AgentToolRegistry } from "./toolRegistry";
 import { compactAgentRunContext } from "./contextCompaction";
@@ -74,7 +75,7 @@ export async function runProposalAgent(params: {
   task: string;
   messages?: AgentMessage[];
   systemPrompt?: string;
-  config: OpenAICompatibleConfig;
+  config: ResolvedModelConfig | OpenAICompatibleConfig;
   registry: AgentToolRegistry;
   signal: AbortSignal;
   onEvent: (event: AgentEvent) => void;
@@ -82,7 +83,10 @@ export async function runProposalAgent(params: {
   temperature?: number;
   firstRoundToolName?: string;
 }) {
-  const { config, registry, signal, onEvent } = params;
+  const config: ResolvedModelConfig = "protocol" in params.config && "providerId" in params.config
+    ? params.config
+    : resolvedFromLegacy(params.config);
+  const { registry, signal, onEvent } = params;
   const contextCompressionTokens = params.contextCompressionTokens ?? 48000;
   const emit = (event: AgentEventInput) => onEvent({ ...event, id: makeEventId(), at: Date.now() } as AgentEvent);
   const baseMessages = messagesForAvailableTools(params.messages ?? [{ role: "system" as const, content: params.systemPrompt ?? "" }], registry);

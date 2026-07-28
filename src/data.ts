@@ -1,12 +1,21 @@
 import type { Project } from "./types";
 import { defaultProposalMarkdown } from "./markdownDoc";
 import { defaultAgentSettings } from "./agent/settings";
+import { createDefaultProvider, createDefaultSelection } from "./services/llm/defaults";
+import { deriveModelSnapshot } from "./services/llm/resolve";
+
 export const makeId = () => crypto.randomUUID();
+
 export function createProject(): Project {
   const name = "未命名技术方案";
+  const provider = createDefaultProvider(makeId());
+  const selectedModel = createDefaultSelection(provider);
+  const model = deriveModelSnapshot([provider], selectedModel);
   return {
     id: makeId(), name, updatedAt: new Date().toISOString(), markdown: defaultProposalMarkdown(name), contextSourceRefs: [], sources: [],
-    model: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4.1-mini", timeoutMs: 60000, headers: {}, enabled: true },
+    providers: [provider],
+    selectedModel,
+    model,
     search: { provider: "searxng", endpoint: "", apiKey: "", engines: ["baidu", "360search", "bing"] },
     mineru: {
       baseUrl: "https://mineru.net",

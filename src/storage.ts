@@ -59,10 +59,45 @@ function migrateLegacyStructure(raw: StoredProject): Project {
   return { ...project, contextSourceRefs };
 }
 
+function ensureProviders(project: Project): Project {
+  if (Array.isArray(project.providers) && project.providers.length) {
+    const model = project.model ?? createProject().model;
+    return {
+      ...project,
+      providers: project.providers,
+      selectedModel: project.selectedModel ?? (model.model
+        ? { providerId: project.providers[0].id, model: model.model }
+        : null),
+      model,
+    };
+  }
+  const base = createProject();
+  const legacyModel = project.model ?? base.model;
+  const provider = {
+    ...base.providers[0],
+    baseUrl: legacyModel.baseUrl || base.providers[0].baseUrl,
+    apiKey: "",
+    timeoutMs: legacyModel.timeoutMs || 60000,
+    headers: { ...(legacyModel.headers ?? {}) },
+    enabled: legacyModel.enabled !== false,
+    activeModels: legacyModel.model ? [legacyModel.model] : [...base.providers[0].activeModels],
+    catalog: legacyModel.model ? [{ id: legacyModel.model, displayName: legacyModel.model }] : base.providers[0].catalog,
+  };
+  const selectedModel = legacyModel.model
+    ? { providerId: provider.id, model: legacyModel.model }
+    : null;
+  return {
+    ...project,
+    providers: [provider],
+    selectedModel,
+    model: { ...legacyModel, apiKey: legacyModel.apiKey ?? "", headers: { ...(legacyModel.headers ?? {}) } },
+  };
+}
+
 function normalizeProject(raw: StoredProject): Project {
   const markdownReady = ensureMarkdown(raw);
   const migrated = migrateLegacyStructure(markdownReady);
-  return ensureCommands(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) }));
+  return ensureCommands(ensureProviders(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) })));
 }
 export function loadProject(): Project {
   try {
@@ -83,6 +118,7 @@ export function saveProject(project: Project) {
     ...project,
     updatedAt: new Date().toISOString(),
     model: { ...project.model, apiKey: "" },
+    providers: (project.providers ?? []).map(provider => ({ ...provider, apiKey: "" })),
     search: { ...project.search, apiKey: "" },
     mineru: { ...(project.mineru ?? createProject().mineru), apiKey: "" },
   }));

@@ -98,17 +98,27 @@ Desktop only, hosted in the right panel. Rust uses `portable-pty` (`terminal_ope
 
 `src/storage.ts`:
 
-- Saves project JSON to localStorage; **always strips `model.apiKey` and `search.apiKey`** before write.
+- Saves project JSON to localStorage; **always strips `model.apiKey`、`providers[].apiKey`、`search.apiKey`、`mineru.apiKey`** before write.
 - Loads current key, then migrates from legacy key if needed.
-- `ensureCommands` migrates missing agent-check presets on older projects.
+- `ensureCommands` / `ensureProviders` migrate missing agent presets and single-model projects into multi-provider shape.
 
-**Connection config (model + search)** lives in the workspace file  
+**Connection config (providers + search + mineru)** lives in the workspace file  
 `<workspace.root>/.gouan/connections.json` via `src/connections.ts` (`loadWorkspaceConnections` / `saveWorkspaceConnections`).  
+Schema is **v2**: `{ version: 2, providers: LlmProvider[], selectedModel, model (derived snapshot), search, mineru }`.  
+v1 single `model` payloads are migrated on load (id `legacy-default`, protocol inferred from host, endpoint suffixes stripped). Saves always write v2.  
 Loaded on desktop workspace boot and when applying a workspace root; written when the user saves Settings.  
 Browser mode (no root) keeps the same JSON shape under localStorage key `tech-proposal-studio.connections.v1`.  
 API keys **are** stored in that workspace file (user-requested); they still never go into the project cache (`tech-proposal-studio.project.v1`).
 
-Rust keyring (`store_secret` / `load_secret`): service `com.techproposal.studio`, with one-time copy from `cn.gouan.writer` if present. Saving settings also mirrors keys into keyring so model calls can fill empty API key from keyring when possible.
+Rust keyring (`store_secret` / `load_secret`): service `com.techproposal.studio`, with one-time copy from `cn.gouan.writer` if present. Per-provider keys use `llm-provider:{id}`; selected key is also mirrored to legacy `openai-api-key` so older call paths still resolve.
+
+### Multi-provider LLM
+
+- Types: `LlmProtocol` = `openai-completions` | `openai-responses` | `anthropic-messages` | `google-generative-ai`; each `LlmProvider` holds baseUrl / key / activeModels / catalog; `SelectedModel` = `{ providerId, model }`.
+- Protocol adapters live only in TypeScript (`src/services/llm/protocols/*`): build list/chat wire requests, parse responses and SSE text, map Agent tools (`tool_use` / `functionCall` / Responses `function_call` ↔ internal OpenAI `tool_calls`).
+- Runtime entry: `resolveActiveModelConfig(providers, selection)` → `ResolvedModelConfig`; settings has global default; AI rewrite and Agent panels each keep a local override via `ModelSelect`.
+- Desktop path: TS builds the wire request, Rust `model_proxy_json` / `model_proxy_stream` injects protocol auth + keyring and returns body / SSE lines; browser path uses `fetch` with the same adapters.
+- Settings UI: `ModelSettingsSection` provider list + edit modal (protocol presets, fetch models with filter/select-all, activeModels gate).
 
 ### AI / search contracts
 

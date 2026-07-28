@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { Bot, Check, RefreshCw, Sparkles, X } from "lucide-react";
 import { makeId } from "../../data";
 import { improveBlockStream } from "../../services/model";
-import type { AiDraft, DocumentBlock, Project, SessionEvent } from "../../types";
+import type { AiDraft, DocumentBlock, Project, SelectedModel, SessionEvent } from "../../types";
+import { resolveActiveModelConfig, tryResolveActiveModelConfig } from "../../services/llm/resolve";
+import { ModelSelect } from "../../components/ModelSelect";
 
 function SessionTrace({ events, running }: { events: SessionEvent[]; running: boolean }) {
   const output = events.filter(event => event.kind === "output").map(event => event.content ?? "").join("");
@@ -40,12 +42,25 @@ export function AiRewritePanel({ project, block, context, updateBlock, notify, o
   const [draft, setDraft] = useState<AiDraft | null>(null);
   const [loading, setLoading] = useState(false);
   const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
+  const aiEnabled = project.model?.enabled !== false;
+
+  const resolved = tryResolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
+  const modelLabel = resolved ? `${resolved.providerName} / ${resolved.model}` : (project.model?.model || "未选择模型");
 
   const run = async () => {
-    setLoading(true); setDraft(null);
-    setEvents([createEvent("status", "建立当前会话", `${project.model.model} · ${useContext ? `${context.length} 条上下文` : "仅当前章节"}`), createEvent("tool", "发送章节与编辑要求")]);
+    let config;
     try {
-      const result = await improveBlockStream(block, instruction, useContext ? context : [], project.model, chunk => appendOutput(setEvents, chunk));
+      config = resolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
+    } catch (e: any) {
+      notify(e?.message ?? "模型未配置");
+      openSettings();
+      return;
+    }
+    setLoading(true); setDraft(null);
+    setEvents([createEvent("status", "建立当前会话", `${config.model} · ${useContext ? `${context.length} 条上下文` : "仅当前章节"}`), createEvent("tool", "发送章节与编辑要求")]);
+    try {
+      const result = await improveBlockStream(block, instruction, useContext ? context : [], config, chunk => appendOutput(setEvents, chunk));
       setDraft(result);
       setEvents(current => [...current, createEvent("done", "生成完成", `${result.after.length.toLocaleString()} 字符，等待确认`)]);
     } catch (error) {
@@ -56,7 +71,11 @@ export function AiRewritePanel({ project, block, context, updateBlock, notify, o
   };
 
   return <div className="inspector-content">
-    <div className="context-line"><span><Bot size={17} />{project.model.model}</span><button onClick={openSettings}>配置</button></div>
+    <div className="context-line"><span><Bot size={17} />{modelLabel}</span><button onClick={openSettings}>配置</button></div>
+    <label className="wide">模型
+      <ModelSelect providers={project.providers ?? []} value={selectedModel} onChange={setSelectedModel} disabled={!aiEnabled} />
+    </label>
+    {!aiEnabled && <small className="model-list-error">联网模型已关闭，请先在设置中启用。</small>}
     <label>编辑要求<textarea value={instruction} onChange={event => setInstruction(event.target.value)} /></label>
     <label className="context-box context-send-toggle"><span><input type="checkbox" checked={useContext} onChange={event => setUseContext(event.target.checked)} />发送上下文</span><b>{useContext ? `${context.length} 条引用 + 当前章节` : "仅当前章节"}</b></label>
     <button className="primary" onClick={() => void run()} disabled={loading}>{loading ? "正在生成…" : <><Sparkles size={16} />优化当前章节</>}</button>

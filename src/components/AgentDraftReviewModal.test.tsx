@@ -13,6 +13,8 @@ describe("AgentDraftReviewModal", () => {
     expect(html).toContain("优化前正文");
     expect(html).toContain("优化后正文");
     expect(html).toContain("同步滚动");
+    expect(html).toContain("调整原文与优化稿宽度");
+    expect(html).toContain("恢复均分");
     expect(html).toContain("拒绝修改");
     expect(html).toContain("接受并插入");
   });

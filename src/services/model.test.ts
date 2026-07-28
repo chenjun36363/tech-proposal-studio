@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { improveBlockStream } from "./model";
 import type { DocumentBlock, OpenAICompatibleConfig } from "../types";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => vi.fn()) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 const config: OpenAICompatibleConfig = {
   baseUrl: "https://example.com/v1",
@@ -34,9 +35,31 @@ describe("Tauri model adapter", () => {
 
   it("lets Rust resolve an empty in-memory API key from keyring", async () => {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
-    vi.mocked(invoke).mockResolvedValue({ blockId: block.id, before: block.content, after: "新正文", instruction: "优化" });
 
-    await expect(improveBlockStream(block, "优化", [], config, vi.fn())).resolves.toMatchObject({ after: "新正文" });
-    expect(invoke).toHaveBeenCalledWith("generate_text_stream", expect.objectContaining({ config }));
+    // Mock the listen function to capture the callback and simulate SSE events
+    let eventCallback: ((event: { payload: { runId: string; content: string } }) => void) | null = null;
+    vi.mocked(listen).mockImplementation(async (_event, callback) => {
+      eventCallback = callback as typeof eventCallback;
+      return vi.fn(); // unlisten function
+    });
+
+    // Mock invoke to resolve immediately and trigger the event callback
+    vi.mocked(invoke).mockImplementation(async (cmd, args: any) => {
+      if (cmd === "model_proxy_stream" && eventCallback) {
+        // Simulate SSE data events
+        eventCallback({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"content":"新"}}]}' } });
+        eventCallback({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"content":"正文"}}]}' } });
+      }
+      return undefined;
+    });
+
+    const result = await improveBlockStream(block, "优化", [], config, vi.fn());
+    expect(result).toMatchObject({ after: "新正文" });
+    expect(invoke).toHaveBeenCalledWith("model_proxy_stream", expect.objectContaining({
+      request: expect.objectContaining({
+        url: expect.stringContaining("/chat/completions"),
+        protocol: "openai-completions",
+      }),
+    }));
   });
 });

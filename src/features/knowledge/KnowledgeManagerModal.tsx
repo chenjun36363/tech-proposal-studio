@@ -5,7 +5,7 @@ import { IconButton } from "../../components/IconButton";
 import { SourcePreviewModal } from "../../components/SourcePreviewModal";
 import {
   analyzeKnowledgeMarkdown, applyKnowledgeHeadings, deleteKnowledgeFile, listKnowledgeBackups,
-  listKnowledge, listKnowledgeSectionChunks, listKnowledgeSections, onKnowledgeProgress,
+  indexPendingKnowledge, listKnowledge, listKnowledgeSectionChunks, listKnowledgeSections, onKnowledgeProgress,
   removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, setKnowledgeSectionQuality,
 } from "../../knowledge";
 import { openExternalUrl } from "../../services/system";
@@ -50,6 +50,11 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     setPending(scanned.filter(item => item.state !== "indexed"));
   };
 
+  const changed = pending.filter(item => item.state === "changed");
+  const unindexed = pending.filter(item => item.state === "unindexed");
+  const pendingDocumentIds = new Set(changed.flatMap(item => item.documentId ? [item.documentId] : []));
+  const readyDocuments = documents.filter(document => !pendingDocumentIds.has(document.id));
+
   useEffect(() => { void reload().catch(error => notify(error instanceof Error ? error.message : "知识库加载失败")); }, [project.workspace?.root]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -77,6 +82,17 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     if (!project.workspace) return notify("请先配置工作目录");
     const path = await pickMarkdownFile("上传知识 Markdown", project.workspace.historyDir);
     if (path) await analyze(path);
+  };
+  const rebuildChanged = async () => {
+    if (!project.workspace || !changed.length) return;
+    setProgress({ documentId: "", stage: "reindexing", current: 0, total: changed.length, message: `正在更新 ${changed.length} 个知识索引…` });
+    setBusy(true);
+    try {
+      await indexPendingKnowledge(project.workspace, changed.map(item => item.path));
+      await reload();
+      notify(`已更新 ${changed.length} 个知识索引`);
+    } catch (error) { notify(error instanceof Error ? error.message : "批量更新索引失败"); }
+    finally { setBusy(false); setProgress(null); }
   };
   const confirmReview = async () => {
     if (!project.workspace || !headingReview) return;
@@ -178,22 +194,22 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   };
 
   const groups = [
-    { id: "local", label: "本地 Markdown", documents: documents.filter(item => item.sourceType === "markdown") },
-    { id: "web", label: "网页知识", documents: documents.filter(item => item.sourceType === "web") },
+    { id: "local", label: "本地 Markdown", documents: readyDocuments.filter(item => item.sourceType === "markdown") },
+    { id: "web", label: "网页知识", documents: readyDocuments.filter(item => item.sourceType === "web") },
   ].filter(group => group.documents.length);
   const headingSourceLabel = (source: KnowledgeSection["headingSource"]) => ({ markdown: "原生标题", toc: "目录匹配", numbering: "编号识别", model: "模型识别", user: "人工确认" }[source] ?? source);
 
   return <div className="modal-backdrop knowledge-manager-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
     <div className="modal knowledge-manager-modal" onMouseDown={event => event.stopPropagation()}>
       <div className="modal-title"><div><BookOpen size={19} /><span>知识管理</span></div><IconButton title="关闭" onClick={() => !busy && close()}><X size={18} /></IconButton></div>
-      <div className="knowledge-manager-toolbar"><div><b>{documents.length}</b><span>已入库</span><b>{pending.length}</b><span>待处理</span></div><div><button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button className="primary" disabled={busy} onClick={() => void importFile()}><FilePlus2 size={15} />导入 Markdown</button></div></div>
+      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button className="primary" disabled={busy} onClick={() => void importFile()}><FilePlus2 size={15} />导入 Markdown</button></div></div>
       {progress && busy && !headingReview && <div className="knowledge-progress"><span>{progress.message}</span><b>{progress.stage === "structure_ai" ? `已等待 ${busySeconds} 秒` : progress.total > 1 ? `${progress.current}/${progress.total}` : `已进行 ${busySeconds} 秒`}</b></div>}
       <div className="knowledge-manager-body">
-        <section className="knowledge-manager-column"><div className="knowledge-manager-heading"><span>待处理</span><b>{pending.length}</b></div><div className="knowledge-manager-scroll">
-          {pending.map(item => <article className="knowledge-manager-pending" key={item.path}><div><b>{item.title}</b><span title={item.path}>{item.path}</span></div><em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "内容已更新" : "尚未索引"}</em><div className="knowledge-pending-actions"><button disabled={busy} onClick={() => void analyze(item.path)}>识别结构</button><button disabled={busy} onClick={() => void returnPendingToWorkspace(item)}><Undo2 size={13} />转回工作区</button><IconButton title="删除知识副本" disabled={busy} onClick={() => void deletePending(item)}><Trash2 size={13} /></IconButton></div></article>)}
-          {!pending.length && <div className="knowledge-manager-empty"><Check size={20} /><span>没有待处理文档</span></div>}
+        <section className="knowledge-manager-column"><div className="knowledge-manager-heading"><span>待处理与更新</span><b>{pending.length}</b></div><div className="knowledge-manager-scroll">
+          {pending.map(item => <article className="knowledge-manager-pending" key={item.path}><div><b>{item.title}</b><span title={item.path}>{item.path}</span></div><em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "索引待更新" : "尚未入库"}</em><div className="knowledge-pending-actions"><button disabled={busy} onClick={() => void analyze(item.path)}>{item.state === "changed" ? "重新识别" : "识别结构"}</button><button disabled={busy} onClick={() => void returnPendingToWorkspace(item)}><Undo2 size={13} />转回工作区</button><IconButton title="删除知识副本" disabled={busy} onClick={() => void deletePending(item)}><Trash2 size={13} /></IconButton></div></article>)}
+          {!pending.length && <div className="knowledge-manager-empty"><Check size={20} /><span>所有知识文档均已就绪</span></div>}
         </div></section>
-        <section className="knowledge-manager-column indexed"><div className="knowledge-manager-heading"><span>已入库</span><b>{documents.length}</b></div><div className="knowledge-manager-scroll">
+        <section className="knowledge-manager-column indexed"><div className="knowledge-manager-heading"><span>已就绪</span><b>{readyDocuments.length}</b></div><div className="knowledge-manager-scroll">
           {groups.map(group => <div className="knowledge-manager-group" key={group.id}><div className="knowledge-section-heading"><div>{group.id === "local" ? <FolderSearch size={14} /> : <Globe2 size={14} />}<b>{group.label}</b><span>{group.documents.length}</span></div></div>
             {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片</span><code title={document.location}>{document.location}</code></div><em className="knowledge-status ready">已就绪</em></div>
               {document.error && <p className="knowledge-error">{document.error}</p>}
@@ -201,7 +217,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
               {expanded.has(document.id) && <div className="knowledge-tree">{(sections[document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em className={`knowledge-quality-badge ${section.quality}`}>{section.quality === "good" ? "优质" : section.quality === "bad" ? "劣质" : "普通"}</em><div className="knowledge-manager-quality" role="group" aria-label={`${section.title}片段状态`}><IconButton title="标记为优质" active={section.quality === "good"} disabled={busy} onClick={() => void markSectionQuality(section, "good")}><ThumbsUp size={12} /></IconButton><IconButton title="标记为普通" active={section.quality === "normal"} disabled={busy} onClick={() => void markSectionQuality(section, "normal")}><Minus size={12} /></IconButton><IconButton title="标记为劣质" active={section.quality === "bad"} disabled={busy} onClick={() => void markSectionQuality(section, "bad")}><ThumbsDown size={12} /></IconButton></div><IconButton title="预览知识片段" onClick={() => void previewSection(document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}
             </article>)}
           </div>)}
-          {!documents.length && <div className="knowledge-manager-empty"><BookOpen size={20} /><span>暂无已入库文档</span></div>}
+          {!readyDocuments.length && <div className="knowledge-manager-empty"><BookOpen size={20} /><span>暂无已就绪文档</span></div>}
         </div></section>
       </div>
     </div>

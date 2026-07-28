@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Columns2, X } from "lucide-react";
+import { Check, Columns2, GripVertical, RotateCcw, X } from "lucide-react";
 import type { AgentDraft } from "../agent/protocol";
 
 export function AgentDraftReviewModal({ draft, close, reject, accept }: {
@@ -9,7 +9,10 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
   accept: () => void;
 }) {
   const [syncScroll, setSyncScroll] = useState(true);
+  const [split, setSplit] = useState(50);
+  const [stacked, setStacked] = useState(false);
   const syncing = useRef(false);
+  const columnsRef = useRef<HTMLDivElement>(null);
   const originalRef = useRef<HTMLPreElement>(null);
   const revisedRef = useRef<HTMLPreElement>(null);
 
@@ -18,6 +21,36 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [close]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 760px)");
+    const update = () => setStacked(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  const resizeFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = columnsRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const position = stacked
+      ? (event.clientY - bounds.top) / bounds.height
+      : (event.clientX - bounds.left) / bounds.width;
+    setSplit(Math.min(80, Math.max(20, position * 100)));
+  };
+
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeFromPointer(event);
+  };
+
+  const adjustWithKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const decrease = stacked ? event.key === "ArrowUp" : event.key === "ArrowLeft";
+    const increase = stacked ? event.key === "ArrowDown" : event.key === "ArrowRight";
+    if (!decrease && !increase && event.key !== "Home") return;
+    event.preventDefault();
+    setSplit(current => event.key === "Home" ? 50 : Math.min(80, Math.max(20, current + (increase ? 2 : -2))));
+  };
 
   const synchronize = (source: HTMLPreElement, target: HTMLPreElement | null) => {
     if (!syncScroll || syncing.current || !target) return;
@@ -36,13 +69,30 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
       </header>
       <div className="agent-review-toolbar">
         <span><Columns2 size={14} />原文与优化稿对照</span>
-        <label><input type="checkbox" checked={syncScroll} onChange={event => setSyncScroll(event.target.checked)} />同步滚动</label>
+        <div className="agent-review-tools">
+          <button type="button" title="恢复均分" aria-label="恢复均分" onClick={() => setSplit(50)}><RotateCcw size={13} /></button>
+          <label><input type="checkbox" checked={syncScroll} onChange={event => setSyncScroll(event.target.checked)} />同步滚动</label>
+        </div>
       </div>
-      <div className="agent-review-columns">
+      <div ref={columnsRef} className="agent-review-columns" style={{ "--review-split": `${split}%` } as React.CSSProperties}>
         <article className="original">
           <header><div><i />优化前原文</div><span>{draft.before.length.toLocaleString()} 字</span></header>
           <pre ref={originalRef} onScroll={event => synchronize(event.currentTarget, revisedRef.current)}>{draft.before || "（当前章节为空）"}</pre>
         </article>
+        <div
+          className="agent-review-resizer"
+          role="separator"
+          aria-label="调整原文与优化稿宽度"
+          aria-orientation={stacked ? "horizontal" : "vertical"}
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(split)}
+          tabIndex={0}
+          onDoubleClick={() => setSplit(50)}
+          onKeyDown={adjustWithKeyboard}
+          onPointerDown={startResize}
+          onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeFromPointer(event); }}
+        ><GripVertical size={14} /></div>
         <article className="revised">
           <header><div><i />Agent 优化稿</div><span>{draft.after.length.toLocaleString()} 字</span></header>
           <pre ref={revisedRef} onScroll={event => synchronize(event.currentTarget, originalRef.current)}>{draft.after}</pre>

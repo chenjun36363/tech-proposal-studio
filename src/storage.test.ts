@@ -26,13 +26,16 @@ describe("project persistence", () => {
     project.model.apiKey = "secret-model-key";
     project.search.apiKey = "secret-search-key";
     project.mineru.apiKey = "secret-mineru-key";
+    if (project.providers[0]) project.providers[0].apiKey = "secret-provider-key";
     saveProject(project);
     const raw = localStorage.getItem("tech-proposal-studio.project.v1")!;
     expect(raw).not.toContain("secret-model-key");
     expect(raw).not.toContain("secret-search-key");
     expect(raw).not.toContain("secret-mineru-key");
+    expect(raw).not.toContain("secret-provider-key");
     expect(loadProject().model.apiKey).toBe("");
     expect(loadProject().mineru.apiKey).toBe("");
+    expect(loadProject().providers.every(p => !p.apiKey)).toBe(true);
   });
   it("migrates the legacy browser storage key", () => { const project = createProject(); project.name = "旧项目"; localStorage.setItem("schematic-writer.project.v1", JSON.stringify(project)); expect(loadProject().name).toBe("旧项目"); expect(localStorage.getItem("tech-proposal-studio.project.v1")).not.toBeNull(); expect(localStorage.getItem("schematic-writer.project.v1")).not.toBeNull(); });
   it("adds defaults when loading a project without agent settings", () => {

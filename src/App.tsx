@@ -3,7 +3,6 @@ import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Cod
 import { toggleTheme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
-import { improveBlockStream, listModels } from "./services/model";
 import { searchWeb } from "./services/search";
 import { isDesktop } from "./services/runtime";
 import { openWorkspacePowerShell, saveMarkdown } from "./services/system";
@@ -48,6 +47,7 @@ import { IconButton } from "./components/IconButton";
 import { InlineMarkdown } from "./components/InlineMarkdown";
 import { SourcePreviewModal } from "./components/SourcePreviewModal";
 import { MemorySettingsPanel } from "./components/MemorySettingsPanel";
+import { ModelSettingsSection } from "./features/settings/ModelSettingsSection";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useProposalFileActions } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
@@ -62,7 +62,7 @@ import { EnvironmentModal } from "./features/environment/EnvironmentModal";
 import {
   saveProjectConnections,
 } from "./connections";
-import type { AiDraft, DocumentBlock, ModelOption, Project, SearchResult, SessionEvent, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths } from "./types";
+import type { AiDraft, DocumentBlock, Project, SearchResult, SessionEvent, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths } from "./types";
 import { matchesSource, sourceMatchExcerpt } from "./sourceSearch";
 import {
   analyzeKnowledgeMarkdown,
@@ -881,9 +881,6 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     next.agent = normalizeAgentSettings(next.agent);
     return next;
   });
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState("");
   const desktop = isDesktop();
   const workspace = draft.workspace ?? { root: "", historyDir: "" };
   const sectionDetails = {
@@ -894,27 +891,6 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     parser: { title: "文档解析", description: "配置 Word 和 PDF 转换所使用的 MinerU 服务。", icon: <FilePlus2 size={15} /> },
     workspace: { title: "工作区", description: "管理方案正文、知识库和连接配置的本地目录。", icon: <FolderOpen size={15} /> },
   } as const;
-
-  const updateModel = (patch: Partial<Project["model"]>) => {
-    setDraft(current => ({ ...current, model: { ...current.model, ...patch } }));
-    if ("baseUrl" in patch || "apiKey" in patch) {
-      setModelOptions([]);
-      setModelsError("");
-    }
-  };
-
-  const refreshModels = async () => {
-    setModelsLoading(true);
-    setModelsError("");
-    try {
-      setModelOptions(await listModels(draft.model));
-    } catch (e: any) {
-      setModelOptions([]);
-      setModelsError(e?.message ?? "获取模型列表失败");
-    } finally {
-      setModelsLoading(false);
-    }
-  };
 
   const setWorkspace = (partial: Partial<WorkspacePaths>) => {
     const nextRoot = partial.root ?? workspace.root;
@@ -953,27 +929,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
       <section className="settings-section-detail">
       <header className="settings-section-header"><div>{sectionDetails[section].icon}</div><span><b>{sectionDetails[section].title}</b><small>{sectionDetails[section].description}</small></span></header>
       <div className="settings-section-scroll">
-      {section === "model" && <div className="settings-section-content">
-      <div className="notice"><Globe2 size={18} /><div><b>联网模型已启用</b><span>当前章节和明确选择的引用会发送至此服务。连接配置保存在工作区 <code>.gouan/connections.json</code>。</span></div><input type="checkbox" checked={draft.model.enabled} onChange={e => setDraft({ ...draft, model: { ...draft.model, enabled: e.target.checked } })} /></div>
-      <div className="form-grid">
-        <label>API 地址<input value={draft.model.baseUrl} onChange={e => updateModel({ baseUrl: e.target.value })} /></label>
-        <label className="wide">API Key<input type="password" value={draft.model.apiKey} placeholder="写入工作区 .gouan/connections.json" onChange={e => updateModel({ apiKey: e.target.value })} /></label>
-        <label className="wide">模型名称
-          <div className="model-picker">
-            <input list="upstream-models" value={draft.model.model} placeholder="手动输入，或先获取上游模型" onChange={e => updateModel({ model: e.target.value })} />
-            <button type="button" className="model-fetch-button" onClick={() => void refreshModels()} disabled={modelsLoading}>
-              <RefreshCw size={13} className={modelsLoading ? "model-fetch-spinning" : undefined} />
-              {modelsLoading ? "获取中…" : "从上游获取"}
-            </button>
-          </div>
-          <datalist id="upstream-models">
-            {modelOptions.map(item => <option value={item.id} label={item.displayName === item.id ? undefined : item.displayName} key={item.id} />)}
-          </datalist>
-          {modelsError && <span className="model-list-error">{modelsError}</span>}
-          {!modelsError && modelOptions.length > 0 && <span className="model-list-hint">已发现 {modelOptions.length} 个模型，点击输入框可选择。</span>}
-        </label>
-      </div>
-      </div>}
+      {section === "model" && <ModelSettingsSection draft={draft} setDraft={setDraft} />}
       {section === "search" && <div className="settings-section-content">
       <div className="notice search-settings-notice"><Search size={18} /><div><b>联网搜索按需调用</b><span>执行搜索前仍会向你展示确切查询内容。连接配置保存在工作区 <code>.gouan/connections.json</code>。</span></div></div>
       <div className="form-grid">

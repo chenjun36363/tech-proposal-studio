@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm exec *)",
+      "Bash(grep -E \"\\\\.ts$\")"
+    ]
+  }
+}

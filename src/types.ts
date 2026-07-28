@@ -1,8 +1,45 @@
 export type BlockType = "text" | "table" | "code" | "mermaid" | "quote" | "decision" | "evidence";
 export interface DocumentBlock { id: string; sectionId: string; type: BlockType; content: string; order: number; status: "draft" | "review" | "done"; sourceRefs: string[]; metadata?: Record<string, string>; }
 export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
+/** Legacy flat model config; still derived from selected provider for call-site compatibility. */
 export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; }
 export interface ModelOption { id: string; displayName: string; ownedBy?: string; }
+/** Wire protocol for an LLM provider connection (not a vendor brand). */
+export type LlmProtocol =
+  | "openai-completions"
+  | "openai-responses"
+  | "anthropic-messages"
+  | "google-generative-ai";
+export interface SelectedModel {
+  providerId: string;
+  model: string;
+}
+export interface LlmProvider {
+  id: string;
+  name: string;
+  protocol: LlmProtocol;
+  baseUrl: string;
+  apiKey: string;
+  timeoutMs: number;
+  headers: Record<string, string>;
+  enabled: boolean;
+  /** Models shown in pickers for this provider. */
+  activeModels: string[];
+  /** Last fetched catalog (optional cache). */
+  catalog?: ModelOption[];
+}
+/** Fully resolved connection used by model service / agent runner. */
+export interface ResolvedModelConfig {
+  providerId: string;
+  providerName: string;
+  protocol: LlmProtocol;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
 export interface SearchConfig { provider: "searxng" | "brave"; endpoint: string; apiKey: string; engines?: string[]; }
 /** MinerU cloud document → Markdown (Word/PDF). Stored under workspace `.gouan/connections.json`. */
 export interface MinerUConfig {
@@ -18,6 +55,10 @@ export interface MinerUConfig {
 }
 /** API / search connection config stored under workspace `.gouan/connections.json`. */
 export interface ConnectionSettings {
+  version: 2;
+  providers: LlmProvider[];
+  selectedModel: SelectedModel | null;
+  /** Derived snapshot of the selected provider for legacy callers. */
   model: OpenAICompatibleConfig;
   search: SearchConfig;
   mineru: MinerUConfig;
@@ -40,6 +81,11 @@ export interface Project {
   /** 用户明确加入 AI 上下文的资料 ID；当前按项目共享。 */
   contextSourceRefs: string[];
   sources: SourceRecord[];
+  /** Multi-provider LLM connections (workspace connections truth). */
+  providers: LlmProvider[];
+  /** Default provider+model selection. */
+  selectedModel: SelectedModel | null;
+  /** Derived from selectedModel for gradual migration of call sites. */
   model: OpenAICompatibleConfig;
   search: SearchConfig;
   /** MinerU 文档解析配置（与 connections 同步；apiKey 不写入 project localStorage） */

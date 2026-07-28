@@ -1,8 +1,20 @@
-import type { ConnectionSettings, MinerUConfig, OpenAICompatibleConfig, Project, SearchConfig } from "./types";
-import { createProject } from "./data";
+import type {
+  ConnectionSettings,
+  LlmProvider,
+  LlmProtocol,
+  MinerUConfig,
+  ModelOption,
+  OpenAICompatibleConfig,
+  Project,
+  SearchConfig,
+  SelectedModel,
+} from "./types";
+import { createProject, makeId } from "./data";
 import { isDesktop } from "./services/runtime";
 import { invoke } from "@tauri-apps/api/core";
 import { readTextFile, writeTextFile } from "./workspace";
+import { isLlmProtocol, deriveModelSnapshot, LEGACY_PROVIDER_ID } from "./services/llm/resolve";
+import { createDefaultProvider, createDefaultSelection } from "./services/llm/defaults";
 
 const BROWSER_CONNECTIONS_KEY = "tech-proposal-studio.connections.v1";
 
@@ -14,7 +26,50 @@ export function connectionsFilePath(root: string): string {
 
 function defaults(): ConnectionSettings {
   const base = createProject();
-  return { model: { ...base.model }, search: { ...base.search }, mineru: { ...base.mineru } };
+  return {
+    version: 2,
+    providers: base.providers.map(p => ({ ...p, headers: { ...p.headers }, activeModels: [...p.activeModels], catalog: p.catalog?.map(c => ({ ...c })) })),
+    selectedModel: base.selectedModel ? { ...base.selectedModel } : null,
+    model: { ...base.model, headers: { ...base.model.headers } },
+    search: { ...base.search, engines: [...(base.search.engines ?? [])] },
+    mineru: { ...base.mineru },
+  };
+}
+
+function stripEndpointSuffix(baseUrl: string): string {
+  let url = baseUrl.trim().replace(/\/+$/, "");
+  const suffixes = [
+    /\/chat\/completions$/i,
+    /\/responses$/i,
+    /\/response$/i,
+    /\/messages$/i,
+    /\/models$/i,
+    /:streamGenerateContent$/i,
+    /:generateContent$/i,
+  ];
+  for (const re of suffixes) {
+    if (re.test(url)) url = url.replace(re, "").replace(/\/+$/, "");
+  }
+  return url;
+}
+
+function inferProtocol(baseUrl: string): LlmProtocol {
+  const lower = baseUrl.toLowerCase();
+  if (lower.includes("api.anthropic.com")) return "anthropic-messages";
+  if (lower.includes("generativelanguage.googleapis.com")) return "google-generative-ai";
+  if (/\/responses(?:\/|$)/i.test(baseUrl)) return "openai-responses";
+  return "openai-completions";
+}
+
+function inferProviderName(baseUrl: string, protocol: LlmProtocol): string {
+  try {
+    const host = new URL(baseUrl).hostname;
+    if (host && host !== "localhost") return host;
+  } catch { /* ignore */ }
+  if (protocol === "anthropic-messages") return "Anthropic";
+  if (protocol === "google-generative-ai") return "Google Gemini";
+  if (protocol === "openai-responses") return "OpenAI Responses";
+  return "默认模型";
 }
 
 function normalizeModel(raw: Partial<OpenAICompatibleConfig> | undefined): OpenAICompatibleConfig {
@@ -65,19 +120,151 @@ export function normalizeMineru(raw: Partial<MinerUConfig> | undefined | null): 
   };
 }
 
-export function normalizeConnections(raw: unknown): ConnectionSettings {
-  const obj = (raw && typeof raw === "object" ? raw : {}) as Partial<ConnectionSettings>;
+function normalizeCatalog(raw: unknown): ModelOption[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const result: ModelOption[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim() && !seen.has(item.trim())) {
+      seen.add(item.trim());
+      result.push({ id: item.trim(), displayName: item.trim() });
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const id = typeof rec.id === "string" ? rec.id.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const displayName = typeof rec.displayName === "string" && rec.displayName.trim() ? rec.displayName.trim() : id;
+    const ownedBy = typeof rec.ownedBy === "string" && rec.ownedBy.trim() ? rec.ownedBy.trim() : undefined;
+    result.push(ownedBy ? { id, displayName, ownedBy } : { id, displayName });
+  }
+  return result.length ? result : undefined;
+}
+
+export function normalizeProvider(raw: Partial<LlmProvider> | null | undefined, index = 0): LlmProvider {
+  const fallback = createDefaultProvider(makeId());
+  const id = typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : fallback.id;
+  const protocol = isLlmProtocol(raw?.protocol) ? raw.protocol : "openai-completions";
+  const baseUrl = typeof raw?.baseUrl === "string" && raw.baseUrl.trim()
+    ? stripEndpointSuffix(raw.baseUrl)
+    : fallback.baseUrl;
+  const activeModels = Array.isArray(raw?.activeModels)
+    ? raw!.activeModels.filter(m => typeof m === "string" && m.trim()).map(m => m.trim())
+    : [];
+  const catalog = normalizeCatalog(raw?.catalog);
+  const headers = raw?.headers && typeof raw.headers === "object" && !Array.isArray(raw.headers)
+    ? Object.fromEntries(Object.entries(raw.headers).filter((entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string"))
+    : {};
   return {
-    model: normalizeModel(obj.model),
-    search: normalizeSearch(obj.search),
-    mineru: normalizeMineru(obj.mineru),
+    id,
+    name: typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim() : inferProviderName(baseUrl, protocol),
+    protocol,
+    baseUrl,
+    apiKey: typeof raw?.apiKey === "string" ? raw.apiKey : "",
+    timeoutMs: typeof raw?.timeoutMs === "number" && raw.timeoutMs > 0 ? Math.trunc(raw.timeoutMs) : 60000,
+    headers,
+    enabled: typeof raw?.enabled === "boolean" ? raw.enabled : true,
+    activeModels,
+    catalog,
+  };
+}
+
+function repairSelectedModel(providers: LlmProvider[], selection: SelectedModel | null | undefined): SelectedModel | null {
+  if (!providers.length) return null;
+  if (selection?.providerId && selection.model) {
+    const provider = providers.find(p => p.id === selection.providerId);
+    if (provider) {
+      if (!provider.activeModels.length || provider.activeModels.includes(selection.model)) {
+        return { providerId: provider.id, model: selection.model };
+      }
+      if (provider.activeModels[0]) return { providerId: provider.id, model: provider.activeModels[0] };
+    }
+  }
+  const enabled = providers.find(p => p.enabled && p.activeModels[0]) ?? providers.find(p => p.activeModels[0]) ?? providers[0];
+  return createDefaultSelection(enabled);
+}
+
+function migrateV1Model(legacyRaw: Partial<OpenAICompatibleConfig> | undefined): { providers: LlmProvider[]; selectedModel: SelectedModel | null } {
+  const legacy = normalizeModel(legacyRaw);
+  const protocol = inferProtocol(legacy.baseUrl);
+  const baseUrl = stripEndpointSuffix(legacy.baseUrl);
+  const provider: LlmProvider = {
+    id: LEGACY_PROVIDER_ID,
+    name: inferProviderName(baseUrl, protocol),
+    protocol,
+    baseUrl,
+    apiKey: legacy.apiKey,
+    timeoutMs: legacy.timeoutMs,
+    headers: { ...legacy.headers },
+    enabled: legacy.enabled,
+    activeModels: legacy.model ? [legacy.model] : [],
+    catalog: legacy.model ? [{ id: legacy.model, displayName: legacy.model }] : undefined,
+  };
+  return {
+    providers: [provider],
+    selectedModel: legacy.model ? { providerId: LEGACY_PROVIDER_ID, model: legacy.model } : null,
+  };
+}
+
+export function normalizeConnections(raw: unknown): ConnectionSettings {
+  const obj = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const search = normalizeSearch(obj.search as Partial<SearchConfig> | undefined);
+  const mineru = normalizeMineru(obj.mineru as Partial<MinerUConfig> | undefined);
+
+  const hasProviders = Array.isArray(obj.providers);
+  const isV2 = obj.version === 2 || hasProviders;
+
+  let providers: LlmProvider[];
+  let selectedModel: SelectedModel | null;
+
+  if (isV2 && hasProviders) {
+    providers = (obj.providers as unknown[]).map((item, index) => normalizeProvider(item as Partial<LlmProvider>, index));
+    if (!providers.length) {
+      const migrated = migrateV1Model(obj.model as Partial<OpenAICompatibleConfig> | undefined);
+      providers = migrated.providers;
+      selectedModel = migrated.selectedModel;
+    } else {
+      const rawSel = obj.selectedModel && typeof obj.selectedModel === "object"
+        ? obj.selectedModel as Partial<SelectedModel>
+        : null;
+      selectedModel = repairSelectedModel(providers, rawSel?.providerId && rawSel.model
+        ? { providerId: String(rawSel.providerId), model: String(rawSel.model) }
+        : null);
+    }
+  } else {
+    const migrated = migrateV1Model(obj.model as Partial<OpenAICompatibleConfig> | undefined);
+    providers = migrated.providers;
+    selectedModel = migrated.selectedModel;
+  }
+
+  selectedModel = repairSelectedModel(providers, selectedModel);
+  const model = deriveModelSnapshot(providers, selectedModel, normalizeModel(obj.model as Partial<OpenAICompatibleConfig> | undefined));
+
+  return {
+    version: 2,
+    providers,
+    selectedModel,
+    model,
+    search,
+    mineru,
   };
 }
 
 export function connectionsFromProject(project: Project): ConnectionSettings {
+  const providers = (project.providers?.length
+    ? project.providers
+    : migrateV1Model(project.model).providers
+  ).map((p, i) => normalizeProvider(p, i));
+  const selectedModel = repairSelectedModel(providers, project.selectedModel ?? (
+    project.model?.model ? { providerId: providers[0]?.id ?? LEGACY_PROVIDER_ID, model: project.model.model } : null
+  ));
   return {
-    model: { ...project.model, headers: { ...project.model.headers } },
-    search: { ...project.search },
+    version: 2,
+    providers,
+    selectedModel,
+    model: deriveModelSnapshot(providers, selectedModel, project.model),
+    search: { ...project.search, engines: project.search.engines ? [...project.search.engines] : undefined },
     mineru: normalizeMineru(project.mineru),
   };
 }
@@ -87,6 +274,8 @@ export function applyConnections(project: Project, conn: ConnectionSettings | nu
   const next = normalizeConnections(conn);
   return {
     ...project,
+    providers: next.providers,
+    selectedModel: next.selectedModel,
     model: next.model,
     search: next.search,
     mineru: next.mineru,
@@ -121,11 +310,19 @@ export async function loadWorkspaceConnections(root?: string): Promise<Connectio
   return null;
 }
 
+/** Persist v2 shape only (no top-level legacy-only fields beyond derived model for readability). */
 export async function saveWorkspaceConnections(root: string | undefined, conn: ConnectionSettings): Promise<string | void> {
   const normalized = normalizeConnections(conn);
+  const payload = {
+    version: 2 as const,
+    providers: normalized.providers,
+    selectedModel: normalized.selectedModel,
+    search: normalized.search,
+    mineru: normalized.mineru,
+  };
   if (root && isDesktop()) {
     const path = connectionsFilePath(root);
-    await writeTextFile(path, `${JSON.stringify(normalized, null, 2)}\n`);
+    await writeTextFile(path, `${JSON.stringify(payload, null, 2)}\n`);
     return path;
   }
   if (!isDesktop()) {
@@ -137,8 +334,16 @@ export async function saveWorkspaceConnections(root: string | undefined, conn: C
 export async function syncConnectionSecrets(conn: ConnectionSettings): Promise<void> {
   if (!isDesktop()) return;
   try {
-    if (conn.model.apiKey) {
-      await invoke("store_secret", { name: "openai-api-key", value: conn.model.apiKey });
+    for (const provider of conn.providers) {
+      if (provider.apiKey) {
+        await invoke("store_secret", { name: `llm-provider:${provider.id}`, value: provider.apiKey });
+      }
+    }
+    const selected = conn.selectedModel
+      ? conn.providers.find(p => p.id === conn.selectedModel?.providerId)
+      : conn.providers[0];
+    if (selected?.apiKey) {
+      await invoke("store_secret", { name: "openai-api-key", value: selected.apiKey });
     }
     if (conn.search.apiKey) {
       await invoke("store_secret", { name: "search-api-key", value: conn.search.apiKey });

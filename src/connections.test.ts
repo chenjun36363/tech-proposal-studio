@@ -18,16 +18,23 @@ describe("workspace connections", () => {
     expect(connectionsFilePath("/tmp/ws/")).toBe("/tmp/ws/.gouan/connections.json");
   });
 
-  it("normalizes partial connection payloads", () => {
+  it("migrates v1 single-model payload to providers v2", () => {
     const conn = normalizeConnections({
-      model: { baseUrl: "http://localhost:11434/v1", model: "qwen", apiKey: "k1" },
+      model: { baseUrl: "http://localhost:11434/v1/chat/completions", model: "qwen", apiKey: "k1" },
       search: { provider: "brave", endpoint: "https://api.search.brave.com", apiKey: "k2" },
       mineru: { apiKey: "k3", modelVersion: "pipeline", timeoutSeconds: 120 },
     });
+    expect(conn.version).toBe(2);
+    expect(conn.providers).toHaveLength(1);
+    expect(conn.providers[0].id).toBe("legacy-default");
+    expect(conn.providers[0].baseUrl).toBe("http://localhost:11434/v1");
+    expect(conn.providers[0].protocol).toBe("openai-completions");
+    expect(conn.providers[0].apiKey).toBe("k1");
+    expect(conn.providers[0].activeModels).toEqual(["qwen"]);
+    expect(conn.selectedModel).toEqual({ providerId: "legacy-default", model: "qwen" });
     expect(conn.model.baseUrl).toBe("http://localhost:11434/v1");
     expect(conn.model.model).toBe("qwen");
     expect(conn.model.apiKey).toBe("k1");
-    expect(conn.model.enabled).toBe(true);
     expect(conn.search.provider).toBe("brave");
     expect(conn.search.apiKey).toBe("k2");
     expect(conn.search.engines).toEqual(["baidu", "360search", "bing"]);
@@ -38,15 +45,53 @@ describe("workspace connections", () => {
     expect(conn.mineru.enableTable).toBe(true);
   });
 
+  it("infers anthropic/gemini protocols from host during v1 migration", () => {
+    const anthropic = normalizeConnections({
+      model: { baseUrl: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-5", apiKey: "a" },
+    });
+    expect(anthropic.providers[0].protocol).toBe("anthropic-messages");
+    expect(anthropic.providers[0].baseUrl).toBe("https://api.anthropic.com/v1");
+
+    const gemini = normalizeConnections({
+      model: { baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.0-flash", apiKey: "g" },
+    });
+    expect(gemini.providers[0].protocol).toBe("google-generative-ai");
+  });
+
+  it("repairs invalid selectedModel against activeModels", () => {
+    const conn = normalizeConnections({
+      version: 2,
+      providers: [{
+        id: "p1",
+        name: "Local",
+        protocol: "openai-completions",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiKey: "",
+        timeoutMs: 60000,
+        headers: {},
+        enabled: true,
+        activeModels: ["a", "b"],
+      }],
+      selectedModel: { providerId: "p1", model: "gone" },
+    });
+    expect(conn.selectedModel).toEqual({ providerId: "p1", model: "a" });
+  });
+
   it("applies connections onto a project", () => {
     const project = createProject();
-    const next = applyConnections(project, {
-      model: { ...project.model, baseUrl: "http://127.0.0.1:8080/v1", apiKey: "mk", model: "local" },
-      search: { provider: "searxng", endpoint: "http://searx.local", apiKey: "" },
-      mineru: { ...project.mineru, apiKey: "mu" },
-    });
-    expect(next.model.baseUrl).toBe("http://127.0.0.1:8080/v1");
-    expect(next.model.apiKey).toBe("mk");
+    const conn = connectionsFromProject(project);
+    conn.providers = [{
+      ...conn.providers[0],
+      baseUrl: "http://127.0.0.1:8080/v1",
+      apiKey: "mk",
+      activeModels: ["local"],
+    }];
+    conn.selectedModel = { providerId: conn.providers[0].id, model: "local" };
+    conn.search = { provider: "searxng", endpoint: "http://searx.local", apiKey: "", engines: project.search.engines };
+    conn.mineru = { ...project.mineru, apiKey: "mu" };
+    const next = applyConnections(project, conn);
+    expect(next.providers[0].baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(next.providers[0].apiKey).toBe("mk");
     expect(next.search.endpoint).toBe("http://searx.local");
     expect(next.search.engines).toEqual(["baidu", "360search", "bing"]);
     expect(next.mineru.apiKey).toBe("mu");
@@ -54,13 +99,14 @@ describe("workspace connections", () => {
 
   it("round-trips browser connections including keys", async () => {
     const project = createProject();
-    project.model.apiKey = "browser-model-key";
-    project.search.apiKey = "browser-search-key";
-    project.mineru.apiKey = "browser-mineru-key";
-    project.search.endpoint = "http://searx";
-    await saveWorkspaceConnections(undefined, connectionsFromProject(project));
+    const conn = connectionsFromProject(project);
+    conn.providers[0].apiKey = "browser-model-key";
+    conn.search.apiKey = "browser-search-key";
+    conn.mineru.apiKey = "browser-mineru-key";
+    conn.search.endpoint = "http://searx";
+    await saveWorkspaceConnections(undefined, conn);
     const loaded = await loadWorkspaceConnections();
-    expect(loaded?.model.apiKey).toBe("browser-model-key");
+    expect(loaded?.providers[0].apiKey).toBe("browser-model-key");
     expect(loaded?.search.apiKey).toBe("browser-search-key");
     expect(loaded?.mineru.apiKey).toBe("browser-mineru-key");
     expect(loaded?.search.endpoint).toBe("http://searx");

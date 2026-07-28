@@ -16,6 +16,7 @@ mod export;
 mod search;
 mod system;
 mod terminal;
+mod ccswitch;
 mod process;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
@@ -24,7 +25,7 @@ use terminal::{terminal_close, terminal_open, terminal_resize, terminal_write, T
 
 
 pub(crate) use model::ModelConfig;
-use model::{agent_completion, generate_text, generate_text_stream, list_models};
+use model::{agent_completion, generate_text, generate_text_stream, list_models, model_proxy_json, model_proxy_stream};
 pub(crate) use credentials::load_secret;
 use credentials::store_secret;
 use export::{save_binary_file, save_docx_export, save_markdown, sanitize_filename};
@@ -521,6 +522,8 @@ pub fn run() {
             generate_text,
             generate_text_stream,
             agent_completion,
+            model_proxy_json,
+            model_proxy_stream,
             store_secret,
             search_web,
             save_markdown,
@@ -552,6 +555,7 @@ pub fn run() {
             rename_file,
             write_library_markdown,
             save_image_to_workspace
+            ,ccswitch::list_ccswitch_providers
             ,knowledge::knowledge_scan
             ,knowledge::knowledge_import_markdown
             ,knowledge::knowledge_move_workspace_markdown

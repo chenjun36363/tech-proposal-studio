@@ -7,7 +7,9 @@ import type { AgentDraft, AgentEvent, AgentMessage } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings } from "../agent/settings";
 import { listProjectMemories } from "../agent/memoryService";
-import type { DocumentBlock, Project } from "../types";
+import type { DocumentBlock, Project, SelectedModel } from "../types";
+import { resolveActiveModelConfig } from "../services/llm/resolve";
+import { ModelSelect } from "./ModelSelect";
 import { AgentConversationTimeline } from "./AgentConversationTimeline";
 import { AgentDraftReviewModal } from "./AgentDraftReviewModal";
 
@@ -33,8 +35,10 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
   const [draftRejected, setDraftRejected] = useState(false);
   const [running, setRunning] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
   const abortRef = useRef<AbortController | null>(null);
   const agentSettings = normalizeAgentSettings(project.agent);
+  const aiEnabled = project.model?.enabled !== false;
 
   useEffect(() => {
     const loaded = listAgentConversations(project.id);
@@ -108,7 +112,13 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
   const send = async () => {
     const task = input.trim();
     if (!task || !active) return;
-    if (!project.model.enabled) return notify("请先启用模型连接");
+    let config;
+    try {
+      config = resolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
+    } catch (e: any) {
+      notify(e?.message ?? "模型未配置");
+      return;
+    }
     const pendingConversation: AgentConversation = {
       ...active,
       title: active.messages.length ? active.title : conversationTitle(task),
@@ -145,7 +155,7 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
       memories,
       memoryIndexLimit: agentSettings.memoryIndexLimit,
     });
-      const result = await runProposalAgent({ task, messages: requestMessages, config: project.model, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined });
+      const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined });
       const runtimeMessages = result.messages.slice(1);
       setEvents([]);
       commitConversation({ ...pendingConversation, messages: runtimeMessages });
@@ -165,6 +175,12 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
       <button type="button" title="新建会话" onClick={createConversation} disabled={running}><MessageSquarePlus size={15} /></button>
       <button type="button" title="删除当前会话" onClick={removeConversation} disabled={running}><Trash2 size={14} /></button>
     </header>
+
+    <label className="agent-model-select">
+      <span>模型</span>
+      <ModelSelect providers={project.providers ?? []} value={selectedModel} onChange={setSelectedModel} disabled={running || !aiEnabled} />
+    </label>
+    {!aiEnabled && <small className="model-list-error">联网模型已关闭，请先在设置中启用。</small>}
 
     <section className="agent-context-references" aria-label="已加入 Agent 上下文的引用资料">
       <header><span><BookOpen size={13} />已引用资料</span><b>{pinnedContext.length} 条</b></header>
