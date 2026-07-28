@@ -8,7 +8,6 @@ import {
   Info,
   Layers3,
   Minus,
-  PanelRightClose,
   Search,
   Sparkles,
   ThumbsDown,
@@ -95,7 +94,6 @@ export function InspectorPanel({
   updateBlock,
   notify,
   openSettings,
-  close,
   openSourcePreview,
 }: {
   tab: InspectorTab;
@@ -106,7 +104,6 @@ export function InspectorPanel({
   updateBlock: BlockUpdater;
   notify: (message: string) => void;
   openSettings: () => void;
-  close: () => void;
   openSourcePreview: (source: SourceRecord) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
@@ -148,9 +145,13 @@ export function InspectorPanel({
     })),
     [contextSources, knowledgeChunks, sourceContents],
   );
+  const contextLabels = useMemo(
+    () => contextSources.map(source => source.heading ? `${source.title} / ${source.heading}` : source.title),
+    [contextSources],
+  );
 
   useEffect(() => {
-    if (!desktop || (tab !== "context" && tab !== "commands")) return;
+    if (!desktop || !["ai", "context", "commands"].includes(tab)) return;
     const pending = contextSources.filter(source =>
       source.kind === "local"
       && !source.content
@@ -336,33 +337,37 @@ export function InspectorPanel({
         <button className={tab === "context" ? "active" : ""} onClick={() => setTab("context")}><Layers3 size={15} />上下文</button>
         <button className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}><BookOpen size={15} />知识库</button>
       </div>
-      <IconButton title="关闭侧栏" onClick={close}><PanelRightClose size={17} /></IconButton>
     </div>
-    {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
+    {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
     {tab === "commands" && <AgentConversationPanel project={project} block={block} sourceContents={sourceContents} pinnedContext={resolvedAgentContext} updateBlock={updateBlock} notify={notify} />}
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}
     {tab === "sources" && <div className="inspector-content sources-panel knowledge-panel">
       {!desktop
         ? <div className="context-empty"><BookOpen size={24} /><span>知识库仅在桌面端可用</span></div>
         : <>
-          <div className="knowledge-search-intro"><div><Search size={17} /><b>知识检索</b></div><span>搜索结果可预览并加入当前章节上下文</span></div>
-          <div className="search-row">
-            <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === "Enter" && void runKnowledgeSearch()} placeholder="搜索标题、章节和正文" />
-            <button type="button" title="搜索知识库" onClick={() => void runKnowledgeSearch()}><Search size={16} /></button>
-          </div>
-          <div className="knowledge-quality-filter" role="group" aria-label="片段质量筛选">
-            <span>片段状态</span>
-            {(["good", "normal", "bad"] as KnowledgeChunkQuality[]).map(quality => <label key={quality} className={qualityFilters.has(quality) ? "active" : ""}>
-              <input type="checkbox" checked={qualityFilters.has(quality)} onChange={() => toggleQuality(quality)} />
-              {quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}
-            </label>)}
-          </div>
-          <div className="knowledge-field-filter" role="group" aria-label="知识搜索范围">
-            <span>搜索范围</span>
-            <div>{SEARCH_FIELDS.map(field => <label key={field.id} className={searchFields.has(field.id) ? "active" : ""}>
-              <input type="checkbox" checked={searchFields.has(field.id)} onChange={() => toggleSearchField(field.id)} />
-              {field.label}
-            </label>)}</div>
+          <div className="knowledge-search-tool">
+            <div className="knowledge-search-intro"><div><Search size={17} /><b>知识检索</b></div><span>查找可引用的方案依据</span></div>
+            <div className="knowledge-query-row">
+              <Search size={15} />
+              <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === "Enter" && void runKnowledgeSearch()} placeholder="搜索标题、章节和正文" />
+              <button type="button" title="搜索知识库" onClick={() => void runKnowledgeSearch()} disabled={searching}>{searching ? "检索中" : "检索"}</button>
+            </div>
+            <div className="knowledge-filter-row">
+              <span>范围</span>
+              <div className="knowledge-field-filter" role="group" aria-label="知识搜索范围">{SEARCH_FIELDS.map(field => <label key={field.id} className={searchFields.has(field.id) ? "active" : ""}>
+                <input type="checkbox" checked={searchFields.has(field.id)} onChange={() => toggleSearchField(field.id)} />
+                <Check size={13} aria-hidden="true" />
+                <span>{field.label}</span>
+              </label>)}</div>
+            </div>
+            <div className="knowledge-filter-row">
+              <span>质量</span>
+              <div className="knowledge-quality-filter" role="group" aria-label="片段质量筛选">{(["good", "normal", "bad"] as KnowledgeChunkQuality[]).map(quality => <label key={quality} className={qualityFilters.has(quality) ? "active" : ""}>
+                <input type="checkbox" checked={qualityFilters.has(quality)} onChange={() => toggleQuality(quality)} />
+                <Check size={13} aria-hidden="true" />
+                <span>{quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}</span>
+              </label>)}</div>
+            </div>
           </div>
           {searching && <div className="loading-line">正在检索知识切片…</div>}
           {!!results.length && <div className="source-list knowledge-results">

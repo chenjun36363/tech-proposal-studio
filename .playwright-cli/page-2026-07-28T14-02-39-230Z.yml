@@ -1,0 +1,233 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: TechProposal Studio
+    - generic [ref=e7]:
+      - textbox [ref=e8]: 未命名技术方案
+      - generic [ref=e9]: 未关联文件 · 自动缓存 2026/7/28
+    - generic [ref=e10]:
+      - button "知识管理" [disabled] [ref=e11] [cursor=pointer]
+      - button "联网搜索" [ref=e14] [cursor=pointer]
+      - button "PowerShell 仅在桌面端可用" [disabled] [ref=e20] [cursor=pointer]
+      - button "保存" [ref=e24] [cursor=pointer]
+      - button "导出" [ref=e30] [cursor=pointer]
+      - button "收起右侧面板" [ref=e36] [cursor=pointer]
+      - button "当前：构案；切换到浅色主题" [ref=e40] [cursor=pointer]
+      - button "设置" [active] [ref=e47] [cursor=pointer]
+      - button "文件操作" [ref=e52] [cursor=pointer]
+  - generic [ref=e57]:
+    - complementary [ref=e58]:
+      - generic [ref=e59]:
+        - generic [ref=e60]: 目录
+        - generic [ref=e61]:
+          - button "新建 Markdown 文件" [ref=e62] [cursor=pointer]
+          - button "打开工作区 Markdown" [ref=e66] [cursor=pointer]
+          - button "未关联磁盘文件" [ref=e69] [cursor=pointer]
+      - generic [ref=e75]:
+        - button "按章节" [ref=e76] [cursor=pointer]
+        - button "全文" [ref=e77] [cursor=pointer]
+      - generic [ref=e79]:
+        - generic [ref=e80]: 显示级别
+        - generic [ref=e81]:
+          - button "1级" [ref=e82] [cursor=pointer]
+          - button "2级" [ref=e83] [cursor=pointer]
+          - button "3级" [ref=e84] [cursor=pointer]
+          - button "4级" [ref=e85] [cursor=pointer]
+          - button "全部" [ref=e86] [cursor=pointer]
+      - navigation [ref=e87]:
+        - button "H1 未命名技术方案" [ref=e88] [cursor=pointer]:
+          - generic [ref=e92]: H1
+          - generic [ref=e93]: 未命名技术方案
+        - button "H2 背景与目标" [ref=e94] [cursor=pointer]:
+          - generic [ref=e95]: H2
+          - generic [ref=e96]: 背景与目标
+        - button "H2 范围与约束" [ref=e97] [cursor=pointer]:
+          - generic [ref=e98]: H2
+          - generic [ref=e99]: 范围与约束
+        - button "H2 总体架构" [ref=e100] [cursor=pointer]:
+          - generic [ref=e101]: H2
+          - generic [ref=e102]: 总体架构
+        - button "H2 详细设计" [ref=e103] [cursor=pointer]:
+          - generic [ref=e104]: H2
+          - generic [ref=e105]: 详细设计
+        - button "H2 接口与数据" [ref=e106] [cursor=pointer]:
+          - generic [ref=e107]: H2
+          - generic [ref=e108]: 接口与数据
+        - button "H2 安全设计" [ref=e109] [cursor=pointer]:
+          - generic [ref=e110]: H2
+          - generic [ref=e111]: 安全设计
+        - button "H2 部署与迁移" [ref=e112] [cursor=pointer]:
+          - generic [ref=e113]: H2
+          - generic [ref=e114]: 部署与迁移
+        - button "H2 风险与应对" [ref=e115] [cursor=pointer]:
+          - generic [ref=e116]: H2
+          - generic [ref=e117]: 风险与应对
+        - button "H2 测试与验收" [ref=e118] [cursor=pointer]:
+          - generic [ref=e119]: H2
+          - generic [ref=e120]: 测试与验收
+    - generic "拖动调整左侧面板宽度" [ref=e121]
+    - main [ref=e122]:
+      - generic [ref=e123]:
+        - generic [ref=e124]:
+          - generic [ref=e125]: H1
+          - textbox [ref=e126]: 未命名技术方案
+        - generic [ref=e127]:
+          - button "源码" [ref=e128] [cursor=pointer]
+          - button "分栏" [ref=e129] [cursor=pointer]
+          - button "预览" [ref=e130] [cursor=pointer]
+      - generic "选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）" [ref=e131]:
+        - generic [ref=e132]:
+          - generic [ref=e133]: 设置标题
+          - generic [ref=e134]:
+            - button "H1" [ref=e135] [cursor=pointer]
+            - button "H2" [ref=e136] [cursor=pointer]
+            - button "H3" [ref=e137] [cursor=pointer]
+            - button "H4" [ref=e138] [cursor=pointer]
+            - button "H5" [ref=e139] [cursor=pointer]
+            - button "H6" [ref=e140] [cursor=pointer]
+          - button "重编号" [ref=e141] [cursor=pointer]
+          - button "加粗 (Ctrl+B)" [ref=e143] [cursor=pointer]
+          - button "斜体 (Ctrl+I)" [ref=e146] [cursor=pointer]
+          - button "删除线" [ref=e149] [cursor=pointer]
+          - button "行内代码" [ref=e153] [cursor=pointer]
+          - button "标黄高亮" [ref=e158] [cursor=pointer]
+        - generic [ref=e162]:
+          - generic [ref=e163]:
+            - button "撤销 (Ctrl+Z)" [ref=e164] [cursor=pointer]
+            - button "重做 (Ctrl+Y / Ctrl+Shift+Z)" [ref=e168] [cursor=pointer]
+          - button "查找" [ref=e172] [cursor=pointer]
+          - button "替换" [ref=e176] [cursor=pointer]
+      - generic [ref=e185]:
+        - generic [ref=e187]:
+          - generic:
+            - generic: "# 未命名技术方案"
+            - generic: "## 背景与目标"
+            - generic: 在此编写本章内容…
+            - generic: "## 范围与约束"
+            - generic: 在此编写本章内容…
+            - generic: "## 总体架构"
+            - generic: 在此编写本章内容…
+            - generic: "## 详细设计"
+            - generic: 在此编写本章内容…
+            - generic: "## 接口与数据"
+            - generic: 在此编写本章内容…
+            - generic: "## 安全设计"
+            - generic: 在此编写本章内容…
+            - generic: "## 部署与迁移"
+            - generic: 在此编写本章内容…
+            - generic: "## 风险与应对"
+            - generic: 在此编写本章内容…
+            - generic: "## 测试与验收"
+            - generic: 在此编写本章内容…
+          - textbox "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片" [ref=e188]: "# 未命名技术方案 ## 背景与目标 在此编写本章内容… ## 范围与约束 在此编写本章内容… ## 总体架构 在此编写本章内容… ## 详细设计 在此编写本章内容… ## 接口与数据 在此编写本章内容… ## 安全设计 在此编写本章内容… ## 部署与迁移 在此编写本章内容… ## 风险与应对 在此编写本章内容… ## 测试与验收 在此编写本章内容…"
+        - generic [ref=e190]:
+          - heading "未命名技术方案" [level=1] [ref=e286]
+          - heading "背景与目标" [level=2] [ref=e287]
+          - paragraph [ref=e288]: 在此编写本章内容…
+          - heading "范围与约束" [level=2] [ref=e289]
+          - paragraph [ref=e290]: 在此编写本章内容…
+          - heading "总体架构" [level=2] [ref=e291]
+          - paragraph [ref=e292]: 在此编写本章内容…
+          - heading "详细设计" [level=2] [ref=e293]
+          - paragraph [ref=e294]: 在此编写本章内容…
+          - heading "接口与数据" [level=2] [ref=e295]
+          - paragraph [ref=e296]: 在此编写本章内容…
+          - heading "安全设计" [level=2] [ref=e297]
+          - paragraph [ref=e298]: 在此编写本章内容…
+          - heading "部署与迁移" [level=2] [ref=e299]
+          - paragraph [ref=e300]: 在此编写本章内容…
+          - heading "风险与应对" [level=2] [ref=e301]
+          - paragraph [ref=e302]: 在此编写本章内容…
+          - heading "测试与验收" [level=2] [ref=e303]
+          - paragraph [ref=e304]: 在此编写本章内容…
+    - generic "拖动调整右侧面板宽度" [ref=e210]
+    - complementary [ref=e211]:
+      - generic [ref=e212]:
+        - generic [ref=e213]:
+          - button "Agent" [ref=e214] [cursor=pointer]
+          - button "AI" [ref=e218] [cursor=pointer]
+          - button "上下文" [ref=e221] [cursor=pointer]
+          - button "知识库" [ref=e226] [cursor=pointer]
+        - button "关闭侧栏" [ref=e229] [cursor=pointer]
+      - generic [ref=e233]:
+        - generic [ref=e234]:
+          - combobox "Agent 会话" [ref=e235]:
+            - option "新会话" [selected]
+          - button "新建会话" [ref=e236] [cursor=pointer]
+          - button "删除当前会话" [ref=e239] [cursor=pointer]
+        - generic [ref=e243]:
+          - text: 模型
+          - combobox "模型" [ref=e244]:
+            - option "gpt-4.1-mini" [selected]
+        - region "已加入 Agent 上下文的引用资料" [ref=e245]:
+          - generic [ref=e246]:
+            - generic [ref=e247]: 已引用资料
+            - generic [ref=e250]: 0 条
+          - paragraph [ref=e251]: 尚未加入引用资料
+          - generic [ref=e252]:
+            - checkbox "仅使用已引用资料" [disabled] [ref=e253]
+            - generic [ref=e254]: 仅使用已引用资料
+        - generic [ref=e256]:
+          - generic [ref=e260]: 开始方案对话
+          - generic [ref=e261]: 可直接提问，也可先在资料页加入上下文
+        - generic [ref=e262]:
+          - generic "允许 Agent 检索和阅读工作区知识库" [ref=e263] [cursor=pointer]:
+            - checkbox "知识检索 已启用" [checked] [ref=e264]
+            - generic [ref=e269]: 知识检索
+            - emphasis [ref=e270]: 已启用
+          - generic "允许 Agent 在需要最新外部信息时请求联网搜索" [ref=e271] [cursor=pointer]:
+            - checkbox "联网搜索 已停用" [ref=e272]
+            - generic [ref=e278]: 联网搜索
+            - emphasis [ref=e279]: 已停用
+        - generic [ref=e280]:
+          - textbox "输入消息，Enter 发送，Shift+Enter 换行" [ref=e281]
+          - button "发送" [disabled] [ref=e282] [cursor=pointer]
+  - generic [ref=e306]:
+    - generic [ref=e307]:
+      - generic [ref=e308]: 设置
+      - button "关闭" [ref=e313] [cursor=pointer]
+    - generic [ref=e317]:
+      - complementary "设置分类" [ref=e318]:
+        - generic [ref=e319]: 常规
+        - button "模型服务" [ref=e320] [cursor=pointer]
+        - button "联网搜索" [ref=e328] [cursor=pointer]
+        - button "Agent" [ref=e334] [cursor=pointer]
+        - button "记忆" [ref=e340] [cursor=pointer]
+        - button "文档解析" [ref=e353] [cursor=pointer]
+        - button "工作区" [ref=e359] [cursor=pointer]
+        - generic [ref=e364]:
+          - generic [ref=e365]: 本地优先
+          - generic [ref=e366]: 正文与索引默认保存在设备上
+      - generic [ref=e367]:
+        - generic [ref=e375]:
+          - generic [ref=e376]: 模型服务
+          - generic [ref=e377]: 配置模型接口、访问凭据和默认模型。
+        - generic [ref=e379]:
+          - generic [ref=e380]:
+            - generic [ref=e386]:
+              - generic [ref=e387]: 联网模型已启用
+              - generic [ref=e388]:
+                - text: 总开关只控制是否允许调用 AI；各供应商可单独启用。连接保存在工作区
+                - code [ref=e389]: .gouan/connections.json
+                - text: 。 已启用 1 个供应商。
+            - checkbox "启用联网模型" [checked] [ref=e390]
+          - generic [ref=e391]:
+            - text: 默认模型
+            - combobox "默认模型" [ref=e392]:
+              - option "gpt-4.1-mini" [selected]
+          - generic [ref=e393]:
+            - generic [ref=e394]: 供应商
+            - button "新增" [ref=e396] [cursor=pointer]
+          - generic [ref=e399]:
+            - generic [ref=e400]:
+              - generic [ref=e401]: OpenAI Completions
+              - generic [ref=e402]: OpenAI Completions
+              - generic [ref=e403]: https://api.openai.com/v1
+              - emphasis [ref=e404]: 1 个可用模型
+            - generic [ref=e405]:
+              - generic "禁用此供应商" [ref=e406]:
+                - checkbox [checked] [ref=e407]
+              - button "编辑" [ref=e408] [cursor=pointer]
+              - button "删除" [disabled] [ref=e412]
+    - generic [ref=e416]:
+      - button "取消" [ref=e417] [cursor=pointer]
+      - button "保存设置" [ref=e418] [cursor=pointer]

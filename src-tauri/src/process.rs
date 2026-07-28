@@ -267,9 +267,18 @@ pub(crate) fn resolve_shell() -> Result<(PathBuf, Vec<String>), String> {
 }
 
 #[tauri::command]
-pub(crate) fn open_workspace_powershell(cwd: String) -> Result<(), String> {
+pub(crate) fn open_workspace_powershell(cwd: String, program: Option<String>) -> Result<(), String> {
     let workdir = resolve_workdir(&cwd)?;
-    let (shell, args) = resolve_shell()?;
+    let (shell, mut args) = resolve_shell()?;
+
+    if let Some(program) = program {
+        if !["claude", "codex", "opencode", "codebuddy"].contains(&program.as_str()) {
+            return Err("仅允许启动已配置的 Agent CLI".into());
+        }
+        let executable = resolve_executable(&program)?;
+        let escaped = executable.to_string_lossy().replace('\'', "''");
+        args.extend(["-NoExit".into(), "-Command".into(), format!("& '{escaped}'")]);
+    }
 
     #[cfg(windows)]
     {

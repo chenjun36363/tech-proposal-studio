@@ -19,6 +19,8 @@ describe("AgentConversationTimeline", () => {
     expect(html).toContain("你");
     expect(html).toContain('aria-label="复制消息"');
     expect(html.match(/aria-label="复制消息"/g)).toHaveLength(1);
+    expect(html).toMatch(/agent-user-label[^>]*>[\s\S]*agent-message-copy/);
+    expect(html).not.toMatch(/agent-message-body[^>]*>[\s\S]*agent-message-copy/);
     expect(html).toContain("已经找到部署约束");
     expect(html.indexOf("查一下部署约束")).toBeLessThan(html.indexOf("检索知识库"));
     expect(html.indexOf("检索知识库")).toBeLessThan(html.indexOf("已经找到部署约束"));
@@ -38,7 +40,7 @@ describe("AgentConversationTimeline", () => {
     expect(html).toContain("<table>");
   });
 
-  it("renders write_todo arguments as a status plan instead of JSON", () => {
+  it("renders write_todo as a compact, collapsed execution step", () => {
     const messages: AgentMessage[] = [
       { role: "assistant", content: null, tool_calls: [{ id: "plan-1", type: "function", function: { name: "write_todo", arguments: JSON.stringify({ todos: [{ content: "检查章节结构", status: "completed" }, { content: "补全实施方案", status: "in_progress" }, { content: "复核术语", status: "pending" }] }) } }] },
       { role: "tool", tool_call_id: "plan-1", content: "计划已更新，共 3 项。" },
@@ -46,14 +48,15 @@ describe("AgentConversationTimeline", () => {
 
     const html = renderToStaticMarkup(<AgentConversationTimeline messages={messages} events={[]} running={false} />);
     expect(html).toContain('class="agent-plan-detail"');
-    expect(html).toMatch(/<details[^>]*open=""[^>]*>[\s\S]*agent-plan-detail/);
+    expect(html).toMatch(/<details(?![^>]*open)[^>]*>[\s\S]*agent-plan-detail/);
+    expect(html).toContain("执行计划");
     expect(html).toContain("1/3 已完成");
     expect(html).toContain("检查章节结构");
     expect(html).toContain('class="in_progress"');
     expect(html).not.toContain('&quot;todos&quot;');
   });
 
-  it("marks the active plan item completed after a successful proposal submission", () => {
+  it("does not infer todo completion from a proposal submission", () => {
     const messages: AgentMessage[] = [
       { role: "assistant", content: null, tool_calls: [{ id: "plan-2", type: "function", function: { name: "write_todo", arguments: JSON.stringify({ todos: [{ content: "分析章节", status: "completed" }, { content: "撰写优化稿并提交", status: "in_progress" }] }) } }] },
       { role: "tool", tool_call_id: "plan-2", content: "计划已更新，共 2 项。" },
@@ -62,9 +65,8 @@ describe("AgentConversationTimeline", () => {
     ];
 
     const html = renderToStaticMarkup(<AgentConversationTimeline messages={messages} events={[]} running={false} />);
-    expect(html).toContain("2/2 已完成");
-    expect(html).not.toMatch(/<details[^>]*open=""[^>]*>[\s\S]*agent-plan-detail/);
-    expect(html).not.toContain('class="in_progress"');
+    expect(html).toContain("1/2 已完成");
+    expect(html).toContain('class="in_progress"');
   });
 
   it("renders persisted search data as result cards", () => {

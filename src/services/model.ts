@@ -56,20 +56,31 @@ async function browserFetchJson(request: WireHttpRequest, timeoutMs: number, lab
 }
 
 async function desktopProxyJson(request: WireHttpRequest, config: ResolvedModelConfig, signal?: AbortSignal): Promise<unknown> {
-  // AbortSignal is not forwarded through invoke; timeout is enforced server-side.
-  void signal;
-  const result = await invoke<{ status: number; body: string }>("model_proxy_json", {
-    request: {
-      url: request.url,
-      method: request.method,
-      headers: request.headers,
-      body: request.body ?? null,
-      timeoutMs: config.timeoutMs,
-      apiKey: config.apiKey,
-      protocol: config.protocol,
-      providerId: config.providerId,
-    },
-  });
+  const runId = crypto.randomUUID();
+  if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
+  const onAbort = () => { void invoke("model_proxy_cancel", { runId }).catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  let result: { status: number; body: string };
+  try {
+    result = await invoke<{ status: number; body: string }>("model_proxy_json", {
+      runId,
+      request: {
+        url: request.url,
+        method: request.method,
+        headers: request.headers,
+        body: request.body ?? null,
+        timeoutMs: config.timeoutMs,
+        apiKey: config.apiKey,
+        protocol: config.protocol,
+        providerId: config.providerId,
+      },
+    });
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
   let payload: unknown = null;
   if (result.body?.trim()) {
     try { payload = JSON.parse(result.body); }
@@ -137,8 +148,9 @@ async function desktopStreamText(
   const unlisten = await listen<{ runId: string; content: string }>("session://ai", event => {
     if (event.payload.runId !== runId) return;
     const raw = event.payload.content;
+    if (/^(?:event|id|retry):/i.test(raw.trimStart()) || raw.trimStart().startsWith(":")) return;
     // Proxy emits raw SSE data payloads (without "data:" prefix) or plain text chunks.
-    const chunk = parseLine(raw) ?? (raw.startsWith("{") ? parseLine(raw) : raw);
+    const chunk = parseLine(raw) ?? (raw.trimStart().startsWith("{") ? null : raw);
     if (chunk) {
       after += chunk;
       onUpdate(chunk);

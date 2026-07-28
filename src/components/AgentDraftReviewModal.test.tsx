@@ -1,15 +1,32 @@
-import { renderToStaticMarkup } from "react-dom/server";
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { AgentDraftReviewModal } from "./AgentDraftReviewModal";
 
 describe("AgentDraftReviewModal", () => {
-  it("renders original and revised content with review actions", () => {
-    const html = renderToStaticMarkup(<AgentDraftReviewModal
-      draft={{ callId: "call-1", before: "优化前正文", after: "优化后正文", instruction: "补全技术约束" }}
-      close={vi.fn()}
-      reject={vi.fn()}
-      accept={vi.fn()}
-    />);
+  it("portals the review dialog outside its panel container", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    });
+    const panel = document.createElement("aside");
+    document.body.appendChild(panel);
+    const root = createRoot(panel);
+
+    act(() => root.render(<AgentDraftReviewModal
+        draft={{ callId: "call-1", before: "优化前正文", after: "优化后正文", instruction: "补全技术约束" }}
+        close={vi.fn()}
+        reject={vi.fn()}
+        accept={vi.fn()}
+      />));
+
+    const overlay = document.querySelector<HTMLElement>(".agent-review-overlay");
+    expect(overlay?.parentElement).toBe(document.body);
+    expect(panel.querySelector(".agent-review-overlay")).toBeNull();
+    const html = overlay?.innerHTML ?? "";
     expect(html).toContain("优化前正文");
     expect(html).toContain("优化后正文");
     expect(html).toContain("同步滚动");
@@ -17,6 +34,9 @@ describe("AgentDraftReviewModal", () => {
     expect(html).toContain("恢复均分");
     expect(html).toContain("拒绝修改");
     expect(html).toContain("接受并插入");
+
+    act(() => root.unmount());
+    panel.remove();
   });
 });
 

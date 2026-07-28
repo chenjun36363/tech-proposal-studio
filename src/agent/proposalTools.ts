@@ -28,11 +28,12 @@ export function createProposalToolRegistry(params: {
   project: Project;
   block: DocumentBlock;
   sourceContents: Record<string, string>;
-  onDraft: (draft: AgentDraft) => void;
+  reviewDraft: (draft: AgentDraft, signal: AbortSignal) => boolean | Promise<boolean>;
   onTodos: (todos: Array<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm: string }>) => void;
-  confirmWebSearch?: (query: string, provider: string) => boolean | Promise<boolean>;
 }) {
   const { project, block, sourceContents } = params;
+  void sourceContents;
+  let currentBlockContent = block.content;
   const searchableWebUrls = new Set<string>();
   const searchedQueries = new Set<string>();
   const readWebUrls = new Set<string>();
@@ -42,7 +43,7 @@ export function createProposalToolRegistry(params: {
   return registry
     .register({
       definition: { type: "function", function: { name: "read_current_section", description: "读取当前正在编辑的技术方案章节。", parameters: objectSchema({}) } },
-      execute: () => ({ content: block.content || "（当前章节为空）", data: { blockId: block.id }, isError: false }),
+      execute: () => ({ content: currentBlockContent || "（当前章节为空）", data: { blockId: block.id }, isError: false }),
     })
     .register({
       definition: { type: "function", function: { name: "get_proposal_outline", description: "读取整篇技术方案的 Markdown 标题目录。", parameters: objectSchema({}) } },
@@ -58,10 +59,6 @@ export function createProposalToolRegistry(params: {
         const normalizedQuery = query.toLocaleLowerCase();
         if (searchedQueries.has(normalizedQuery)) return { content: "该查询已执行过，请使用之前的搜索结果并继续完成任务。", data: { query, duplicate: true }, isError: true };
         if (webSearchCalls >= webSearchMaxCalls) return { content: `本次任务已达到 ${webSearchMaxCalls} 次联网搜索上限，请使用已有结果并继续完成任务。`, data: { query, limitReached: true }, isError: true };
-        const approved = params.confirmWebSearch
-          ? await params.confirmWebSearch(query, project.search.provider)
-          : true;
-        if (!approved) return { content: `用户拒绝发送联网搜索查询：${query}`, data: { query, approved: false }, isError: true };
         searchedQueries.add(normalizedQuery);
         webSearchCalls += 1;
         const results = await searchWeb(query, project.search);
@@ -152,12 +149,19 @@ export function createProposalToolRegistry(params: {
     })
     .register({
       definition: { type: "function", function: { name: "propose_section_update", description: "提交完整的当前章节 Markdown 修改稿，供用户查看差异并决定是否接受。不会直接写入文件。", parameters: objectSchema({ markdown: { type: "string", description: "可完整替换当前章节的 Markdown" }, instruction: { type: "string", description: "本次修改的简短说明" } }, ["markdown", "instruction"]) } },
-      execute: args => {
+      execute: async (args, signal) => {
         const after = text(args.markdown ?? args.content, "markdown");
         const instruction = typeof args.instruction === "string" && args.instruction.trim() ? args.instruction.trim() : "优化当前章节";
-        const draft: AgentDraft = { callId: crypto.randomUUID(), before: block.content, after, instruction };
-        params.onDraft(draft);
-        return { content: "修改稿已提交给用户审批。不要再次输出完整正文，请简要总结修改依据。", data: { instruction, beforeChars: block.content.length, afterChars: after.length }, isError: false };
+        const draft: AgentDraft = { callId: crypto.randomUUID(), before: currentBlockContent, after, instruction };
+        const approved = await params.reviewDraft(draft, signal);
+        if (approved) currentBlockContent = after;
+        return {
+          content: approved
+            ? "用户已接受修改稿。不要再次输出完整正文，请简要总结修改依据。"
+            : "用户已拒绝修改稿。请尊重该决定，必要时询问修改方向或结束任务。",
+          data: { instruction, beforeChars: draft.before.length, afterChars: after.length, approved },
+          isError: false,
+        };
       },
     });
 }

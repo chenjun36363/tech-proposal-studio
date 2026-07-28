@@ -68,7 +68,7 @@ export async function terminalClose(id: number): Promise<void> {
   if (isDesktop()) await invoke("terminal_close", { id });
 }
 
-export async function openWorkspacePowerShell(cwd: string): Promise<void> {
+export async function openWorkspacePowerShell(cwd: string, program?: string): Promise<void> {
   if (!isDesktop()) throw new Error("请在 Tauri 桌面端打开 PowerShell");
-  await invoke("open_workspace_powershell", { cwd });
+  await invoke("open_workspace_powershell", { cwd, program });
 }

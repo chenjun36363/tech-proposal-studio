@@ -11,7 +11,7 @@ Windows 优先的本地技术方案编写工具，中文品牌名“构案”。
 - 内容块类型：正文、表格、代码、Mermaid、引用、决策、命令证据。
 - 浏览器模式自动保存至 localStorage，模型和搜索 API Key 不落盘。
 - OpenAI-compatible Chat Completions 调用及 AI 修改 diff 接受/拒绝流程。
-- SearXNG、Brave Search 接口及搜索词外发确认。
+- SearXNG、Brave Search 接口；Agent 联网搜索按会话开关授权，启用后直接执行查询（无需每次确认 query）。
 - Markdown 资料导入、引用上下文选择和 Markdown 导出。
 - 独立 DOCX 生成模块及有效 ZIP/DOCX 结构测试；工具栏尚未接通 Word 导出。
 - Tauri Rust 后端源码：SQLite FTS5、系统凭据、模型与搜索代理、Markdown 落盘、受控 CLI、输出脱敏。

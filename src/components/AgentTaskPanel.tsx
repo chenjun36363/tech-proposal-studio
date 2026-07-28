@@ -57,6 +57,7 @@ export function AgentTaskPanel({ project, block, sourceContents, updateBlock, no
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const draftDecisionRef = useRef<((approved: boolean) => void) | null>(null);
   const completedTodos = useMemo(() => todos.filter(item => item.status === "completed").length, [todos]);
 
   const run = async () => {
@@ -65,7 +66,18 @@ export function AgentTaskPanel({ project, block, sourceContents, updateBlock, no
     const controller = new AbortController();
     abortRef.current = controller;
     setEvents([]); setDraft(null); setTodos([]); setRunning(true);
-    const registry = createProposalToolRegistry({ project, block, sourceContents, onDraft: setDraft, onTodos: setTodos });
+    const registry = createProposalToolRegistry({
+      project,
+      block,
+      sourceContents,
+      reviewDraft: (nextDraft, signal) => new Promise<boolean>((resolve, reject) => {
+        const onAbort = () => { draftDecisionRef.current = null; setDraft(null); reject(new DOMException("Agent 任务已取消", "AbortError")); };
+        signal.addEventListener("abort", onAbort, { once: true });
+        draftDecisionRef.current = approved => { signal.removeEventListener("abort", onAbort); draftDecisionRef.current = null; resolve(approved); };
+        setDraft(nextDraft);
+      }),
+      onTodos: setTodos,
+    });
     registry.unregister("web_search").unregister("read_web_page");
     try {
       await runProposalAgent({ task: task.trim(), systemPrompt: proposalAgentSystemPrompt, config: project.model, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), firstRoundToolName: "write_todo" });
@@ -101,7 +113,7 @@ export function AgentTaskPanel({ project, block, sourceContents, updateBlock, no
       <header><div><FileSearch size={15} /><span>章节修改待确认</span></div><small>{draft.instruction}</small></header>
       <div className="agent-diff-stats"><span className="removed">原文 {draft.before.length.toLocaleString()} 字</span><span className="added">修改后 {draft.after.length.toLocaleString()} 字</span></div>
       <details><summary><Search size={12} />查看完整修改稿</summary><pre>{draft.after}</pre></details>
-      <div><button type="button" onClick={() => setDraft(null)}>拒绝</button><button type="button" className="primary" onClick={() => { updateBlock(current => ({ ...current, content: draft.after })); setDraft(null); notify("Agent 修改已应用到当前章节"); }}><Check size={13} />接受修改</button></div>
+      <div><button type="button" onClick={() => { setDraft(null); draftDecisionRef.current?.(false); }}>拒绝</button><button type="button" className="primary" onClick={() => { updateBlock(current => ({ ...current, content: draft.after })); setDraft(null); draftDecisionRef.current?.(true); notify("Agent 修改已应用到当前章节"); }}><Check size={13} />接受修改</button></div>
     </section>}
   </div>;
 }

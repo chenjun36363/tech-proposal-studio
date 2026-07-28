@@ -113,7 +113,7 @@ Rust keyring (`store_secret` / `load_secret`): service `com.techproposal.studio`
 ### AI / search contracts
 
 - AI improves **one content block** with optional selected source excerpts; returns `AiDraft { blockId, before, after, instruction }` for accept/reject diff UI. System prompt asks for body-only output (no fences/explanations).
-- Local 资料筛选 is keyword-only (title/excerpt/path); no vector search. Optional web search still requires user confirm of the exact query before send. Local sources support in-panel Markdown preview via `read_text_file`.
+- Local 资料筛选 is keyword-only (title/excerpt/path); no vector search. Agent web search is **off by default per conversation**; after the user enables the session toggle, `web_search` runs the query directly (no per-query confirm). Manual toolbar search still uses `WebSearchModal` (user types and sends the query). Local sources support in-panel Markdown preview via `read_text_file`.
 
 ### Export
 
@@ -133,5 +133,5 @@ Vitest + jsdom for storage tests (`// @vitest-environment jsdom` in file). Cover
 
 - Body and indexes stay on-device by default; AI only receives the current block plus explicitly attached sources.
 - API keys must not land in project localStorage cache; connection secrets may live under workspace `.gouan/connections.json`.
-- Search outbound query must be shown before execution.
+- Agent web search is disabled by default per conversation and may run directly after the user enables it.
 - Known gaps: section delete/reorder, custom templates.

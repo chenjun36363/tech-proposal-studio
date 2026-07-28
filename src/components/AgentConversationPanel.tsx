@@ -3,7 +3,7 @@ import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageS
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
 import { compactAgentConversation, createAgentConversation, deleteAgentConversation, listAgentConversations, saveAgentConversation, type AgentConversation } from "../agent/conversationStore";
 import { createProposalToolRegistry, proposalAgentSystemPrompt } from "../agent/proposalTools";
-import type { AgentDraft, AgentEvent, AgentMessage } from "../agent/protocol";
+import type { AgentDraft, AgentEvent, AgentRunStatus, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings } from "../agent/settings";
 import { listProjectMemories } from "../agent/memoryService";
@@ -12,8 +12,10 @@ import { resolveActiveModelConfig } from "../services/llm/resolve";
 import { ModelSelect } from "./ModelSelect";
 import { AgentConversationTimeline } from "./AgentConversationTimeline";
 import { AgentDraftReviewModal } from "./AgentDraftReviewModal";
+import { latestTodosFromMessages } from "../agent/todos";
+import { AgentTodoPlan } from "./AgentTodoPlan";
 
-type TodoItem = { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string };
+type DraftDecision = { resolve: (approved: boolean) => void; cleanup: () => void };
 
 function conversationTitle(task: string) {
   return task.replace(/\s+/g, " ").trim().slice(0, 24) || "新会话";
@@ -32,13 +34,16 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
   const [input, setInput] = useState("");
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [draft, setDraft] = useState<AgentDraft | null>(null);
-  const [draftRejected, setDraftRejected] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [runStatus, setRunStatus] = useState<AgentRunStatus>("idle");
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [todosCollapsed, setTodosCollapsed] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
   const abortRef = useRef<AbortController | null>(null);
+  const draftDecisionRef = useRef<DraftDecision | null>(null);
   const agentSettings = normalizeAgentSettings(project.agent);
   const aiEnabled = project.model?.enabled !== false;
+  const running = runStatus === "running" || runStatus === "waiting_approval";
 
   useEffect(() => {
     const loaded = listAgentConversations(project.id);
@@ -48,11 +53,18 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
   }, [project.id, agentSettings.defaultPinnedContextOnly]);
 
   useEffect(() => { if (!draft) setReviewOpen(false); }, [draft]);
+  useEffect(() => () => abortRef.current?.abort(), []);
   const active = useMemo(() => conversations.find(item => item.id === activeId) ?? conversations[0], [activeId, conversations]);
   const messages = active?.messages ?? [];
   const pinnedContextOnly = Boolean(active?.pinnedContextOnly && pinnedContext.length > 0);
   const webSearchEnabled = active?.webSearchEnabled === true;
   const knowledgeSearchEnabled = active?.knowledgeSearchEnabled !== false;
+
+  useEffect(() => {
+    const restored = latestTodosFromMessages(active?.messages ?? []);
+    setTodos(restored);
+    setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
+  }, [activeId, project.id]);
 
   const commitConversation = (conversation: AgentConversation) => {
     const saved = saveAgentConversation(compactAgentConversation(conversation, agentSettings.recentMessages));
@@ -66,7 +78,8 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     setActiveId(created.id);
     setEvents([]);
     setDraft(null);
-    setDraftRejected(false);
+    setTodos([]);
+    setTodosCollapsed(false);
   };
 
   const removeConversation = () => {
@@ -78,7 +91,9 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     setActiveId(next.id);
     setEvents([]);
     setDraft(null);
-    setDraftRejected(false);
+    const restored = latestTodosFromMessages(next.messages);
+    setTodos(restored);
+    setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
   };
   const setPinnedContextOnly = (value: boolean) => {
     if (!active) return;
@@ -96,15 +111,36 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     abortRef.current?.abort();
   };
 
+  const settleDraft = (approved: boolean) => {
+    const decision = draftDecisionRef.current;
+    if (!decision) return;
+    decision.cleanup();
+    draftDecisionRef.current = null;
+    setRunStatus("running");
+    decision.resolve(approved);
+  };
+  const reviewDraft = (nextDraft: AgentDraft, signal: AbortSignal) => new Promise<boolean>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      if (draftDecisionRef.current?.resolve === resolve) draftDecisionRef.current = null;
+      setDraft(null);
+      setReviewOpen(false);
+      reject(new DOMException("Agent 任务已取消", "AbortError"));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    draftDecisionRef.current = { resolve, cleanup };
+    signal.addEventListener("abort", onAbort, { once: true });
+    setDraft(nextDraft);
+    setRunStatus("waiting_approval");
+  });
 
-  const rejectDraft = () => { setReviewOpen(false); setDraftRejected(true); };
-  const reopenDraft = () => { setDraftRejected(false); setReviewOpen(true); };
+  const rejectDraft = () => { setReviewOpen(false); setDraft(null); settleDraft(false); };
   const acceptDraft = () => {
     if (!draft) return;
     updateBlock(current => ({ ...current, content: draft.after }));
     setReviewOpen(false);
     setDraft(null);
-    setDraftRejected(false);
+    settleDraft(true);
     notify("Agent 修改已应用到当前章节");
   };
 
@@ -126,14 +162,15 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     };
     const controller = new AbortController();
     abortRef.current = controller;
-    setRunning(true);
+    setRunStatus("running");
     setEvents([]);
+    setTodos([]);
+    setTodosCollapsed(false);
     setDraft(null);
-    setDraftRejected(false);
     setInput("");
     commitConversation(pendingConversation);
     try {
-    const registry = createProposalToolRegistry({ project, block, sourceContents, onDraft: nextDraft => { setDraft(nextDraft); setDraftRejected(false); }, onTodos: (_todos: TodoItem[]) => undefined });
+    const registry = createProposalToolRegistry({ project, block, sourceContents, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
     if (pinnedContextOnly || !agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
     if (!agentSettings.memoryEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
@@ -155,21 +192,24 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
       memories,
       memoryIndexLimit: agentSettings.memoryIndexLimit,
     });
-      const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined });
+      const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
       const runtimeMessages = result.messages.slice(1);
       setEvents([]);
       commitConversation({ ...pendingConversation, messages: runtimeMessages });
+      setRunStatus(result.status);
+      setTodosCollapsed(result.status === "completed");
+      if (result.status === "round_limit_reached") notify(`Agent 已达到 ${agentSettings.maxRounds} 轮执行上限`);
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) notify(error instanceof Error ? error.message : "Agent 执行失败");
+      if (error instanceof DOMException && error.name === "AbortError") setRunStatus("cancelled");
+      else { setRunStatus("failed"); notify(error instanceof Error ? error.message : "Agent 执行失败"); }
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
-      setRunning(false);
     }
   };
 
   return <div className="inspector-content agent-chat-panel">
     <header className="agent-chat-head">
-      <select value={active?.id ?? ""} onChange={event => { setActiveId(event.target.value); setEvents([]); setDraft(null); setDraftRejected(false); }} disabled={running} aria-label="Agent 会话">
+      <select value={active?.id ?? ""} onChange={event => { const next = conversations.find(item => item.id === event.target.value); setActiveId(event.target.value); setEvents([]); setDraft(null); const restored = latestTodosFromMessages(next?.messages ?? []); setTodos(restored); setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed")); }} disabled={running} aria-label="Agent 会话">
         {conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
       <button type="button" title="新建会话" onClick={createConversation} disabled={running}><MessageSquarePlus size={15} /></button>
@@ -182,28 +222,14 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     </label>
     {!aiEnabled && <small className="model-list-error">联网模型已关闭，请先在设置中启用。</small>}
 
-    <section className="agent-context-references" aria-label="已加入 Agent 上下文的引用资料">
-      <header><span><BookOpen size={13} />已引用资料</span><b>{pinnedContext.length} 条</b></header>
-      {pinnedContext.length > 0
-        ? <div>{pinnedContext.slice(0, 3).map(item => {
-          const label = item.source.heading ? `${item.source.title} / ${item.source.heading}` : item.source.title;
-          return <span key={item.source.id} title={label}>{label}</span>;
-        })}{pinnedContext.length > 3 && <em>另有 {pinnedContext.length - 3} 条</em>}</div>
-        : <p>尚未加入引用资料</p>}
-      <label className="agent-context-mode"><input type="checkbox" checked={pinnedContextOnly} disabled={!pinnedContext.length || running} onChange={event => setPinnedContextOnly(event.target.checked)} /><span>仅使用已引用资料</span></label>
-    </section>
+    <AgentTodoPlan todos={todos} collapsed={todosCollapsed} toggle={() => setTodosCollapsed(value => !value)} />
 
     <div className="agent-chat-history" aria-live="polite">
       {!messages.length && <div className="agent-chat-empty"><Bot size={24} /><b>开始方案对话</b><span>{pinnedContext.length ? `已附加 ${pinnedContext.length} 份上下文` : "可直接提问，也可先在资料页加入上下文"}</span></div>}
       <AgentConversationTimeline messages={messages} events={events} running={running} />
     </div>
 
-    {draft && draftRejected && <section className="agent-draft-rejected">
-      <div><FileSearch size={14} /><span><b>章节修改已暂不接受</b><small>{draft.instruction}</small></span></div>
-      <button type="button" onClick={reopenDraft}><Maximize2 size={12} />再次打开审核</button>
-    </section>}
-
-    {draft && !draftRejected && <section className="agent-draft">
+    {draft && <section className="agent-draft">
       <header><div><FileSearch size={15} /><span>章节修改待确认</span></div><small>{draft.instruction}</small></header>
       <div className="agent-diff-stats"><span className="removed">原文 {draft.before.length.toLocaleString()} 字</span><span className="added">修改后 {draft.after.length.toLocaleString()} 字</span></div>
       <div className="agent-draft-compare">
@@ -222,11 +248,15 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     <div className="agent-tool-toggles">
       <label className="agent-tool-toggle" title="允许 Agent 检索和阅读工作区知识库">
         <input type="checkbox" checked={knowledgeSearchEnabled} disabled={running || pinnedContextOnly || !agentSettings.knowledgeToolsEnabled} onChange={event => setKnowledgeSearchEnabled(event.target.checked)} />
-        <Database size={13} /><span>知识检索</span><em>{knowledgeSearchEnabled ? "已启用" : "已停用"}</em>
+        <Database size={13} /><span>知识检索</span>
       </label>
       <label className="agent-tool-toggle" title="允许 Agent 在需要最新外部信息时请求联网搜索">
         <input type="checkbox" checked={webSearchEnabled} disabled={running} onChange={event => setWebSearchEnabled(event.target.checked)} />
-        <Globe2 size={13} /><span>联网搜索</span><em>{webSearchEnabled ? "已启用" : "已停用"}</em>
+        <Globe2 size={13} /><span>联网搜索</span>
+      </label>
+      <label className="agent-context-toggle" title={`仅使用已引用资料，共 ${pinnedContext.length} 条`}>
+        <input type="checkbox" checked={pinnedContextOnly} disabled={!pinnedContext.length || running} onChange={event => setPinnedContextOnly(event.target.checked)} />
+        <BookOpen size={13} /><span>{`引用资料${pinnedContext.length}条`}</span>
       </label>
     </div>
     <div className="agent-chat-composer">

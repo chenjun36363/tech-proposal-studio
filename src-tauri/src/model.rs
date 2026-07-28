@@ -3,8 +3,9 @@ use futures_util::StreamExt;
 use reqwest::{RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, time::Duration};
-use tauri::{AppHandle, Emitter};
+use std::{collections::{HashMap, HashSet}, sync::Mutex, time::Duration};
+use tauri::{AppHandle, Emitter, State};
+use tokio::sync::oneshot;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,6 +204,44 @@ pub(crate) struct ModelProxyResponse {
     body: String,
 }
 
+#[derive(Default)]
+struct ModelProxyRequests {
+    active: HashMap<String, oneshot::Sender<()>>,
+    cancelled: HashSet<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct ModelProxyState(Mutex<ModelProxyRequests>);
+
+impl ModelProxyState {
+    fn register(&self, run_id: &str) -> Result<Option<oneshot::Receiver<()>>, String> {
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let mut requests = self.0.lock().map_err(|_| "模型请求状态不可用".to_string())?;
+        if requests.cancelled.remove(run_id) {
+            return Ok(None);
+        }
+        requests.active.insert(run_id.to_string(), cancel_tx);
+        Ok(Some(cancel_rx))
+    }
+
+    fn cancel(&self, run_id: String) -> Result<(), String> {
+        let mut requests = self.0.lock().map_err(|_| "模型请求状态不可用".to_string())?;
+        if let Some(cancel) = requests.active.remove(&run_id) {
+            let _ = cancel.send(());
+        } else {
+            requests.cancelled.insert(run_id);
+        }
+        Ok(())
+    }
+
+    fn finish(&self, run_id: &str) {
+        if let Ok(mut requests) = self.0.lock() {
+            requests.active.remove(run_id);
+            requests.cancelled.remove(run_id);
+        }
+    }
+}
+
 fn header_has(headers: &HashMap<String, String>, name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     headers.keys().any(|key| key.to_ascii_lowercase() == lower)
@@ -285,11 +324,26 @@ fn build_proxy_request(request: &ModelProxyRequest) -> Result<reqwest::RequestBu
 }
 
 #[tauri::command]
-pub(crate) async fn model_proxy_json(request: ModelProxyRequest) -> Result<ModelProxyResponse, String> {
-    let response = build_proxy_request(&request)?.send().await.map_err(|error| error.to_string())?;
-    let status = response.status().as_u16();
-    let body = response.text().await.map_err(|error| error.to_string())?;
-    Ok(ModelProxyResponse { status, body })
+pub(crate) async fn model_proxy_json(run_id: String, request: ModelProxyRequest, state: State<'_, ModelProxyState>) -> Result<ModelProxyResponse, String> {
+    let Some(cancel_rx) = state.register(&run_id)? else { return Err("模型请求已取消".into()); };
+
+    let request_future = async {
+        let response = build_proxy_request(&request)?.send().await.map_err(|error| error.to_string())?;
+        let status = response.status().as_u16();
+        let body = response.text().await.map_err(|error| error.to_string())?;
+        Ok(ModelProxyResponse { status, body })
+    };
+    let result = tokio::select! {
+        response = request_future => response,
+        _ = cancel_rx => Err("模型请求已取消".into()),
+    };
+    state.finish(&run_id);
+    result
+}
+
+#[tauri::command]
+pub(crate) fn model_proxy_cancel(run_id: String, state: State<'_, ModelProxyState>) -> Result<(), String> {
+    state.cancel(run_id)
 }
 
 #[tauri::command]
@@ -349,5 +403,17 @@ mod tests {
     fn model_endpoint_accepts_existing_models_suffix() {
         assert_eq!(model_list_endpoint("http://localhost:11434/v1/models"), "http://localhost:11434/v1/models");
         assert_eq!(model_list_endpoint("http://localhost:11434/v1/"), "http://localhost:11434/v1/models");
+    }
+
+    #[test]
+    fn model_proxy_cancellation_handles_both_registration_orders() {
+        let state = ModelProxyState::default();
+        state.cancel("early".into()).unwrap();
+        assert!(state.register("early").unwrap().is_none());
+
+        let mut active = state.register("active").unwrap().unwrap();
+        state.cancel("active".into()).unwrap();
+        assert!(active.try_recv().is_ok());
+        state.finish("active");
     }
 }

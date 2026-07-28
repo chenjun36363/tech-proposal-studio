@@ -184,7 +184,11 @@ export const openaiResponsesAdapter: ProtocolAdapter = {
     const tools = responsesTools(request.tools);
     if (tools?.length) {
       body.tools = tools;
-      body.tool_choice = request.tool_choice === "none" ? "none" : "auto";
+      body.tool_choice = request.tool_choice === "none"
+        ? "none"
+        : request.tool_choice && typeof request.tool_choice === "object"
+          ? { type: "function", name: request.tool_choice.function.name }
+          : "auto";
     }
     return {
       url: `${baseUrl(config)}/responses`,
@@ -216,9 +220,6 @@ export const openaiResponsesAdapter: ProtocolAdapter = {
     try {
       const json = JSON.parse(data) as Record<string, unknown>;
       if (json.type === "response.output_text.delta" && typeof json.delta === "string") return json.delta;
-      if (typeof json.delta === "string" && json.delta) return json.delta;
-      const nested = asRecord(json.delta);
-      if (nested && typeof nested.text === "string") return nested.text;
       return null;
     } catch {
       return null;

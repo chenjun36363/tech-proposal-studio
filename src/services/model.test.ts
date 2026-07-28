@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { improveBlockStream } from "./model";
-import type { DocumentBlock, OpenAICompatibleConfig } from "../types";
+import { agentCompletion, improveBlockStream } from "./model";
+import type { DocumentBlock, OpenAICompatibleConfig, ResolvedModelConfig } from "../types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -25,6 +25,13 @@ const block: DocumentBlock = {
   order: 0,
   status: "draft",
   sourceRefs: [],
+};
+
+const responsesConfig: ResolvedModelConfig = {
+  ...config,
+  providerId: "responses-provider",
+  providerName: "Responses",
+  protocol: "openai-responses",
 };
 
 describe("Tauri model adapter", () => {
@@ -61,5 +68,51 @@ describe("Tauri model adapter", () => {
         protocol: "openai-completions",
       }),
     }));
+  });
+
+  it("keeps Responses reasoning events out of single AI rewrite output", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    let eventCallback: ((event: { payload: { runId: string; content: string } }) => void) | null = null;
+    vi.mocked(listen).mockImplementation(async (_event, callback) => {
+      eventCallback = callback as typeof eventCallback;
+      return vi.fn();
+    });
+    vi.mocked(invoke).mockImplementation(async (cmd, args: any) => {
+      if (cmd === "model_proxy_stream" && eventCallback) {
+        eventCallback({ payload: { runId: args.runId, content: "event: response.reasoning_summary_text.delta" } });
+        eventCallback({ payload: { runId: args.runId, content: JSON.stringify({ type: "response.reasoning_summary_text.delta", delta: "内部推理" }) } });
+        eventCallback({ payload: { runId: args.runId, content: "event: response.output_text.delta" } });
+        eventCallback({ payload: { runId: args.runId, content: JSON.stringify({ type: "response.output_text.delta", delta: "修改后的正文" }) } });
+      }
+      return undefined;
+    });
+    const updates: string[] = [];
+
+    const result = await improveBlockStream(block, "优化", [], responsesConfig, chunk => updates.push(chunk));
+
+    expect(updates).toEqual(["修改后的正文"]);
+    expect(result.after).toBe("修改后的正文");
+  });
+
+  it("cancels an in-flight desktop JSON proxy request", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    let rejectProxy: ((reason?: unknown) => void) | null = null;
+    vi.mocked(invoke).mockImplementation((command) => {
+      if (command === "model_proxy_json") return new Promise((_resolve, reject) => { rejectProxy = reject; });
+      if (command === "model_proxy_cancel") {
+        rejectProxy?.(new Error("模型请求已取消"));
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+    const controller = new AbortController();
+    const request = agentCompletion({ model: "example-model", messages: [{ role: "user", content: "test" }] }, config, controller.signal);
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    const jsonCall = vi.mocked(invoke).mock.calls.find(([command]) => command === "model_proxy_json");
+    const cancelCall = vi.mocked(invoke).mock.calls.find(([command]) => command === "model_proxy_cancel");
+    expect(jsonCall?.[1]).toEqual(expect.objectContaining({ runId: expect.any(String) }));
+    expect(cancelCall?.[1]).toEqual(expect.objectContaining({ runId: (jsonCall?.[1] as { runId: string }).runId }));
   });
 });

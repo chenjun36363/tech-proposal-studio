@@ -1,4 +1,6 @@
-export type AgentRunStatus = "idle" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled";
+export type AgentRunStatus = "idle" | "running" | "waiting_approval" | "completed" | "round_limit_reached" | "failed" | "cancelled";
+
+export interface TodoItem { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string; }
 
 export interface AgentToolCall { id: string; name: string; arguments: Record<string, unknown>; }
 export interface AgentToolResult { content: string; data?: unknown; isError: boolean; }
@@ -12,8 +14,8 @@ export type AgentEvent =
   | { id: string; type: "tool_call"; at: number; round: number; call: AgentToolCall }
   | { id: string; type: "tool_started"; at: number; round: number; callId: string }
   | { id: string; type: "tool_result"; at: number; round: number; call: AgentToolCall; result: AgentToolResult }
-  | { id: string; type: "approval_requested"; at: number; round: number; draft: AgentDraft }
   | { id: string; type: "run_completed"; at: number; summary: string }
+  | { id: string; type: "round_limit_reached"; at: number; maxRounds: number }
   | { id: string; type: "run_failed"; at: number; error: string }
   | { id: string; type: "run_cancelled"; at: number };
 
@@ -29,6 +31,7 @@ export interface AgentMessage {
   tool_result_data?: unknown;
   tool_result_is_error?: boolean;
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string }; }>;
+  transient?: boolean;
 }
 
 export interface AgentModelResponse { choices?: Array<{ message?: AgentMessage; finish_reason?: string | null; }>; }

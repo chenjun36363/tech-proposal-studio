@@ -46,13 +46,16 @@ function providerToResolved(provider: LlmProvider, model = ""): ResolvedModelCon
   };
 }
 
-function HeaderRows({ headers, onChange }: {
+export function HeaderRows({ headers, onChange }: {
   headers: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
 }) {
-  const entries = Object.entries(headers);
-  const rows: Array<[string, string]> = entries.length ? entries : [["", ""]];
+  const [rows, setRows] = useState<Array<[string, string]>>(() => {
+    const entries = Object.entries(headers);
+    return entries.length ? entries : [["", ""]];
+  });
   const commit = (nextRows: Array<[string, string]>) => {
+    setRows(nextRows);
     const next: Record<string, string> = {};
     for (const [key, value] of nextRows) {
       if (key.trim()) next[key.trim()] = value;
@@ -73,7 +76,7 @@ function HeaderRows({ headers, onChange }: {
         <button type="button" onClick={() => commit(rows.filter((_, i) => i !== index) as Array<[string, string]>)}>删除</button>
       </div>
     ))}
-    <button type="button" className="linkish" onClick={() => commit([...rows, ["", ""]])}>添加请求头</button>
+    <button type="button" className="linkish" onClick={() => setRows(current => [...current, ["", ""]])}>添加请求头</button>
   </div>;
 }
 

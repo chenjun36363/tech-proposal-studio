@@ -26,6 +26,22 @@
 .agent-todos > div svg { margin-top:1px; flex:none; }
 .agent-todos > div.in_progress { color:hsl(var(--primary)); }
 .agent-todos > div.completed { color:hsl(var(--foreground)/.55); }
+.agent-live-todos { flex:none; overflow:hidden; border:1px solid hsl(var(--border)); border-radius:7px; background:hsl(var(--card)); }
+.agent-live-todos-head { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:34px; padding:0 9px; border:0; background:transparent; color:hsl(var(--foreground)); }
+.agent-live-todos-head > span { display:flex; align-items:center; gap:6px; min-width:0; }
+.agent-live-todos-head b { font-size:10px; }
+.agent-live-todos-head em { color:hsl(var(--muted-foreground)); font:normal 9px ui-monospace,Consolas,monospace; }
+.agent-live-todos-head svg { flex:none; color:hsl(var(--muted-foreground)); }
+.agent-live-todos-progress { height:2px; background:hsl(var(--muted)); }
+.agent-live-todos-progress i { display:block; height:100%; background:hsl(var(--success)); transition:width .2s ease; }
+.agent-live-todos-list { display:grid; border-top:1px solid hsl(var(--border)/.7); }
+.agent-live-todos-list > div { display:grid; grid-template-columns:16px minmax(0,1fr); align-items:start; gap:6px; padding:7px 9px; color:hsl(var(--muted-foreground)); font-size:10px; line-height:1.45; }
+.agent-live-todos-list > div + div { border-top:1px solid hsl(var(--border)/.55); }
+.agent-live-todos-list i { display:grid; place-items:center; width:15px; height:15px; color:hsl(var(--muted-foreground)); font-style:normal; }
+.agent-live-todos-list .in_progress { color:hsl(var(--primary)); }
+.agent-live-todos-list .completed { color:hsl(var(--foreground)/.52); }
+.agent-live-todos-list .completed span { text-decoration:line-through; }
+.agent-live-todos.collapsed .agent-live-todos-progress { border-radius:0 0 6px 6px; }
 .agent-timeline { display:flex; flex-direction:column; position:relative; }
 .agent-round { display:flex; align-items:center; gap:7px; margin:5px 0; }
 .agent-round::after { content:""; height:1px; flex:1; background:hsl(var(--border)); }

@@ -22,7 +22,7 @@ pnpm build:exe
 
 脚本会初始化 MSVC 编译环境，并只生成 NSIS 安装程序。构建产物位于 `src-tauri/target/release/bundle/nsis/*.exe`。
 
-正文和索引默认留在本机。方案正文优化只发送当前内容块和明确加入的引用；知识文档结构识别可能发送低置信度标题及相邻上下文，但知识入库和索引不会把正文切片发送给模型。联网搜索执行前显示实际查询词。项目缓存始终剥离 API Key；工作区连接配置可按用户设置将密钥保存在 `.gouan/connections.json`，桌面端同时镜像到 OS keyring。
+正文和索引默认留在本机。方案正文优化只发送当前内容块和明确加入的引用；知识文档结构识别可能发送低置信度标题及相邻上下文，但知识入库和索引不会把正文切片发送给模型。Agent 仅在用户为当前会话启用联网搜索后调用搜索服务。项目缓存始终剥离 API Key；工作区连接配置可按用户设置将密钥保存在 `.gouan/connections.json`，桌面端同时镜像到 OS keyring。
 
 ## 代码架构
 
@@ -82,7 +82,7 @@ tech-proposal-studio/
 - `useKnowledgeTransfer` 拥有方案文件转入知识库时的保存、移动、刷新和界面切换流程。
 - `useEnvironmentTools` 隐藏桌面 CLI 检测、Agent 安装、环境任务执行以及每项输出状态；环境弹窗只消费一个 controller 接口。
 - `useSourcePreview` 集中资料内容的加载、错误处理和预览开关，检查器与应用级预览不再各自维护一套状态。
-- `InspectorPanel` 拥有知识筛选、章节范围展开、质量标记和上下文选择；`WebSearchModal` 拥有查询确认、快捷链接和网页资料入库流程。
+- `InspectorPanel` 拥有知识筛选、章节范围展开、质量标记和上下文选择；`WebSearchModal` 拥有用户输入查询并执行、快捷链接和网页资料入库流程。Agent 会话侧联网搜索默认关闭，用户开启后直接调用搜索服务（不再对每次 query 二次确认）。
 - `features` 下的组件拥有对应交互状态和专属样式；基础 tokens、通用控件和整体布局保留在 `index.css`。
 - 浏览器与桌面是两个真实 Adapter；React 调用方不判断具体命令实现。
 - React 组件不直接依赖 Tauri `invoke`。模型与搜索通过各自 Module 内的 Browser/Tauri Adapter 接入；桌面文件能力通过 `workspace.ts` 或 `services/system.ts` 暴露。

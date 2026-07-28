@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Columns2, GripVertical, RotateCcw, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import type { AgentDraft } from "../agent/protocol";
 
 export function AgentDraftReviewModal({ draft, close, reject, accept }: {
@@ -61,7 +62,7 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
     requestAnimationFrame(() => { syncing.current = false; });
   };
 
-  return <div className="agent-review-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+  const modal = <div className="agent-review-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <section className="agent-review-modal" role="dialog" aria-modal="true" aria-labelledby="agent-review-title">
       <header className="agent-review-head">
         <div><span>AGENT REVIEW</span><h2 id="agent-review-title">章节优化审核</h2><p>{draft.instruction}</p></div>
@@ -104,5 +105,7 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
       </footer>
     </section>
   </div>;
+
+  return typeof document === "undefined" ? modal : createPortal(modal, document.body);
 }
 

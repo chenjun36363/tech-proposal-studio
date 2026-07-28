@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FolderOpen, Globe2, Highlighter, Italic, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, TerminalSquare, Undo2, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FolderOpen, Globe2, Highlighter, Italic, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Undo2, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { searchWeb } from "./services/search";
 import { isDesktop } from "./services/runtime";
-import { openWorkspacePowerShell, saveMarkdown } from "./services/system";
+import { saveMarkdown } from "./services/system";
 import { downloadDocx } from "./docxExport";
 import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./findReplace";
 import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./markdownEditor";
@@ -521,7 +521,7 @@ export default function App() {
 
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand-mark"><img src={appIcon} alt="" /><span>构案</span></div>
+      <div className="brand-mark"><img src={appIcon} alt="" /><span>TechProposal Studio</span></div>
       <div className="project-identity">
         <input value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }), false)} />
         <span>{project.filePath ? `磁盘 · ${project.filePath}` : `未关联文件 · 自动缓存 ${new Date(project.updatedAt).toLocaleDateString("zh-CN")}`}</span>
@@ -529,11 +529,6 @@ export default function App() {
       <div className="top-actions">
         <button className="text-button" disabled={!desktop} title={desktop ? "管理知识文档与索引" : "知识管理仅在桌面端可用"} onClick={() => setKnowledgeManagerOpen(true)}><BookOpen size={16} />知识管理</button>
         <button className="text-button" title="联网搜索" onClick={() => setWebSearchOpen(true)}><Globe2 size={16} />联网搜索</button>
-        <IconButton
-          title={!desktop ? "PowerShell 仅在桌面端可用" : !workspace?.root ? "请先配置工作区" : "在工作区打开 PowerShell"}
-          disabled={!desktop || !workspace?.root}
-          onClick={() => workspace?.root && void openWorkspacePowerShell(workspace.root).then(() => notify("已在工作区打开 PowerShell")).catch((error: unknown) => notify(error instanceof Error ? error.message : String(error)))}
-        ><TerminalSquare size={18} /></IconButton>
         <button className="text-button" onClick={() => void saveToWorkspace()}><Save size={16} />保存</button>
         <div className="export-menu" ref={exportMenuRef}>
           <button className="text-button" disabled={exporting} onClick={() => setExportMenu(v => !v)}>
@@ -786,7 +781,6 @@ export default function App() {
           updateBlock={updateActiveBlock}
           notify={notify}
           openSettings={() => setSettingsOpen(true)}
-          close={() => setRightOpen(false)}
           openSourcePreview={sourcePreview.open}
         />
       </> : (
@@ -931,7 +925,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
       <div className="settings-section-scroll">
       {section === "model" && <ModelSettingsSection draft={draft} setDraft={setDraft} />}
       {section === "search" && <div className="settings-section-content">
-      <div className="notice search-settings-notice"><Search size={18} /><div><b>联网搜索按需调用</b><span>执行搜索前仍会向你展示确切查询内容。连接配置保存在工作区 <code>.gouan/connections.json</code>。</span></div></div>
+      <div className="notice search-settings-notice"><Search size={18} /><div><b>联网搜索按需调用</b><span>Agent 仅在当前会话启用联网搜索后调用服务。连接配置保存在工作区 <code>.gouan/connections.json</code>。</span></div></div>
       <div className="form-grid">
         <label>搜索服务<select value={draft.search.provider} onChange={e => setDraft({ ...draft, search: { ...draft.search, provider: e.target.value as any } })}><option value="searxng">SearXNG</option><option value="brave">Brave Search</option></select></label>
         <label>搜索地址<input value={draft.search.endpoint} onChange={e => setDraft({ ...draft, search: { ...draft.search, endpoint: e.target.value } })} /></label>
@@ -962,6 +956,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
         <p className="muted">控制多轮执行、会话记忆、知识检索与引用方式。章节修改仍需在审核区手动确认。</p>
         <div className="form-grid agent-runtime-grid">
           <label>上下文压缩阈值（tokens）<input type="number" min={8000} max={200000} step={1000} value={draft.agent.contextCompressionTokens} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, contextCompressionTokens: Number(e.target.value) || 48000 } })} /></label>
+          <label>Agent 最大执行轮次<input type="number" min={4} max={50} value={draft.agent.maxRounds} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, maxRounds: Number(e.target.value) || 20 } })} /></label>
           <label>单任务联网搜索次数<input type="number" min={1} max={10} value={draft.agent.webSearchMaxCalls} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, webSearchMaxCalls: Number(e.target.value) || 2 } })} /></label>
           <label>保留近期消息<input type="number" min={4} max={100} value={draft.agent.recentMessages} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, recentMessages: Number(e.target.value) || 20 } })} /></label>
           <label>记忆目录条数<input type="number" min={5} max={100} value={draft.agent.memoryIndexLimit} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, memoryIndexLimit: Number(e.target.value) || 20 } })} /></label>

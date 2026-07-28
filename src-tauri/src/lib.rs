@@ -25,7 +25,7 @@ use terminal::{terminal_close, terminal_open, terminal_resize, terminal_write, T
 
 
 pub(crate) use model::ModelConfig;
-use model::{agent_completion, generate_text, generate_text_stream, list_models, model_proxy_json, model_proxy_stream};
+use model::{agent_completion, generate_text, generate_text_stream, list_models, model_proxy_cancel, model_proxy_json, model_proxy_stream, ModelProxyState};
 pub(crate) use credentials::load_secret;
 use credentials::store_secret;
 use export::{save_binary_file, save_docx_export, save_markdown, sanitize_filename};
@@ -513,6 +513,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(TerminalState::default())
+        .manage(ModelProxyState::default())
         .setup(|app| {
             init_db(&app.handle()).map_err(std::io::Error::other)?;
             Ok(())
@@ -523,6 +524,7 @@ pub fn run() {
             generate_text_stream,
             agent_completion,
             model_proxy_json,
+            model_proxy_cancel,
             model_proxy_stream,
             store_secret,
             search_web,

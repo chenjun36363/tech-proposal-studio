@@ -45,6 +45,7 @@ const toolsRequest = (): CanonicalChatRequest => ({
   tool_choice: "auto",
   stream: false,
 });
+const forcedToolsRequest = (): CanonicalChatRequest => ({ ...toolsRequest(), tool_choice: { type: "function", function: { name: "write_todo" } } });
 
 describe("encode/parse model value", () => {
   it("round-trips providerId::model", () => {
@@ -122,6 +123,11 @@ describe("openai-completions adapter", () => {
     expect((wire.body as any).tools).toHaveLength(1);
   });
 
+  it("forces a named function", () => {
+    const body = protocolAdapter("openai-completions").buildChatRequest(config, forcedToolsRequest()).body as any;
+    expect(body.tool_choice).toEqual({ type: "function", function: { name: "write_todo" } });
+  });
+
   it("parses tool_calls response", () => {
     const parsed = adapter.parseChatResponse({
       choices: [{
@@ -152,6 +158,11 @@ describe("openai-responses adapter", () => {
     expect(Array.isArray((wire.body as any).input)).toBe(true);
   });
 
+  it("forces a named function", () => {
+    const body = adapter.buildChatRequest(config, forcedToolsRequest()).body as any;
+    expect(body.tool_choice).toEqual({ type: "function", name: "write_todo" });
+  });
+
   it("parses output_text and function_call", () => {
     const raw = {
       output: [
@@ -163,6 +174,17 @@ describe("openai-responses adapter", () => {
     expect(adapter.extractText(raw)).toBe("done");
     expect(parsed.choices?.[0]?.message?.content).toBe("done");
     expect(parsed.choices?.[0]?.message?.tool_calls?.[0]?.function.name).toBe("write_todo");
+  });
+
+  it("streams only output text and ignores reasoning deltas", () => {
+    expect(adapter.parseTextSseData(JSON.stringify({
+      type: "response.reasoning_summary_text.delta",
+      delta: "内部推理",
+    }))).toBeNull();
+    expect(adapter.parseTextSseData(JSON.stringify({
+      type: "response.output_text.delta",
+      delta: "修改后的正文",
+    }))).toBe("修改后的正文");
   });
 });
 
@@ -177,6 +199,11 @@ describe("anthropic-messages adapter", () => {
     expect(wire.headers["anthropic-version"]).toBe("2023-06-01");
     expect((wire.body as any).system).toBe("sys");
     expect((wire.body as any).tools[0].name).toBe("write_todo");
+  });
+
+  it("forces a named tool", () => {
+    const body = adapter.buildChatRequest(config, forcedToolsRequest()).body as any;
+    expect(body.tool_choice).toEqual({ type: "tool", name: "write_todo" });
   });
 
   it("maps tool_use blocks back to tool_calls", () => {
@@ -210,6 +237,11 @@ describe("google-generative-ai adapter", () => {
     expect(wire.url).toContain("/models/gemini-2.0-flash:generateContent");
     expect(wire.headers["x-goog-api-key"]).toBe("test-key");
     expect((wire.body as any).systemInstruction).toBeTruthy();
+  });
+
+  it("forces a named function", () => {
+    const body = adapter.buildChatRequest(config, forcedToolsRequest()).body as any;
+    expect(body.toolConfig.functionCallingConfig).toEqual({ mode: "ANY", allowedFunctionNames: ["write_todo"] });
   });
 
   it("builds stream URL with alt=sse", () => {

@@ -177,56 +177,37 @@ function ChangeDetail({ data, call }: { data: unknown; call: AgentToolCall }) {
 
 type PlanItem = { content: string; status: "pending" | "in_progress" | "completed"; activeForm?: string };
 
-function planItems(call: AgentToolCall, proposalSubmitted = false): PlanItem[] {
+function planItems(call: AgentToolCall): PlanItem[] {
   if (call.name !== "write_todo" || !Array.isArray(call.arguments.todos)) return [];
   const items = call.arguments.todos.filter((item): item is PlanItem => {
     if (!item || typeof item !== "object") return false;
     const todo = item as { content?: unknown; status?: unknown };
     return typeof todo.content === "string" && ["pending", "in_progress", "completed"].includes(String(todo.status));
   });
-  if (!proposalSubmitted) return items;
-  let reconciled = false;
-  return items.map(item => {
-    if (!reconciled && item.status === "in_progress") {
-      reconciled = true;
-      return { ...item, status: "completed" };
-    }
-    return item;
-  });
+  return items;
 }
 
 function PlanDetail({ items }: { items: PlanItem[] }) {
-  const completed = items.filter(item => item.status === "completed").length;
   return <section className="agent-plan-detail">
-    <header><span><ListChecks size={13} />执行计划</span><b>{completed}/{items.length} 已完成</b></header>
-    <div>
-      {items.map((item, index) => <div className={item.status} key={`${index}-${item.content}`}>
-        <i>{item.status === "completed" ? <Check size={11} /> : item.status === "in_progress" ? <LoaderCircle className="spinning" size={11} /> : <Circle size={10} />}</i>
-        <span>{item.status === "in_progress" && item.activeForm ? item.activeForm : item.content}</span>
-      </div>)}
-    </div>
+    {items.map((item, index) => <div className={item.status} key={`${index}-${item.content}`}>
+      <i>{item.status === "completed" ? <Check size={11} /> : item.status === "in_progress" ? <LoaderCircle className="spinning" size={11} /> : <Circle size={10} />}</i>
+      <span>{item.status === "in_progress" && item.activeForm ? item.activeForm : item.content}</span>
+    </div>)}
   </section>;
 }
 
-function ToolStep({ call, content, data, pending = false, isError = false, proposalSubmitted = false }: {
+function ToolStep({ call, content, data, pending = false, isError = false }: {
   call: AgentToolCall;
   content?: string;
   data?: unknown;
   pending?: boolean;
   isError?: boolean;
-  proposalSubmitted?: boolean;
 }) {
   const args = Object.keys(call.arguments).length ? JSON.stringify(call.arguments, null, 2) : "";
-  const todos = planItems(call, proposalSubmitted);
+  const todos = planItems(call);
   const isTodo = call.name === "write_todo";
-  const hasIncompleteTodo = todos.some(item => item.status !== "completed");
-  const shouldKeepTodoOpen = isTodo && (pending || isError || hasIncompleteTodo);
-  const shouldCloseCompletedTodo = isTodo && !pending && !isError && todos.length > 0 && !hasIncompleteTodo;
-  const [open, setOpen] = useState(shouldKeepTodoOpen);
-  useEffect(() => {
-    if (shouldKeepTodoOpen) setOpen(true);
-    else if (shouldCloseCompletedTodo) setOpen(false);
-  }, [shouldKeepTodoOpen, shouldCloseCompletedTodo]);
+  const completedTodos = todos.filter(item => item.status === "completed").length;
+  const [open, setOpen] = useState(false);
   const resultData = data ?? (content ? jsonValue(content) : undefined);
   const searchResult = SEARCH_TOOLS.has(call.name) && searchRows(resultData).length ? <SearchResultDetail data={resultData} /> : null;
   const memoryData = record(resultData);
@@ -237,7 +218,10 @@ function ToolStep({ call, content, data, pending = false, isError = false, propo
   return <details className={`agent-timeline-tool ${pending ? "pending" : isError ? "error" : "done"}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>
       <i>{pending ? <LoaderCircle className="spinning" size={12} /> : isError ? <X size={12} /> : <Check size={12} />}</i>
-      <div><b>{toolLabel(call.name)}</b><span>{pending ? "正在执行" : resultPreview(content ?? "")}</span></div>
+      <div>
+        <b>{isTodo ? <><ListChecks size={12} />执行计划</> : toolLabel(call.name)}</b>
+        <span>{isTodo && todos.length ? `${completedTodos}/${todos.length} 已完成` : pending ? "正在执行" : resultPreview(content ?? "")}</span>
+      </div>
       <ChevronRight size={12} />
     </summary>
     {!pending && <div className="agent-tool-detail">
@@ -261,20 +245,19 @@ function MessageBubble({ role, content, showLabel = true }: { role: "user" | "as
   };
 
   return <article className={`agent-chat-message ${role}`}>
-    {showLabel && (role === "user" ? <UserTurnLabel /> : <b>Agent</b>)}
+    {showLabel && (role === "user"
+      ? <UserTurnLabel action={<button type="button" className="agent-message-copy" aria-label={copied ? "已复制消息" : "复制消息"} title={copied ? "已复制" : "复制消息"} onClick={() => void copyContent()}>{copied ? <Check size={12} /> : <Copy size={12} />}</button>} />
+      : <b>Agent</b>)}
     <div className="agent-message-body">
       {role === "assistant"
         ? <AgentMarkdown content={content} />
         : <p>{content}</p>}
-      {role === "user" && <button type="button" className="agent-message-copy" aria-label={copied ? "已复制消息" : "复制消息"} title={copied ? "已复制" : "复制消息"} onClick={() => void copyContent()}>
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>}
     </div>
   </article>;
 }
 
-function UserTurnLabel() {
-  return <div className="agent-user-label"><b>你</b><span><UserRound size={12} /></span></div>;
+function UserTurnLabel({ action }: { action?: React.ReactNode }) {
+  return <div className="agent-user-label">{action}<b>你</b><span><UserRound size={12} /></span></div>;
 }
 
 function AgentTurnLabel() {
@@ -298,8 +281,7 @@ function PersistedTimeline({ messages }: { messages: AgentMessage[] }) {
     }
     if (message.role === "tool" && message.tool_call_id) {
       const call = calls.get(message.tool_call_id) ?? { id: message.tool_call_id, name: "tool", arguments: {} };
-      const proposalSubmitted = call.name === "write_todo" && messages.slice(index + 1).some(later => later.role === "tool" && !later.tool_result_is_error && later.tool_call_id && calls.get(later.tool_call_id)?.name === "propose_section_update");
-      return <div className="agent-timeline-entry" key={`tool-${message.tool_call_id}-${index}`}>{startsAgentTurn && <AgentTurnLabel />}<ToolStep call={call} content={message.content ?? ""} data={message.tool_result_data} isError={message.tool_result_is_error} proposalSubmitted={proposalSubmitted} /></div>;
+      return <div className="agent-timeline-entry" key={`tool-${message.tool_call_id}-${index}`}>{startsAgentTurn && <AgentTurnLabel />}<ToolStep call={call} content={message.content ?? ""} data={message.tool_result_data} isError={message.tool_result_is_error} /></div>;
     }
     if (startsAgentTurn && message.role === "assistant" && message.tool_calls?.length) return <AgentTurnLabel key={`agent-${index}`} />;
     return null;
@@ -309,13 +291,12 @@ function PersistedTimeline({ messages }: { messages: AgentMessage[] }) {
 function LiveTimeline({ events }: { events: AgentEvent[] }) {
   const completed = new Set(events.filter(event => event.type === "tool_result").map(event => event.type === "tool_result" ? event.call.id : ""));
   const visible = events.some(event => event.type === "text" || event.type === "tool_call" || event.type === "tool_result" || event.type === "context_compacted");
-  return <>{visible && <AgentTurnLabel />}{events.map((event, index) => {
+  return <>{visible && <AgentTurnLabel />}{events.map(event => {
     if (event.type === "context_compacted") return <div className="agent-context-compacted" key={event.id}>已自动压缩上下文：{event.beforeTokens.toLocaleString()} → {event.afterTokens.toLocaleString()} tokens</div>;
     if (event.type === "text") return <MessageBubble key={event.id} role="assistant" content={event.content} showLabel={false} />;
     if (event.type === "tool_call" && !completed.has(event.call.id)) return <ToolStep key={event.id} call={event.call} pending />;
     if (event.type === "tool_result") {
-      const proposalSubmitted = event.call.name === "write_todo" && events.slice(index + 1).some(later => later.type === "tool_result" && later.call.name === "propose_section_update" && !later.result.isError);
-      return <ToolStep key={event.id} call={event.call} content={event.result.content} data={event.result.data} isError={event.result.isError} proposalSubmitted={proposalSubmitted} />;
+      return <ToolStep key={event.id} call={event.call} content={event.result.content} data={event.result.data} isError={event.result.isError} />;
     }
     return null;
   })}</>;

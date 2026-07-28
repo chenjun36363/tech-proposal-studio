@@ -139,9 +139,13 @@ export const googleGenerativeAiAdapter: ProtocolAdapter = {
     const tools = geminiTools(request.tools);
     if (tools) {
       body.tools = tools;
+      const forcedTool = request.tool_choice && typeof request.tool_choice === "object"
+        ? request.tool_choice.function.name
+        : null;
       body.toolConfig = {
         functionCallingConfig: {
-          mode: request.tool_choice === "none" ? "NONE" : "AUTO",
+          mode: request.tool_choice === "none" ? "NONE" : forcedTool ? "ANY" : "AUTO",
+          ...(forcedTool ? { allowedFunctionNames: [forcedTool] } : {}),
         },
       };
     }

@@ -46,10 +46,32 @@ describe("runProposalAgent", () => {
 
     expect(agentCompletion).toHaveBeenCalledTimes(2);
     expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({
-      tool_choice: "auto",
+      tool_choice: { type: "function", function: { name: "write_todo" } },
       tools: [expect.objectContaining({ function: expect.objectContaining({ name: "write_todo" }) })],
     }));
     expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ tool_choice: "auto" }));
+  });
+
+  it("falls back to auto when a gateway rejects forced tool choice", async () => {
+    agentCompletion
+      .mockRejectedValueOnce(new Error("模型服务返回 400：Upstream request failed"))
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-fallback", type: "function", function: { name: "write_todo", arguments: '{"todos":[]}' } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      execute: () => ({ content: "计划已更新", isError: false }),
+    });
+
+    await runProposalAgent({ task: "完成任务", config, registry, signal: new AbortController().signal, onEvent: () => undefined, firstRoundToolName: "write_todo" });
+
+    expect(agentCompletion).toHaveBeenCalledTimes(3);
+    expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({
+      tool_choice: { type: "function", function: { name: "write_todo" } },
+    }));
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({
+      tool_choice: "auto",
+      tools: [expect.objectContaining({ function: expect.objectContaining({ name: "write_todo" }) })],
+    }));
   });
 
   it("retries planning when the model returns text before the required first tool", async () => {
@@ -168,5 +190,56 @@ describe("runProposalAgent", () => {
     expect(events.some(event => event.type === "tool_call")).toBe(false);
     expect(result.messages).not.toContainEqual(expect.objectContaining({ tool_calls: expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: "search_knowledge" }) })]) }));
     expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.stringContaining("search_knowledge") })]) }));
+    expect(result.messages).not.toContainEqual(expect.objectContaining({ role: "user", content: expect.stringContaining("search_knowledge") }));
+  });
+
+  it("stops at the configured round limit and preserves incomplete todos", async () => {
+    agentCompletion.mockResolvedValue({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: crypto.randomUUID(), type: "function", function: { name: "read", arguments: "{}" } }] } }] });
+    const execute = vi.fn(() => ({ content: "继续", isError: false }));
+    const registry = new AgentToolRegistry().register({ definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } }, execute });
+    const events: AgentEvent[] = [];
+
+    const result = await runProposalAgent({ task: "持续读取", config, registry, signal: new AbortController().signal, onEvent: event => events.push(event), maxRounds: 2 });
+
+    expect(result.status).toBe("round_limit_reached");
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toEqual(expect.objectContaining({ type: "round_limit_reached", maxRounds: 2 }));
+  });
+
+  it("returns completed messages when a run is cancelled", async () => {
+    const controller = new AbortController();
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "read-before-stop", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockImplementationOnce((_request, _config, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
+      }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } },
+      execute: () => ({ content: "停止前已读取的资料", isError: false }),
+    });
+    const events: AgentEvent[] = [];
+    const running = runProposalAgent({ task: "读取后继续分析", config, registry, signal: controller.signal, onEvent: event => events.push(event) });
+    await vi.waitFor(() => expect(agentCompletion).toHaveBeenCalledTimes(2));
+
+    controller.abort();
+    const result = await running;
+
+    expect(result.status).toBe("cancelled");
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "read-before-stop", content: "停止前已读取的资料" }));
+    expect(events.at(-1)).toEqual(expect.objectContaining({ type: "run_cancelled" }));
+  });
+
+  it("returns malformed JSON arguments as a tool error without executing the tool", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "bad-json", type: "function", function: { name: "read", arguments: "{bad" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已修正" } }] });
+    const execute = vi.fn(() => ({ content: "不应执行", isError: false }));
+    const registry = new AgentToolRegistry().register({ definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } }, execute });
+
+    const result = await runProposalAgent({ task: "读取", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_result_is_error: true, content: expect.stringContaining("有效 JSON") }));
   });
 });

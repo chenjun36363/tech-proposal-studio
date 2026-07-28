@@ -1,4 +1,5 @@
 import type { AgentMessage } from "./protocol";
+import { persistentAgentMessages, safeTurnSplitIndex, summarizeAgentMessage } from "./messageUtils";
 
 const KEY = "tech-proposal-studio.agent-conversations.v1";
 
@@ -38,7 +39,7 @@ export function createAgentConversation(projectId: string, pinnedContextOnly = f
 }
 
 export function saveAgentConversation(conversation: AgentConversation): AgentConversation {
-  const next = { ...conversation, updatedAt: Date.now() };
+  const next = { ...conversation, messages: persistentAgentMessages(conversation.messages), updatedAt: Date.now() };
   const all = readAll();
   const index = all.findIndex(item => item.id === next.id);
   if (index >= 0) all[index] = next;
@@ -51,16 +52,12 @@ export function deleteAgentConversation(conversationId: string) {
   writeAll(readAll().filter(item => item.id !== conversationId));
 }
 
-function messageText(message: AgentMessage): string {
-  const content = typeof message.content === "string" ? message.content.trim() : "";
-  return content ? `${message.role}: ${content}` : "";
-}
-
 export function compactAgentConversation(conversation: AgentConversation, recentMessages = 20): AgentConversation {
   const keep = Math.max(4, Math.round(recentMessages));
   if (conversation.messages.length <= keep) return conversation;
-  const splitAt = conversation.messages.length - keep;
-  const compacted = conversation.messages.slice(0, splitAt).map(messageText).filter(Boolean).join("\n");
+  const splitAt = safeTurnSplitIndex(conversation.messages, conversation.messages.length - keep);
+  if (splitAt <= 0) return conversation;
+  const compacted = conversation.messages.slice(0, splitAt).filter(message => !message.transient).map(summarizeAgentMessage).join("\n");
   const previous = conversation.summary ? `${conversation.summary}\n` : "";
   return {
     ...conversation,

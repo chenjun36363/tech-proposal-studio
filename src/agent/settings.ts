@@ -3,6 +3,7 @@ export type AgentCitationMode = "required" | "preferred" | "off";
 
 export interface AgentSettings {
   contextCompressionTokens: number;
+  maxRounds: number;
   webSearchMaxCalls: number;
   recentMessages: number;
   pinnedContextChars: number;
@@ -20,6 +21,7 @@ export interface AgentSettings {
 
 export const defaultAgentSettings: AgentSettings = {
   contextCompressionTokens: 48000,
+  maxRounds: 20,
   webSearchMaxCalls: 2,
   recentMessages: 20,
   pinnedContextChars: 24000,
@@ -42,6 +44,7 @@ export function normalizeAgentSettings(value: Partial<AgentSettings> | null | un
   const source = value ?? {};
   return {
     contextCompressionTokens: Math.round(numberInRange(source.contextCompressionTokens, defaultAgentSettings.contextCompressionTokens, 8000, 200000)),
+    maxRounds: Math.round(numberInRange(source.maxRounds, defaultAgentSettings.maxRounds, 4, 50)),
     webSearchMaxCalls: Math.round(numberInRange(source.webSearchMaxCalls, defaultAgentSettings.webSearchMaxCalls, 1, 10)),
     recentMessages: Math.round(numberInRange(source.recentMessages, defaultAgentSettings.recentMessages, 4, 100)),
     pinnedContextChars: Math.round(numberInRange(source.pinnedContextChars, defaultAgentSettings.pinnedContextChars, 2000, 100000)),
