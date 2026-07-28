@@ -339,7 +339,7 @@ export function InspectorPanel({
       </div>
     </div>
     {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
-    {tab === "commands" && <AgentConversationPanel project={project} block={block} sourceContents={sourceContents} pinnedContext={resolvedAgentContext} updateBlock={updateBlock} notify={notify} />}
+    {tab === "commands" && <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} updateBlock={updateBlock} notify={notify} />}
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}
     {tab === "sources" && <div className="inspector-content sources-panel knowledge-panel">
       {!desktop

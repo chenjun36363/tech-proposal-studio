@@ -1,6 +1,8 @@
 # TechProposal Studio（构案）
 
-本地优先的软件技术方案编写桌面工具。支持模板化章节、自由内容块、知识库引用、OpenAI-compatible AI 优化、SearXNG/Brave 搜索和受控 CLI 任务。
+本地优先的软件技术方案编写桌面工具。支持 Markdown 章节编辑、自定义模板、知识库引用、多提供商 AI、可审核的 Agent 章节改写、SearXNG/Brave 搜索和受控 CLI 任务。
+
+当前开发计划统一维护在 [TODO.md](./TODO.md)。
 
 ## 运行
 
@@ -22,7 +24,7 @@ pnpm build:exe
 
 脚本会初始化 MSVC 编译环境，并只生成 NSIS 安装程序。构建产物位于 `src-tauri/target/release/bundle/nsis/*.exe`。
 
-正文和索引默认留在本机。方案正文优化只发送当前内容块和明确加入的引用；知识文档结构识别可能发送低置信度标题及相邻上下文，但知识入库和索引不会把正文切片发送给模型。Agent 仅在用户为当前会话启用联网搜索后调用搜索服务。项目缓存始终剥离 API Key；工作区连接配置可按用户设置将密钥保存在 `.gouan/connections.json`，桌面端同时镜像到 OS keyring。
+正文和索引默认留在本机。方案正文优化只发送当前章节和明确加入的引用；知识文档结构识别可能发送低置信度标题及相邻上下文，但知识入库和索引不会把正文切片发送给模型。Agent 仅在用户为当前会话启用联网搜索后调用搜索服务。项目缓存始终剥离 API Key；工作区连接配置可按用户设置将密钥保存在 `.gouan/connections.json`，桌面端同时镜像到 OS keyring。
 
 ## 代码架构
 

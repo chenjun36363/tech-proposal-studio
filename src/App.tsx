@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FolderOpen, Globe2, Highlighter, Italic, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Undo2, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, Globe2, Highlighter, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Trash2, Undo2, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
@@ -14,6 +14,7 @@ import {
   alignHeadingsToRules,
   buildHeadingTree,
   defaultProposalMarkdown,
+  deleteSection,
   fileNameFromTitle,
   parseMarkdownHeadings,
   renumberHeadings,
@@ -22,6 +23,15 @@ import {
   stripHeadingPrefix,
   titleFromMarkdown,
 } from "./markdownDoc";
+import {
+  applyTemplate,
+  defaultTemplateMeta,
+  deleteTemplate,
+  extractTemplateSkeleton,
+  listTemplates,
+  saveTemplate,
+  type ProposalTemplate,
+} from "./templates";
 import {
   ensureWorkspace,
   getDefaultWorkspaceRoot,
@@ -39,6 +49,7 @@ import {
   withWorkspace,
   writeLibraryMarkdown,
   writeTextFile,
+  deleteFile,
 } from "./workspace";
 import { AgentConversationPanel } from "./components/AgentConversationPanel";
 import { normalizeAgentSettings } from "./agent/settings";
@@ -47,6 +58,7 @@ import { IconButton } from "./components/IconButton";
 import { InlineMarkdown } from "./components/InlineMarkdown";
 import { SourcePreviewModal } from "./components/SourcePreviewModal";
 import { MemorySettingsPanel } from "./components/MemorySettingsPanel";
+import { ConversationHistorySettings } from "./components/ConversationHistorySettings";
 import { ModelSettingsSection } from "./features/settings/ModelSettingsSection";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useProposalFileActions } from "./hooks/useProposalFileActions";
@@ -144,6 +156,9 @@ export default function App() {
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findIndex, setFindIndex] = useState(0);
   const [collapsedHeadings, setCollapsedHeadings] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [workspaceDocsCollapsed, setWorkspaceDocsCollapsed] = useState(false);
+  const confirmDeleteRef = useRef<number>(0);
   const sourcePreview = useSourcePreview();
   const rightDrag = useRef<{ startX: number; startW: number } | null>(null);
   const leftDrag = useRef<{ startX: number; startW: number } | null>(null);
@@ -266,18 +281,25 @@ export default function App() {
       const hasCh = node.children.length > 0;
       const collapsed = collapsedHeadings.has(node.heading.id);
       const item = (
-        <button
-          key={node.heading.id}
-          className={`toc-item level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""}`}
-          onClick={() => { setSelectedHeadingId(node.heading.id); setEditorMode("section"); }}
-          title={node.heading.title}
-        >
-          <span className="toc-chevron" onMouseDown={hasCh ? (e => { e.stopPropagation(); e.preventDefault(); }) : undefined} onClick={hasCh ? () => toggleCollapse(node.heading.id) : undefined}>
-            {hasCh ? (collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />) : null}
-          </span>
-          <span>H{node.heading.level}</span>
-          <InlineMarkdown className="toc-title" children={node.heading.title} />
-        </button>
+        <div key={node.heading.id} className={`toc-item-wrap level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""}`}>
+          <button
+            className="toc-item"
+            onClick={() => { setSelectedHeadingId(node.heading.id); setEditorMode("section"); }}
+            title={node.heading.title}
+          >
+            <span className="toc-chevron" onMouseDown={hasCh ? (e => { e.stopPropagation(); e.preventDefault(); }) : undefined} onClick={hasCh ? () => toggleCollapse(node.heading.id) : undefined}>
+              {hasCh ? (collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />) : null}
+            </span>
+            <span>H{node.heading.level}</span>
+            <InlineMarkdown className="toc-title" children={node.heading.title} />
+          </button>
+          {node.heading.level >= 2 && <button
+            type="button"
+            className="toc-delete-btn"
+            title={`删除「${node.heading.title}」`}
+            onClick={() => void deleteHeadingSection(node)}
+          ><Trash2 size={11} /></button>}
+        </div>
       );
       const children = collapsed ? [] : renderHeadingNodes(node.children);
       return [item, ...children];
@@ -314,6 +336,78 @@ export default function App() {
     }
     setMarkdown(next);
     notify(result.titleCreated ? "已生成全文标题并重新编号" : "已按固定样式重新编号全部标题");
+  };
+
+  /* ---------- Template ---------- */
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [templates, setTemplates] = useState<ProposalTemplate[]>([]);
+
+  const openTemplatePicker = async () => {
+    const list = await listTemplates(workspace?.root).catch(() => []);
+    setTemplates(list);
+    setTemplatePickerOpen(true);
+  };
+
+  const createFromTemplate = async (templateId: string) => {
+    setTemplatePickerOpen(false);
+    if (!desktop) return notify("新建文件仅在桌面端可用");
+    if (!workspace?.root) return notify("请在设置中配置工作目录");
+    const name = window.prompt("请输入文件名：")?.trim();
+    if (!name) return;
+    try {
+      const markdown = templateId === "__default__"
+        ? defaultProposalMarkdown(name)
+        : await applyTemplate(templateId, name, workspace.root);
+      const fileName = fileNameFromTitle(name);
+      const separator = workspace.root.includes("\\") ? "\\" : "/";
+      const path = `${workspace.root.replace(/[\\/]+$/, "")}${separator}${fileName}`;
+      await writeTextFile(path, markdown);
+      await openMarkdownPath(path);
+      await refreshWorkspaceDocs();
+      notify(`已从模板创建：${fileName}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "创建失败");
+    }
+  };
+
+  const saveAsTemplate = async () => {
+    if (!desktop || !workspace?.root) return notify("另存为模板需要工作区");
+    const name = window.prompt("模板名称：", `${project.name} 章节结构`)?.trim();
+    if (!name) return;
+    try {
+      await saveTemplate(markdown, name, workspace.root);
+      notify(`已保存模板：${name}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "保存模板失败");
+    }
+  };
+
+  const deleteHeadingSection = async (headingNode: import("./markdownDoc").HeadingNode) => {
+    const h = headingNode.heading;
+    if (h.level <= 1) return notify("不能删除文档标题");
+    if (!window.confirm(`确定删除「${h.title}」及其全部内容？`)) return;
+    const next = deleteSection(markdown, h);
+    setMarkdown(next);
+    notify(`已删除章节：${h.title}`);
+  };
+
+  const deleteWorkspaceDoc = async (doc: WorkspaceMarkdownFile) => {
+    if (!desktop) return notify("删除文件仅在桌面端可用");
+    const isCurrent = project.filePath === doc.path;
+    try {
+      if (isCurrent) {
+        const blank = createProject();
+        blank.workspace = project.workspace;
+        setProject(blank);
+        resetHistory();
+      }
+      await deleteFile(doc.path);
+      setPendingDelete(null);
+      await refreshWorkspaceDocs();
+      notify(`已删除：${doc.title}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "删除失败");
+    }
   };
 
   const openFindBar = (withReplace = false) => {
@@ -556,7 +650,9 @@ export default function App() {
         <div className="file-menu" ref={fileMenuRef}>
           <IconButton title="文件操作" active={fileMenu} onClick={() => setFileMenu(value => !value)}><MoreHorizontal size={18} /></IconButton>
           {fileMenu && <div className="file-dropdown">
-            <button type="button" onClick={() => { setFileMenu(false); void createNewFile(); }}><FilePlus2 size={15} />新建</button>
+            <button type="button" onClick={() => { setFileMenu(false); void createNewFile(); }}><FilePlus2 size={15} />空白新建</button>
+            <button type="button" onClick={() => { setFileMenu(false); void openTemplatePicker(); }}><FilePlus2 size={15} />从模板新建</button>
+            <button type="button" onClick={() => { setFileMenu(false); void saveAsTemplate(); }} disabled={!desktop || !project.filePath}><FileText size={15} />另存为模板</button>
             <button type="button" onClick={() => { setFileMenu(false); void importFromDialog(); }}><Download size={15} />导入 Markdown</button>
             <button
               type="button"
@@ -612,12 +708,15 @@ export default function App() {
         {desktop && (
           <div className="workspace-docs">
             <div className="panel-heading compact">
-              <span>工作区文档</span>
+              <button type="button" className="panel-toggle" onClick={() => setWorkspaceDocsCollapsed(v => !v)}>
+                {workspaceDocsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                <span>工作区文档</span>
+              </button>
               <IconButton title="刷新文件列表" onClick={() => void refreshWorkspaceDocs()}>
                 <RefreshCw size={14} />
               </IconButton>
             </div>
-            <div className="workspace-docs-list">
+            {!workspaceDocsCollapsed && <div className="workspace-docs-list">
               {!workspaceDocs.length && <p className="muted toc-empty">根目录下暂无 .md</p>}
               {workspaceDocs.map(doc => (
                 <div className={`workspace-doc-row ${project.filePath === doc.path ? "selected" : ""}`} key={doc.path}>
@@ -637,9 +736,18 @@ export default function App() {
                   >
                     {knowledgeTransferPath === doc.path ? <RefreshCw className="spinning" size={14} /> : <BookOpen size={14} />}
                   </IconButton>
+                  {pendingDelete === doc.path
+                    ? <div className="workspace-doc-confirm-delete">
+                        <button type="button" className="workspace-doc-confirm-yes" onClick={() => { confirmDeleteRef.current += 1; void deleteWorkspaceDoc(doc); }}>确认</button>
+                        <button type="button" className="workspace-doc-confirm-no" onClick={() => setPendingDelete(null)}>取消</button>
+                      </div>
+                    : <IconButton
+                        title="删除文件"
+                        onClick={() => setPendingDelete(doc.path)}
+                      ><Trash2 size={13} /></IconButton>}
                 </div>
               ))}
-            </div>
+            </div>}
           </div>
         )}
       </aside>
@@ -647,7 +755,7 @@ export default function App() {
       <main className="editor-area">
         <div className="editor-title">
           <div>
-            <span>{editorMode === "full" ? "全文编辑" : selectedHeading ? `H${selectedHeading.level}` : "正文"}</span>
+            <span>{editorMode === "full" ? "全文" : selectedHeading ? `H${selectedHeading.level}` : "正文"}</span>
             <input
               value={editorMode === "full" ? project.name : (selectedHeading?.title ?? project.name)}
               readOnly={editorMode === "section"}
@@ -838,6 +946,19 @@ export default function App() {
       notify={notify}
       close={() => setWebSearchOpen(false)}
     />}
+    {templatePickerOpen && <div className="modal-backdrop" onClick={() => setTemplatePickerOpen(false)}>
+      <div className="modal wide template-picker-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-title"><div><FileText size={18} /><span>从模板新建</span></div><IconButton title="关闭" onClick={() => setTemplatePickerOpen(false)}><X size={18} /></IconButton></div>
+        <div className="template-picker-body">
+          {[defaultTemplateMeta(), ...templates].map(t => (
+            <button type="button" key={t.id} className="template-picker-item" onClick={() => void createFromTemplate(t.id)}>
+              <span><b>{t.name}</b><em>{t.chapterCount} 章</em></span>
+            </button>
+          ))}
+          {!templates.length && <p className="muted">暂无自定义模板。打开方案后可通过文件菜单另存为模板。</p>}
+        </div>
+      </div>
+    </div>}
     {sourceOpen && <SourceModal
       historyDir={workspace?.historyDir || ""}
       close={() => setSourceOpen(false)}
@@ -868,7 +989,7 @@ export default function App() {
 }
 
 function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project) => void | Promise<void> }) {
-  const [section, setSection] = useState<"model" | "search" | "agent" | "memory" | "parser" | "workspace">("model");
+  const [section, setSection] = useState<"model" | "search" | "agent" | "history" | "memory" | "parser" | "workspace">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
     if (!next.mineru) next.mineru = createProject().mineru;
@@ -881,6 +1002,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     model: { title: "模型服务", description: "配置模型接口、访问凭据和默认模型。", icon: <Globe2 size={15} /> },
     search: { title: "联网搜索", description: "配置搜索提供方、接口地址和上游搜索引擎。", icon: <Search size={15} /> },
     agent: { title: "Agent", description: "控制多轮执行、上下文、记忆与工具使用策略。", icon: <Settings size={15} /> },
+    history: { title: "历史会话", description: "查看并清理当前项目保存的 Agent 对话记录。", icon: <MessageSquareText size={15} /> },
     memory: { title: "记忆", description: "查看、审核和维护当前工作区的长期记忆。", icon: <Brain size={15} /> },
     parser: { title: "文档解析", description: "配置 Word 和 PDF 转换所使用的 MinerU 服务。", icon: <FilePlus2 size={15} /> },
     workspace: { title: "工作区", description: "管理方案正文、知识库和连接配置的本地目录。", icon: <FolderOpen size={15} /> },
@@ -974,6 +1096,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
           <label className="wide">附加指令<textarea className="agent-instructions" maxLength={4000} value={draft.agent.customInstructions} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, customInstructions: e.target.value } })} placeholder="例如：优先使用本项目术语，风险项采用表格呈现。" /></label>
         </div>
       </div>}
+      {section === "history" && <ConversationHistorySettings project={project} />}
       {section === "memory" && <div className="settings-section-content memory-section-content">
         <MemorySettingsPanel project={draft} />
       </div>}

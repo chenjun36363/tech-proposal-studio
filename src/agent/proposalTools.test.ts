@@ -25,7 +25,6 @@ function registry(reviewDraft: () => boolean | Promise<boolean> = () => true) {
   return createProposalToolRegistry({
     project: createProject(),
     block,
-    sourceContents: {},
     reviewDraft,
     onTodos: () => undefined,
   });
@@ -45,7 +44,6 @@ describe("proposal agent web search tool", () => {
     const result = await createProposalToolRegistry({
       project,
       block,
-      sourceContents: {},
       reviewDraft: () => true,
       onTodos: () => undefined,
     }).execute(
@@ -61,7 +59,7 @@ describe("proposal agent web search tool", () => {
   it("executes web search when the tool is registered", async () => {
     vi.mocked(searchWeb).mockResolvedValue([]);
     const result = await createProposalToolRegistry({
-      project: createProject(), block, sourceContents: {}, reviewDraft: () => true, onTodos: () => undefined,
+      project: createProject(), block, reviewDraft: () => true, onTodos: () => undefined,
     }).execute({ id: "default-search", name: "web_search", arguments: { query: "LIMS" } }, new AbortController().signal);
 
     expect(result.isError).toBe(false);
@@ -102,7 +100,7 @@ describe("proposal agent web search tool", () => {
     const project = createProject();
     project.agent.webSearchMaxCalls = 1;
     const tools = createProposalToolRegistry({
-      project, block, sourceContents: {}, reviewDraft: () => true, onTodos: () => undefined,
+      project, block, reviewDraft: () => true, onTodos: () => undefined,
     });
 
     const first = await tools.execute({ id: "search-1", name: "web_search", arguments: { query: "LIMS 标准" } }, new AbortController().signal);
@@ -118,7 +116,7 @@ describe("proposal agent web search tool", () => {
 describe("proposal agent todo tool", () => {
   it("accepts a complete plan with one active item", async () => {
     const onTodos = vi.fn();
-    const tools = createProposalToolRegistry({ project: createProject(), block, sourceContents: {}, reviewDraft: () => true, onTodos });
+    const tools = createProposalToolRegistry({ project: createProject(), block, reviewDraft: () => true, onTodos });
     const todos = [
       { content: "读取当前章节", status: "in_progress", activeForm: "正在读取当前章节" },
       { content: "检索知识库", status: "pending", activeForm: "正在检索知识库" },

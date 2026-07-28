@@ -27,12 +27,10 @@ export const proposalAgentSystemPrompt = `你是“构案”中的软件技术�
 export function createProposalToolRegistry(params: {
   project: Project;
   block: DocumentBlock;
-  sourceContents: Record<string, string>;
   reviewDraft: (draft: AgentDraft, signal: AbortSignal) => boolean | Promise<boolean>;
   onTodos: (todos: Array<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm: string }>) => void;
 }) {
-  const { project, block, sourceContents } = params;
-  void sourceContents;
+  const { project, block } = params;
   let currentBlockContent = block.content;
   const searchableWebUrls = new Set<string>();
   const searchedQueries = new Set<string>();

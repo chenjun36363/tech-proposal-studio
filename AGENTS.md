@@ -129,9 +129,9 @@ Vitest + jsdom for storage tests (`// @vitest-environment jsdom` in file). Cover
 
 `pnpm tauri dev` needs MSVC (vcvars). Helper: `.\.tmp\run-tauri-dev.bat` loads vsdevcmd then runs tauri. Vite is `strictPort: 1420` — kill listeners on 1420 before restart if `beforeDevCommand` fails.
 
-## Product constraints (from README / handoff)
+## Product constraints
 
 - Body and indexes stay on-device by default; AI only receives the current block plus explicitly attached sources.
 - API keys must not land in project localStorage cache; connection secrets may live under workspace `.gouan/connections.json`.
 - Agent web search is disabled by default per conversation and may run directly after the user enables it.
-- Known gaps: section delete/reorder, custom templates.
+- Active roadmap and unfinished work are maintained only in `TODO.md`.

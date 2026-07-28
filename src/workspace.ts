@@ -112,6 +112,11 @@ export async function writeTextFile(path: string, content: string): Promise<stri
   return invoke<string>("write_text_file", { path, content });
 }
 
+export async function deleteFile(path: string): Promise<void> {
+  if (!isDesktop()) throw new Error("删除文件仅在桌面端可用");
+  await invoke("delete_file", { path });
+}
+
 export function uniqueImportedMarkdownName(sourceName: string, existingNames: string[]): string {
   const normalized = sourceName.replace(/\.markdown$/i, ".md").replace(/[<>:"/\\|?*]/g, "_");
   const safeName = /\.md$/i.test(normalized) ? normalized : `${normalized || "导入文档"}.md`;

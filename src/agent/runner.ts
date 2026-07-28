@@ -203,6 +203,7 @@ export async function runProposalAgent(params: {
         if (nextTodos) latestTodos = nextTodos;
       }
     }
+    await finalizeTodos(maxRounds);
     emit({ type: "round_limit_reached", maxRounds });
     return { messages: persistentAgentMessages(messages), summary: `已达到 ${maxRounds} 轮执行上限`, status: "round_limit_reached" as const };
   } catch (error) {

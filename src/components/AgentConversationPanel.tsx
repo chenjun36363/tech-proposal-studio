@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageSquarePlus, Send, Square, Trash2 } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
-import { compactAgentConversation, createAgentConversation, deleteAgentConversation, listAgentConversations, saveAgentConversation, type AgentConversation } from "../agent/conversationStore";
+import { AGENT_CONVERSATIONS_CHANGED, compactAgentConversation, createAgentConversation, deleteAgentConversation, listAgentConversations, saveAgentConversation, type AgentConversation } from "../agent/conversationStore";
 import { createProposalToolRegistry, proposalAgentSystemPrompt } from "../agent/proposalTools";
 import type { AgentDraft, AgentEvent, AgentRunStatus, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
@@ -21,10 +21,9 @@ function conversationTitle(task: string) {
   return task.replace(/\s+/g, " ").trim().slice(0, 24) || "新会话";
 }
 
-export function AgentConversationPanel({ project, block, sourceContents, pinnedContext, updateBlock, notify }: {
+export function AgentConversationPanel({ project, block, pinnedContext, updateBlock, notify }: {
   project: Project;
   block: DocumentBlock;
-  sourceContents: Record<string, string>;
   pinnedContext: ResolvedAgentContext[];
   updateBlock: (updater: (block: DocumentBlock) => DocumentBlock) => void;
   notify: (message: string) => void;
@@ -44,13 +43,29 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
   const agentSettings = normalizeAgentSettings(project.agent);
   const aiEnabled = project.model?.enabled !== false;
   const running = runStatus === "running" || runStatus === "waiting_approval";
+  const workspaceRoot = project.workspace?.root;
 
   useEffect(() => {
-    const loaded = listAgentConversations(project.id);
-    const initial = loaded[0] ?? saveAgentConversation(createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly));
-    setConversations(loaded.length ? loaded : [initial]);
-    setActiveId(initial.id);
-  }, [project.id, agentSettings.defaultPinnedContextOnly]);
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const loaded = await listAgentConversations(project.id, workspaceRoot);
+        if (cancelled) return;
+        const initial = loaded[0] ?? createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
+        setConversations(loaded.length ? loaded : [initial]);
+        setActiveId(current => loaded.some(item => item.id === current) ? current : initial.id);
+      } catch (error) {
+        if (!cancelled) notify(error instanceof Error ? error.message : "历史会话加载失败");
+      }
+    };
+    const onChanged = (event: Event) => {
+      const changedProjectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId;
+      if (!changedProjectId || changedProjectId === project.id) void load();
+    };
+    void load();
+    window.addEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged);
+    return () => { cancelled = true; window.removeEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged); };
+  }, [project.id, workspaceRoot, agentSettings.defaultPinnedContextOnly]);
 
   useEffect(() => { if (!draft) setReviewOpen(false); }, [draft]);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -66,46 +81,59 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
   }, [activeId, project.id]);
 
-  const commitConversation = (conversation: AgentConversation) => {
-    const saved = saveAgentConversation(compactAgentConversation(conversation, agentSettings.recentMessages));
-    setConversations(listAgentConversations(project.id));
+  const commitConversation = async (conversation: AgentConversation) => {
+    const saved = await saveAgentConversation(compactAgentConversation(conversation, agentSettings.recentMessages), workspaceRoot);
+    setConversations(await listAgentConversations(project.id, workspaceRoot));
     setActiveId(saved.id);
+    return saved;
   };
 
   const createConversation = () => {
-    const created = saveAgentConversation(createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly));
-    setConversations(listAgentConversations(project.id));
-    setActiveId(created.id);
-    setEvents([]);
-    setDraft(null);
-    setTodos([]);
-    setTodosCollapsed(false);
+    void (async () => {
+      try {
+        const created = await saveAgentConversation(createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly), workspaceRoot);
+        setConversations(await listAgentConversations(project.id, workspaceRoot));
+        setActiveId(created.id);
+        setEvents([]);
+        setDraft(null);
+        setTodos([]);
+        setTodosCollapsed(false);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "新建会话失败");
+      }
+    })();
   };
 
   const removeConversation = () => {
     if (!active || running) return;
-    deleteAgentConversation(active.id);
-    const remaining = listAgentConversations(project.id);
-    const next = remaining[0] ?? saveAgentConversation(createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly));
-    setConversations(remaining.length ? remaining : [next]);
-    setActiveId(next.id);
-    setEvents([]);
-    setDraft(null);
-    const restored = latestTodosFromMessages(next.messages);
-    setTodos(restored);
-    setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
+    void (async () => {
+      try {
+        await deleteAgentConversation(active.id, project.id, workspaceRoot);
+        const remaining = await listAgentConversations(project.id, workspaceRoot);
+        const next = remaining[0] ?? createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
+        setConversations(remaining.length ? remaining : [next]);
+        setActiveId(next.id);
+        setEvents([]);
+        setDraft(null);
+        const restored = latestTodosFromMessages(next.messages);
+        setTodos(restored);
+        setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "删除会话失败");
+      }
+    })();
   };
   const setPinnedContextOnly = (value: boolean) => {
     if (!active) return;
-    commitConversation({ ...active, pinnedContextOnly: value });
+    void commitConversation({ ...active, pinnedContextOnly: value }).catch(error => notify(error instanceof Error ? error.message : "会话设置保存失败"));
   };
   const setWebSearchEnabled = (value: boolean) => {
     if (!active) return;
-    commitConversation({ ...active, webSearchEnabled: value });
+    void commitConversation({ ...active, webSearchEnabled: value }).catch(error => notify(error instanceof Error ? error.message : "会话设置保存失败"));
   };
   const setKnowledgeSearchEnabled = (value: boolean) => {
     if (!active) return;
-    commitConversation({ ...active, knowledgeSearchEnabled: value });
+    void commitConversation({ ...active, knowledgeSearchEnabled: value }).catch(error => notify(error instanceof Error ? error.message : "会话设置保存失败"));
   };
   const stopRun = () => {
     abortRef.current?.abort();
@@ -168,9 +196,15 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
     setTodosCollapsed(false);
     setDraft(null);
     setInput("");
-    commitConversation(pendingConversation);
     try {
-    const registry = createProposalToolRegistry({ project, block, sourceContents, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+      await commitConversation(pendingConversation);
+    } catch (error) {
+      setRunStatus("failed");
+      notify(error instanceof Error ? error.message : "会话保存失败");
+      return;
+    }
+    try {
+    const registry = createProposalToolRegistry({ project, block, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
     if (pinnedContextOnly || !agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
     if (!agentSettings.memoryEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
@@ -195,7 +229,7 @@ export function AgentConversationPanel({ project, block, sourceContents, pinnedC
       const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
       const runtimeMessages = result.messages.slice(1);
       setEvents([]);
-      commitConversation({ ...pendingConversation, messages: runtimeMessages });
+      await commitConversation({ ...pendingConversation, messages: runtimeMessages });
       setRunStatus(result.status);
       setTodosCollapsed(result.status === "completed");
       if (result.status === "round_limit_reached") notify(`Agent 已达到 ${agentSettings.maxRounds} 轮执行上限`);

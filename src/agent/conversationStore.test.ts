@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { compactAgentConversation, createAgentConversation, listAgentConversations, saveAgentConversation } from "./conversationStore";
+import { clearAgentConversations, compactAgentConversation, createAgentConversation, listAgentConversations, saveAgentConversation } from "./conversationStore";
 
 describe("agent conversation storage", () => {
   beforeEach(() => localStorage.clear());
 
-  it("persists conversations independently by project", () => {
-    saveAgentConversation({ ...createAgentConversation("project-a"), title: "A" });
-    saveAgentConversation({ ...createAgentConversation("project-b"), title: "B" });
-    expect(listAgentConversations("project-a").map(item => item.title)).toEqual(["A"]);
+  it("persists conversations independently by project", async () => {
+    await saveAgentConversation({ ...createAgentConversation("project-a"), title: "A" });
+    await saveAgentConversation({ ...createAgentConversation("project-b"), title: "B" });
+    expect((await listAgentConversations("project-a")).map(item => item.title)).toEqual(["A"]);
   });
 
   it("starts new conversations with web search disabled", () => {
@@ -43,10 +43,18 @@ describe("agent conversation storage", () => {
     expect(compacted.messages.filter(message => message.role === "tool").every(message => Boolean(message.tool_call_id && callIds.has(message.tool_call_id)))).toBe(true);
   });
 
-  it("never persists transient coaching messages", () => {
+  it("never persists transient coaching messages", async () => {
     const conversation = createAgentConversation("project-a");
     conversation.messages = [{ role: "user", content: "真实任务" }, { role: "user", content: "内部提示", transient: true }];
-    saveAgentConversation(conversation);
-    expect(listAgentConversations("project-a")[0].messages).toEqual([{ role: "user", content: "真实任务" }]);
+    await saveAgentConversation(conversation);
+    expect((await listAgentConversations("project-a"))[0].messages).toEqual([{ role: "user", content: "真实任务" }]);
+  });
+
+  it("clears only the selected project's history", async () => {
+    await saveAgentConversation({ ...createAgentConversation("project-a"), title: "A" });
+    await saveAgentConversation({ ...createAgentConversation("project-b"), title: "B" });
+    expect(await clearAgentConversations("project-a")).toBe(1);
+    expect(await listAgentConversations("project-a")).toEqual([]);
+    expect((await listAgentConversations("project-b")).map(item => item.title)).toEqual(["B"]);
   });
 });

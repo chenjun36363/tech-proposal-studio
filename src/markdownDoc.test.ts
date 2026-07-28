@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   alignHeadingsToRules,
   applyHeadingLevel,
+  deleteSection,
   formatHeadingPrefix,
   moveSection,
   parseMarkdownHeadings,
@@ -169,5 +170,18 @@ describe("heading numbering", () => {
     const headings = parseMarkdownHeadings(markdown);
 
     expect(moveSection(markdown, headings[1], headings[2], "before")).toBe(markdown);
+  });
+
+  it("removes a section and its descendants", () => {
+    const markdown = "# 方案\n\n## 第一章\n\n正文一\n### 子章节\n\n子正文\n## 第二章\n\n正文二";
+    const headings = parseMarkdownHeadings(markdown);
+    const removed = deleteSection(markdown, headings[1]);
+
+    expect(removed).not.toContain("## 第一章");
+    expect(removed).not.toContain("正文一");
+    expect(removed).not.toContain("### 子章节");
+    expect(removed).not.toContain("子正文");
+    expect(removed).toContain("## 第二章");
+    expect(removed).toContain("正文二");
   });
 });

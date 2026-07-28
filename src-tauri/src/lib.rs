@@ -289,6 +289,37 @@ fn write_text_file(path: String, content: String) -> Result<String, String> {
     Ok(file_path.to_string_lossy().into())
 }
 
+fn agent_conversations_path(workspace_root: &str) -> Result<PathBuf, String> {
+    if workspace_root.trim().is_empty() {
+        return Err("工作目录不能为空".into());
+    }
+    Ok(PathBuf::from(workspace_root)
+        .join(".gouan")
+        .join("agent-conversations.json"))
+}
+
+#[tauri::command]
+fn read_agent_conversations(workspace_root: String) -> Result<Option<String>, String> {
+    let path = agent_conversations_path(&workspace_root)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    fs::read_to_string(path)
+        .map(Some)
+        .map_err(|e| format!("读取历史会话失败: {e}"))
+}
+
+#[tauri::command]
+fn write_agent_conversations(workspace_root: String, content: String) -> Result<String, String> {
+    let path = agent_conversations_path(&workspace_root)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建会话目录失败: {e}"))?;
+    }
+    fs::write(&path, content.as_bytes())
+        .map_err(|e| format!("保存历史会话失败: {e}"))?;
+    Ok(path.to_string_lossy().into())
+}
+
 #[tauri::command]
 fn rename_file(old_path: String, new_path: String) -> Result<String, String> {
     let old = PathBuf::from(&old_path);
@@ -301,6 +332,15 @@ fn rename_file(old_path: String, new_path: String) -> Result<String, String> {
     }
     fs::rename(&old, &new).map_err(|e| format!("重命名失败: {e}"))?;
     Ok(new.to_string_lossy().into())
+}
+
+#[tauri::command]
+fn delete_file(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Err("文件不存在".into());
+    }
+    fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))
 }
 
 #[derive(Serialize)]
@@ -554,7 +594,10 @@ pub fn run() {
             open_external_url,
             read_binary_file,
             write_text_file,
+            read_agent_conversations,
+            write_agent_conversations,
             rename_file,
+            delete_file,
             write_library_markdown,
             save_image_to_workspace
             ,ccswitch::list_ccswitch_providers

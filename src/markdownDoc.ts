@@ -111,6 +111,11 @@ export function moveSection(
   return withoutSource.slice(0, insertion) + section + withoutSource.slice(insertion);
 }
 
+/** Remove a heading and its entire body/descendants from the document. */
+export function deleteSection(markdown: string, heading: MdHeading): string {
+  return markdown.slice(0, heading.start) + markdown.slice(heading.end);
+}
+
 export function defaultProposalMarkdown(name = "未命名技术方案"): string {
   const chapters = ["背景与目标", "范围与约束", "总体架构", "详细设计", "接口与数据", "安全设计", "部署与迁移", "风险与应对", "测试与验收"];
   return [`# ${name}`, "", ...chapters.flatMap((t) => [`## ${t}`, "", "在此编写本章内容…", ""])].join("\n");
