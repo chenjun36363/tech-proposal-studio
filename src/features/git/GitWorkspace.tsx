@@ -13,13 +13,18 @@ function statusLabel(code: string) {
   return ({ M: "M", A: "A", D: "D", R: "R", C: "C", U: "U", "?": "U" } as Record<string, string>)[code] ?? code;
 }
 
-function ChangeList({ title, files, staged, selected, onSelect, onToggle, onDiscard, pendingDiscard }: {
+function ChangeList({ title, files, staged, selected, onSelect, onToggle, onBulkAction, bulkActionLabel, onDiscard, pendingDiscard }: {
   title: string; files: GitFileStatus[]; staged: boolean; selected: GitDiffSelection | null;
-  onSelect: (selection: GitDiffSelection) => void; onToggle: (file: GitFileStatus) => void; onDiscard?: (file: GitFileStatus) => void; pendingDiscard?: string | null;
+  onSelect: (selection: GitDiffSelection) => void; onToggle: (file: GitFileStatus) => void;
+  onBulkAction: () => void; bulkActionLabel: string; onDiscard?: (file: GitFileStatus) => void; pendingDiscard?: string | null;
 }) {
   if (!files.length) return null;
   return <section className="git-change-group">
-    <div className="git-change-heading"><span>{title}</span><b>{files.length}</b></div>
+    <div className="git-change-heading">
+      <span>{title}</span>
+      <button className="git-bulk-action" type="button" onClick={onBulkAction}>{bulkActionLabel}</button>
+      <b>{files.length}</b>
+    </div>
     {files.map(file => {
       const code = staged ? file.indexStatus : file.worktreeStatus;
       const active = selected?.kind === "working" && selected.path === file.path && selected.staged === staged;
@@ -141,10 +146,8 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
     </div>
     <div className="git-changes-scroll">
       {!status.files.length && <div className="git-clean"><Check size={18} /><span>工作区没有更改</span></div>}
-      {!!staged.length && <button className="git-bulk-action" onClick={() => void bulkStage(true)}>全部取消暂存</button>}
-      <ChangeList title="暂存的更改" files={staged} staged selected={selected} onSelect={onSelect} onToggle={file => void toggle(file, true)} />
-      {!!changed.length && <button className="git-bulk-action" onClick={() => void bulkStage(false)}>全部暂存</button>}
-      <ChangeList title="更改" files={changed} staged={false} selected={selected} onSelect={onSelect} onToggle={file => void toggle(file, false)} onDiscard={file => void discard(file)} pendingDiscard={pendingDiscard} />
+      <ChangeList title="暂存的更改" files={staged} staged selected={selected} onSelect={onSelect} onToggle={file => void toggle(file, true)} onBulkAction={() => void bulkStage(true)} bulkActionLabel="全部取消暂存" />
+      <ChangeList title="更改" files={changed} staged={false} selected={selected} onSelect={onSelect} onToggle={file => void toggle(file, false)} onBulkAction={() => void bulkStage(false)} bulkActionLabel="全部暂存" onDiscard={file => void discard(file)} pendingDiscard={pendingDiscard} />
     </div></> : <div className="git-history-list">
       {!history.length && <div className="git-clean"><History size={18} /><span>暂无提交历史</span></div>}
       {history.map(item => <button type="button" className={selected?.kind === "commit" && selected.commit === item.hash ? "selected" : ""} key={item.hash} onClick={() => onSelect({ kind: "commit", commit: item.hash, title: item.subject })}>

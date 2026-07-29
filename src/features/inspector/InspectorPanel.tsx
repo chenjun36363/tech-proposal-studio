@@ -14,6 +14,7 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { AgentConversationPanel } from "../../components/AgentConversationPanel";
+import type { AgentDraft, AgentEditorSelection } from "../../agent/protocol";
 import { IconButton } from "../../components/IconButton";
 import {
   getKnowledgeChunk,
@@ -92,6 +93,9 @@ export function InspectorPanel({
   block,
   updateProject,
   updateBlock,
+  agentSelection,
+  clearAgentSelection,
+  applyAgentDraft,
   notify,
   openSettings,
   openSourcePreview,
@@ -102,6 +106,9 @@ export function InspectorPanel({
   block: DocumentBlock;
   updateProject: ProjectUpdater;
   updateBlock: BlockUpdater;
+  agentSelection?: AgentEditorSelection;
+  clearAgentSelection: () => void;
+  applyAgentDraft: (draft: AgentDraft) => void;
   notify: (message: string) => void;
   openSettings: () => void;
   openSourcePreview: (source: SourceRecord) => Promise<void>;
@@ -339,7 +346,7 @@ export function InspectorPanel({
       </div>
     </div>
     {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
-    {tab === "commands" && <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} updateBlock={updateBlock} notify={notify} />}
+    {tab === "commands" && <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} notify={notify} />}
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}
     {tab === "sources" && <div className="inspector-content sources-panel knowledge-panel">
       {!desktop

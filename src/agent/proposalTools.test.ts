@@ -3,7 +3,7 @@ import { createProject } from "../data";
 import { searchWeb } from "../services/search";
 import { fetchKnowledgeWebPage } from "../knowledge";
 import type { DocumentBlock } from "../types";
-import { createProposalToolRegistry } from "./proposalTools";
+import { buildEditorSelectionPrompt, createProposalToolRegistry } from "./proposalTools";
 
 vi.mock("../services/search", () => ({ searchWeb: vi.fn() }));
 vi.mock("../knowledge", async importOriginal => {
@@ -13,7 +13,7 @@ vi.mock("../knowledge", async importOriginal => {
 
 const block: DocumentBlock = {
   id: "block-1",
-  sectionId: "section-1",
+  sectionId: "当前章节",
   type: "text",
   content: "## 当前章节",
   order: 0,
@@ -22,8 +22,10 @@ const block: DocumentBlock = {
 };
 
 function registry(reviewDraft: () => boolean | Promise<boolean> = () => true) {
+  const project = createProject();
+  project.markdown = "# 方案\n\n## 当前章节";
   return createProposalToolRegistry({
-    project: createProject(),
+    project,
     block,
     reviewDraft,
     onTodos: () => undefined,
@@ -172,5 +174,106 @@ describe("proposal agent draft review", () => {
 
     expect(proposed).toEqual(expect.objectContaining({ isError: false, data: expect.objectContaining({ approved: false }) }));
     expect(current.content).toBe("## 当前章节");
+  });
+});
+
+describe("proposal agent document editing tools", () => {
+  it("injects the captured selection into transient model context", () => {
+    const prompt = buildEditorSelectionPrompt({
+      start: 10,
+      end: 14,
+      text: "选中正文",
+      scope: "section",
+      sectionId: "背景",
+      sectionTitle: "背景",
+    });
+
+    expect(prompt).toContain('"text": "选中正文"');
+    expect(prompt).toContain("不得声称无法看到选区");
+    expect(prompt).toContain("不得要求用户再次粘贴");
+    expect(prompt).toContain("必须调用 propose_selection_update");
+  });
+
+  it("lists stable heading ids and reads an arbitrary proposal section", async () => {
+    const tools = registry();
+    const signal = new AbortController().signal;
+    const outline = await tools.execute({ id: "outline", name: "get_proposal_outline", arguments: {} }, signal);
+    const section = await tools.execute({ id: "section", name: "read_proposal_section", arguments: { heading_id: "当前章节" } }, signal);
+
+    expect(outline.content).toContain('"id": "当前章节"');
+    expect(section.content).toBe("## 当前章节");
+  });
+
+  it("registers selection tools only for a non-empty editor selection", async () => {
+    const withoutSelection = registry();
+    expect(withoutSelection.has("read_selected_text")).toBe(false);
+    expect(withoutSelection.has("propose_selection_update")).toBe(false);
+
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 当前章节\n\n原文";
+    const start = project.markdown.indexOf("原文");
+    const reviewDraft = vi.fn().mockResolvedValue(false);
+    const tools = createProposalToolRegistry({
+      project,
+      block: { ...block, content: "## 当前章节\n\n原文" },
+      selection: { start, end: start + 2, text: "原文", scope: "section", sectionId: "当前章节", sectionTitle: "当前章节" },
+      reviewDraft,
+      onTodos: () => undefined,
+    });
+
+    expect(tools.has("read_selected_text")).toBe(true);
+    const read = await tools.execute({ id: "read-selection", name: "read_selected_text", arguments: {} }, new AbortController().signal);
+    await tools.execute({ id: "update-selection", name: "propose_selection_update", arguments: { markdown: "新文", instruction: "精简选区" } }, new AbortController().signal);
+
+    expect(read.content).toBe("原文");
+    expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({
+      operation: "replace_selection",
+      before: "原文",
+      after: "新文",
+      target: expect.objectContaining({ selectionStart: start, selectionEnd: start + 2 }),
+    }), expect.any(AbortSignal));
+  });
+
+  it("creates reviewed insert and delete proposals and blocks H1 deletion", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 背景\n\n正文\n\n## 架构\n\n正文";
+    const reviewDraft = vi.fn().mockResolvedValue(false);
+    const tools = createProposalToolRegistry({
+      project,
+      block: { ...block, sectionId: "背景", content: "## 背景\n\n正文" },
+      reviewDraft,
+      onTodos: () => undefined,
+    });
+    const signal = new AbortController().signal;
+
+    await tools.execute({ id: "insert", name: "propose_section_insert", arguments: { target_heading_id: "架构", position: "before", markdown: "## 安全\n\n安全正文", instruction: "补充安全" } }, signal);
+    await tools.execute({ id: "delete", name: "propose_section_delete", arguments: { target_heading_id: "背景", instruction: "删除重复章节" } }, signal);
+    const blocked = await tools.execute({ id: "delete-h1", name: "propose_section_delete", arguments: { target_heading_id: "方案", instruction: "删除标题" } }, signal);
+
+    expect(reviewDraft).toHaveBeenNthCalledWith(1, expect.objectContaining({ operation: "insert_section", target: expect.objectContaining({ sectionId: "架构", position: "before" }) }), signal);
+    expect(reviewDraft).toHaveBeenNthCalledWith(2, expect.objectContaining({ operation: "delete_section", target: expect.objectContaining({ sectionId: "背景" }) }), signal);
+    expect(blocked).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("不能删除文档 H1") }));
+  });
+
+  it("creates a chapter move proposal with source and destination snapshots", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 背景\n\n正文\n\n### 细节\n\n子正文\n\n## 架构\n\n架构正文";
+    const reviewDraft = vi.fn().mockResolvedValue(false);
+    const tools = createProposalToolRegistry({ project, block: { ...block, sectionId: "背景", content: "## 背景\n\n正文\n\n### 细节\n\n子正文" }, reviewDraft, onTodos: () => undefined });
+    const signal = new AbortController().signal;
+
+    await tools.execute({ id: "move", name: "propose_section_move", arguments: { source_heading_id: "背景", target_heading_id: "架构", position: "after", instruction: "先讲架构" } }, signal);
+    const h1 = await tools.execute({ id: "move-h1", name: "propose_section_move", arguments: { source_heading_id: "方案", target_heading_id: "架构", position: "after", instruction: "移动标题" } }, signal);
+    const self = await tools.execute({ id: "move-self", name: "propose_section_move", arguments: { source_heading_id: "背景", target_heading_id: "背景", position: "after", instruction: "移动" } }, signal);
+    const descendant = await tools.execute({ id: "move-child", name: "propose_section_move", arguments: { source_heading_id: "背景", target_heading_id: "细节", position: "after", instruction: "移动" } }, signal);
+
+    expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({
+      operation: "move_section",
+      before: expect.stringContaining("子正文"),
+      target: expect.objectContaining({ sectionId: "背景", destinationSectionId: "架构", position: "after", snapshot: expect.any(String), destinationSnapshot: expect.stringContaining("架构正文") }),
+    }), signal);
+    expect(h1.content).toContain("不能移动文档 H1");
+    expect(self.content).toContain("不能将章节移动到自身");
+    expect(descendant.content).toContain("不能将章节移动到其子章节内");
   });
 });

@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   alignHeadingsToRules,
+  applyAgentDraft,
   applyHeadingLevel,
   deleteSection,
   formatHeadingPrefix,
+  insertSection,
   moveSection,
   parseMarkdownHeadings,
   renumberHeadings,
   replaceSection,
+  replaceSelection,
   sectionBody,
   stripHeadingPrefix,
 } from "./markdownDoc";
@@ -183,5 +186,134 @@ describe("heading numbering", () => {
     expect(removed).not.toContain("子正文");
     expect(removed).toContain("## 第二章");
     expect(removed).toContain("正文二");
+  });
+});
+
+describe("agent edit proposal application", () => {
+  const markdown = "# 方案\n\n## 第一章 背景\n\n旧内容\n\n### 1.1 子章节\n\n子内容\n\n## 第二章 架构\n\n架构正文";
+
+  it("replaces a reviewed section and rejects a stale snapshot", () => {
+    const heading = parseMarkdownHeadings(markdown)[1];
+    const before = sectionBody(markdown, heading);
+    const draft = {
+      callId: "replace-1",
+      operation: "replace_section" as const,
+      target: { sectionId: heading.id, snapshot: before },
+      before,
+      after: "## 背景\n\n新内容",
+      instruction: "更新背景",
+    };
+
+    expect(applyAgentDraft(markdown, draft).markdown).toContain("## 背景\n\n新内容");
+    expect(() => applyAgentDraft(markdown.replace("旧内容", "用户新内容"), draft)).toThrow("原文不再匹配");
+    expect(() => applyAgentDraft(markdown, { ...draft, target: { ...draft.target, sectionId: "missing" } })).toThrow("目标章节已不存在");
+  });
+
+  it("replaces only the reviewed absolute selection", () => {
+    const start = markdown.indexOf("架构正文");
+    const next = replaceSelection(markdown, start, start + 4, "架构正文", "新架构");
+
+    expect(next).toContain("新架构");
+    expect(() => replaceSelection(markdown, start, start + 4, "错误快照", "新架构")).toThrow("选区原文不再匹配");
+  });
+
+  it("inserts a heading section with stable spacing", () => {
+    const target = parseMarkdownHeadings(markdown)[2];
+    const next = insertSection(markdown, target, "after", "## 安全设计\n\n安全正文");
+
+    expect(next).toContain("子内容\n\n## 安全设计\n\n安全正文\n\n## 第二章 架构");
+  });
+
+  it("deletes a section with descendants but never the document H1", () => {
+    const chapter = parseMarkdownHeadings(markdown)[1];
+    const before = sectionBody(markdown, chapter);
+    const deleted = applyAgentDraft(markdown, {
+      callId: "delete-1",
+      operation: "delete_section",
+      target: { sectionId: chapter.id, snapshot: before },
+      before,
+      after: "",
+      instruction: "删除背景",
+    }).markdown;
+
+    expect(deleted).not.toContain("旧内容");
+    expect(deleted).not.toContain("子内容");
+    expect(deleted).toContain("架构正文");
+
+    const title = parseMarkdownHeadings(markdown)[0];
+    const titleBody = sectionBody(markdown, title);
+    expect(() => applyAgentDraft(markdown, {
+      callId: "delete-title",
+      operation: "delete_section",
+      target: { sectionId: title.id, snapshot: titleBody },
+      before: titleBody,
+      after: "",
+      instruction: "删除标题",
+    })).toThrow("不能删除文档 H1");
+  });
+
+  it("moves a reviewed chapter with descendants and renumbers headings", () => {
+    const headings = parseMarkdownHeadings(markdown);
+    const source = headings[1];
+    const destination = headings[3];
+    const moved = applyAgentDraft(markdown, {
+      callId: "move-1",
+      operation: "move_section",
+      target: {
+        sectionId: source.id,
+        snapshot: sectionBody(markdown, source),
+        destinationSectionId: destination.id,
+        destinationSnapshot: sectionBody(markdown, destination),
+        position: "after",
+      },
+      before: sectionBody(markdown, source),
+      after: sectionBody(markdown, source),
+      instruction: "调整章节顺序",
+    }).markdown;
+
+    expect(moved.indexOf("架构正文")).toBeLessThan(moved.indexOf("旧内容"));
+    expect(moved.indexOf("子内容")).toBeGreaterThan(moved.indexOf("旧内容"));
+    expect(moved).toContain("## 第2章 背景");
+    expect(moved).toContain("### 2.1 子章节");
+  });
+
+  it("validates both chapter snapshots before moving", () => {
+    const headings = parseMarkdownHeadings(markdown);
+    const source = headings[1];
+    const destination = headings[3];
+    const draft = {
+      callId: "move-conflict",
+      operation: "move_section" as const,
+      target: {
+        sectionId: source.id,
+        snapshot: sectionBody(markdown, source),
+        destinationSectionId: destination.id,
+        destinationSnapshot: sectionBody(markdown, destination),
+        position: "before" as const,
+      },
+      before: sectionBody(markdown, source),
+      after: sectionBody(markdown, source),
+      instruction: "移动章节",
+    };
+
+    expect(() => applyAgentDraft(markdown.replace("旧内容", "源章节已改"), draft)).toThrow("目标章节原文不再匹配");
+    expect(() => applyAgentDraft(markdown.replace("架构正文", "目标章节已改"), draft)).toThrow("目标位置章节原文不再匹配");
+    expect(() => applyAgentDraft(markdown, { ...draft, target: { ...draft.target, destinationSectionId: "missing" } })).toThrow("目标位置章节已不存在");
+  });
+
+  it("rejects moving H1, moving to itself, or moving into descendants", () => {
+    const headings = parseMarkdownHeadings(markdown);
+    const title = headings[0];
+    const source = headings[1];
+    const child = headings[2];
+    const makeDraft = (from: typeof source, to: typeof source) => ({
+      callId: "invalid-move", operation: "move_section" as const,
+      target: { sectionId: from.id, snapshot: sectionBody(markdown, from), destinationSectionId: to.id, destinationSnapshot: sectionBody(markdown, to), position: "after" as const },
+      before: sectionBody(markdown, from), after: sectionBody(markdown, from), instruction: "移动",
+    });
+
+    expect(() => applyAgentDraft(markdown, makeDraft(title, source))).toThrow("不能移动文档 H1");
+    expect(() => applyAgentDraft(markdown, makeDraft(source, source))).toThrow("不能将章节移动到自身");
+    expect(() => applyAgentDraft(markdown, makeDraft(source, child))).toThrow("不能将章节移动到其子章节内");
   });
 });

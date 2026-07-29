@@ -1,3 +1,5 @@
+import type { AgentDraft } from "./agent/protocol";
+
 export interface HeadingNode {
   heading: MdHeading;
   children: HeadingNode[];
@@ -101,6 +103,8 @@ export function moveSection(
 ): string {
   if (source.id === target.id) return markdown;
   if (target.start > source.start && target.start < source.end) return markdown;
+  if (position === "before" && source.end === target.start) return markdown;
+  if (position === "after" && target.end === source.start) return markdown;
 
   const section = markdown.slice(source.start, source.end);
   const withoutSource = markdown.slice(0, source.start) + markdown.slice(source.end);
@@ -108,12 +112,133 @@ export function moveSection(
   const insertion = originalInsertion >= source.end
     ? originalInsertion - (source.end - source.start)
     : originalInsertion;
-  return withoutSource.slice(0, insertion) + section + withoutSource.slice(insertion);
+  const left = withoutSource.slice(0, insertion).replace(/\n*$/, "");
+  const right = withoutSource.slice(insertion).replace(/^\n*/, "");
+  return [left, section.trim(), right].filter(Boolean).join("\n\n");
 }
 
 /** Remove a heading and its entire body/descendants from the document. */
 export function deleteSection(markdown: string, heading: MdHeading): string {
   return markdown.slice(0, heading.start) + markdown.slice(heading.end);
+}
+
+/** Insert a complete Markdown section before or after a target section. */
+export function insertSection(
+  markdown: string,
+  target: MdHeading,
+  position: SectionMovePosition,
+  sectionMarkdown: string,
+): string {
+  const section = sectionMarkdown.trim();
+  if (!section) throw new Error("插入章节不能为空");
+  const firstHeading = section.match(/^(#{1,6})\s+(.+?)\s*$/m);
+  if (!firstHeading || firstHeading.index !== 0) throw new Error("插入内容必须以 Markdown 标题开头");
+  if (firstHeading[1].length <= 1) throw new Error("不能插入新的文档 H1 标题");
+  if (target.level <= 1 && position === "before") throw new Error("不能在文档 H1 标题之前插入章节");
+  const insertion = position === "before" ? target.start : target.end;
+  const left = markdown.slice(0, insertion).replace(/\n*$/, "");
+  const right = markdown.slice(insertion).replace(/^\n*/, "");
+  return [left, section, right].filter(Boolean).join("\n\n");
+}
+
+/** Replace an absolute Markdown text range after checking its original snapshot. */
+export function replaceSelection(
+  markdown: string,
+  start: number,
+  end: number,
+  expected: string,
+  replacement: string,
+): string {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > markdown.length) {
+    throw new Error("选区范围无效");
+  }
+  if (markdown.slice(start, end) !== expected) throw new Error("文档已变化，选区原文不再匹配");
+  return markdown.slice(0, start) + replacement + markdown.slice(end);
+}
+
+export interface AppliedAgentDraft {
+  markdown: string;
+  headingId?: string;
+  selectionStart?: number;
+  selectionEnd?: number;
+}
+
+function targetHeading(markdown: string, draft: AgentDraft): MdHeading {
+  const sectionId = draft.target.sectionId;
+  const heading = sectionId ? parseMarkdownHeadings(markdown).find(item => item.id === sectionId) : undefined;
+  if (!heading) throw new Error("文档已变化，目标章节已不存在");
+  const expected = draft.target.snapshot ?? draft.before;
+  if (sectionBody(markdown, heading) !== expected) throw new Error("文档已变化，目标章节原文不再匹配");
+  return heading;
+}
+
+function headingAtOrBefore(markdown: string, offset: number): MdHeading | undefined {
+  const headings = parseMarkdownHeadings(markdown);
+  return headings.filter(item => item.start <= offset).at(-1) ?? headings[0];
+}
+
+function headingAtOrAfter(markdown: string, offset: number): MdHeading | undefined {
+  const headings = parseMarkdownHeadings(markdown);
+  return headings.find(item => item.start >= offset) ?? headings.at(-1);
+}
+
+/** Apply one reviewed Agent proposal to the latest document with stale-target protection. */
+export function applyAgentDraft(markdown: string, draft: AgentDraft): AppliedAgentDraft {
+  if (draft.operation === "replace_selection") {
+    const start = draft.target.selectionStart;
+    const end = draft.target.selectionEnd;
+    if (start === undefined || end === undefined) throw new Error("提案缺少选区范围");
+    const replaced = replaceSelection(markdown, start, end, draft.before, draft.after);
+    const touchesHeading = /^(?:#{1,6})\s+/m.test(draft.before) || /^(?:#{1,6})\s+/m.test(draft.after);
+    const next = touchesHeading ? renumberHeadings(replaced) : replaced;
+    return {
+      markdown: next,
+      headingId: headingAtOrBefore(next, start)?.id ?? draft.target.sectionId,
+      selectionStart: touchesHeading ? undefined : start,
+      selectionEnd: touchesHeading ? undefined : start + draft.after.length,
+    };
+  }
+
+  const heading = targetHeading(markdown, draft);
+  if (draft.operation === "move_section") {
+    if (heading.level <= 1) throw new Error("不能移动文档 H1 标题");
+    const destinationId = draft.target.destinationSectionId;
+    const destination = destinationId
+      ? parseMarkdownHeadings(markdown).find(item => item.id === destinationId)
+      : undefined;
+    if (!destination) throw new Error("文档已变化，目标位置章节已不存在");
+    if (destination.id === heading.id) throw new Error("不能将章节移动到自身");
+    if (destination.start > heading.start && destination.start < heading.end) throw new Error("不能将章节移动到其子章节内");
+    if (sectionBody(markdown, destination) !== draft.target.destinationSnapshot) {
+      throw new Error("文档已变化，目标位置章节原文不再匹配");
+    }
+    const position = draft.target.position;
+    if (position !== "before" && position !== "after") throw new Error("提案缺少章节移动位置");
+    const moved = moveSection(markdown, heading, destination, position);
+    if (moved === markdown) throw new Error("章节已在目标位置，无需移动");
+    const next = renumberHeadings(moved);
+    const sourceName = stripHeadingPrefix(heading.title);
+    const movedHeading = parseMarkdownHeadings(next).find(item => item.level === heading.level && stripHeadingPrefix(item.title) === sourceName);
+    return { markdown: next, headingId: movedHeading?.id };
+  }
+  if (draft.operation === "delete_section") {
+    if (heading.level <= 1) throw new Error("不能删除文档 H1 标题");
+    const next = renumberHeadings(deleteSection(markdown, heading));
+    return { markdown: next, headingId: headingAtOrAfter(next, heading.start)?.id };
+  }
+  if (draft.operation === "insert_section") {
+    const position = draft.target.position;
+    if (position !== "before" && position !== "after") throw new Error("提案缺少章节插入位置");
+    const next = renumberHeadings(insertSection(markdown, heading, position, draft.after));
+    const insertedTitle = parseMarkdownHeadings(draft.after)[0];
+    const inserted = insertedTitle
+      ? parseMarkdownHeadings(next).find(item => item.level === insertedTitle.level && stripHeadingPrefix(item.title) === stripHeadingPrefix(insertedTitle.title))
+      : undefined;
+    return { markdown: next, headingId: inserted?.id ?? headingAtOrAfter(next, heading.start)?.id };
+  }
+
+  const next = replaceSection(markdown, heading, draft.after);
+  return { markdown: next, headingId: headingAtOrAfter(next, heading.start)?.id };
 }
 
 export function defaultProposalMarkdown(name = "未命名技术方案"): string {

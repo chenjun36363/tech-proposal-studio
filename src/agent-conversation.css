@@ -193,6 +193,11 @@
 .agent-change-result > p { display:flex; gap:10px; margin:7px 0 0 20px; color:hsl(var(--muted-foreground)); font:8px ui-monospace,Consolas,monospace; }
 .agent-tool-detail > .agent-message-markdown { max-height:240px; overflow:auto; padding:8px 9px; border:1px solid hsl(var(--border) / .7); background:hsl(var(--background)); border-radius:6px; scrollbar-width:thin; }
 .agent-chat-composer { grid-template-columns:minmax(0,1fr) 32px; gap:6px; padding:7px; border:1px solid hsl(var(--border) / .75); background:hsl(var(--background)); border-radius:8px; }
+.agent-selection-capture { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; border:1px solid hsl(var(--primary) / .28); background:hsl(var(--primary) / .07); border-radius:7px; }
+.agent-selection-capture > span { min-width:0; display:flex; align-items:center; gap:6px; color:hsl(var(--primary)); }
+.agent-selection-capture b { flex:none; font-size:9px; font-weight:650; }
+.agent-selection-capture small { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:hsl(var(--muted-foreground)); font-size:8px; }
+.agent-selection-capture > button { width:24px; height:24px; display:grid; place-items:center; flex:none; padding:0; border-color:transparent; color:hsl(var(--muted-foreground)); background:transparent; }
 .agent-chat-panel:has(.agent-draft) .agent-chat-history { min-height:110px; }
 .agent-chat-panel > .agent-draft { flex:0 1 44%; min-height:220px; overflow:auto; }
 .agent-draft-compare { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; padding:0 10px 9px; }

@@ -103,12 +103,14 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   onChange: (v: string) => void;
   workspaceRoot?: string;
   onImageInserted?: (markdownImage: string) => void;
+  onSelectionChange?: (selection: { start: number; end: number }) => void;
   placeholder?: string;
 }>(function MarkdownSourceEditor({
   value,
   onChange,
   workspaceRoot,
   onImageInserted,
+  onSelectionChange,
   placeholder,
 }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -204,6 +206,10 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
           setDraft(next);
           onChange(next);
         }}
+        onSelect={event => onSelectionChange?.({
+          start: event.currentTarget.selectionStart ?? 0,
+          end: event.currentTarget.selectionEnd ?? 0,
+        })}
         onPaste={(e) => void handlePaste(e)}
       />
     </div>

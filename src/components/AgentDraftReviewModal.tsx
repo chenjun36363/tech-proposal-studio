@@ -3,12 +3,22 @@ import { Check, Columns2, GripVertical, RotateCcw, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { AgentDraft } from "../agent/protocol";
 
+function reviewCopy(draft: AgentDraft) {
+  if (draft.operation === "move_section") return { title: "章节移动审核", summary: `将「${draft.target.sectionTitle ?? "源章节"}」移动到「${draft.target.destinationSectionTitle ?? "目标章节"}」${draft.target.position === "before" ? "之前" : "之后"}`, before: "待移动章节", after: "目标位置章节", emptyBefore: "（源章节为空）", emptyAfter: "（目标章节为空）", footer: "接受后将移动章节及其全部子章节并重新编号", accept: "接受并移动" };
+  if (draft.operation === "replace_selection") return { title: "选区修改审核", summary: "选区原文与替换稿对照", before: "选区原文", after: "替换稿", emptyBefore: "（选区为空）", emptyAfter: "（替换为空）", footer: "接受后将替换已校验的选区", accept: "接受并替换" };
+  if (draft.operation === "insert_section") return { title: "章节插入审核", summary: `将在「${draft.target.sectionTitle ?? "目标章节"}」${draft.target.position === "before" ? "之前" : "之后"}插入`, before: "插入位置", after: "待插入章节", emptyBefore: "（不替换现有正文）", emptyAfter: "（插入内容为空）", footer: "接受后将插入章节并重新编号", accept: "接受并插入" };
+  if (draft.operation === "delete_section") return { title: "章节删除审核", summary: "删除章节将同时删除其全部子章节", before: "待删除章节", after: "删除结果", emptyBefore: "（章节为空）", emptyAfter: "（整个章节将被删除）", footer: "接受后将删除章节并重新编号", accept: "确认删除" };
+  return { title: "章节修改审核", summary: "章节原文与修改稿对照", before: "章节原文", after: "修改稿", emptyBefore: "（当前章节为空）", emptyAfter: "（修改稿为空）", footer: "接受后将替换已校验的目标章节", accept: "接受并替换" };
+}
+
 export function AgentDraftReviewModal({ draft, close, reject, accept }: {
   draft: AgentDraft;
   close: () => void;
   reject: () => void;
   accept: () => void;
 }) {
+  const copy = reviewCopy(draft);
+  const revisedContent = draft.operation === "move_section" ? draft.target.destinationSnapshot ?? "" : draft.after;
   const [syncScroll, setSyncScroll] = useState(true);
   const [split, setSplit] = useState(50);
   const [stacked, setStacked] = useState(false);
@@ -65,11 +75,11 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
   const modal = <div className="agent-review-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <section className="agent-review-modal" role="dialog" aria-modal="true" aria-labelledby="agent-review-title">
       <header className="agent-review-head">
-        <div><span>AGENT REVIEW</span><h2 id="agent-review-title">章节优化审核</h2><p>{draft.instruction}</p></div>
+        <div><span>AGENT REVIEW</span><h2 id="agent-review-title">{copy.title}</h2><p>{draft.instruction}</p></div>
         <button type="button" title="关闭审核" onClick={close}><X size={18} /></button>
       </header>
       <div className="agent-review-toolbar">
-        <span><Columns2 size={14} />原文与优化稿对照</span>
+        <span><Columns2 size={14} />{copy.summary}</span>
         <div className="agent-review-tools">
           <button type="button" title="恢复均分" aria-label="恢复均分" onClick={() => setSplit(50)}><RotateCcw size={13} /></button>
           <label><input type="checkbox" checked={syncScroll} onChange={event => setSyncScroll(event.target.checked)} />同步滚动</label>
@@ -77,8 +87,8 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
       </div>
       <div ref={columnsRef} className="agent-review-columns" style={{ "--review-split": `${split}%` } as React.CSSProperties}>
         <article className="original">
-          <header><div><i />优化前原文</div><span>{draft.before.length.toLocaleString()} 字</span></header>
-          <pre ref={originalRef} onScroll={event => synchronize(event.currentTarget, revisedRef.current)}>{draft.before || "（当前章节为空）"}</pre>
+          <header><div><i />{copy.before}</div><span>{draft.before.length.toLocaleString()} 字</span></header>
+          <pre ref={originalRef} onScroll={event => synchronize(event.currentTarget, revisedRef.current)}>{draft.before || copy.emptyBefore}</pre>
         </article>
         <div
           className="agent-review-resizer"
@@ -95,13 +105,13 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
           onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeFromPointer(event); }}
         ><GripVertical size={14} /></div>
         <article className="revised">
-          <header><div><i />Agent 优化稿</div><span>{draft.after.length.toLocaleString()} 字</span></header>
-          <pre ref={revisedRef} onScroll={event => synchronize(event.currentTarget, originalRef.current)}>{draft.after}</pre>
+          <header><div><i />{copy.after}</div><span>{revisedContent.length.toLocaleString()} 字</span></header>
+          <pre ref={revisedRef} onScroll={event => synchronize(event.currentTarget, originalRef.current)}>{revisedContent || copy.emptyAfter}</pre>
         </article>
       </div>
       <footer>
-        <span>接受后将替换当前章节内容</span>
-        <div><button type="button" onClick={reject}>拒绝修改</button><button type="button" className="primary" onClick={accept}><Check size={14} />接受并插入</button></div>
+        <span>{copy.footer}</span>
+        <div><button type="button" onClick={reject}>拒绝修改</button><button type="button" className="primary" onClick={accept}><Check size={14} />{copy.accept}</button></div>
       </footer>
     </section>
   </div>;

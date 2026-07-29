@@ -11,6 +11,7 @@ import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle 
 import {
   applyHeadingLevel,
   alignHeadingsToRules,
+  applyAgentDraft as applyAgentDraftToMarkdown,
   buildHeadingTree,
   defaultProposalMarkdown,
   deleteSection,
@@ -22,6 +23,7 @@ import {
   stripHeadingPrefix,
   titleFromMarkdown,
 } from "./markdownDoc";
+import type { AgentDraft, AgentEditorSelection } from "./agent/protocol";
 import {
   applyTemplate,
   defaultTemplateMeta,
@@ -118,15 +120,16 @@ const SEARXNG_ENGINE_OPTIONS = [
   ["startpage", "Startpage"],
   ["wikipedia", "Wikipedia"],
 ] as const;
-function syntheticBlock(project: Project, content: string): DocumentBlock {
+function syntheticBlock(project: Project, content: string, headingId?: string, headingTitle?: string, headingLevel?: number): DocumentBlock {
   return {
     id: project.id,
-    sectionId: "markdown",
+    sectionId: headingId ?? "markdown",
     type: "text",
     content,
     order: 0,
     status: "draft",
     sourceRefs: project.contextSourceRefs,
+    metadata: headingId ? { headingTitle: headingTitle ?? "", headingLevel: String(headingLevel ?? "") } : undefined,
   };
 }
 
@@ -163,6 +166,7 @@ export default function App() {
   const [leftView, setLeftView] = useState<"outline" | "git">("outline");
   const [gitDiff, setGitDiff] = useState<GitDiffSelection | null>(null);
   const [gitDiffActive, setGitDiffActive] = useState(false);
+  const [agentSelection, setAgentSelection] = useState<AgentEditorSelection | undefined>(undefined);
   const confirmDeleteRef = useRef<number>(0);
   const sourcePreview = useSourcePreview();
   const rightDrag = useRef<{ startX: number; startW: number } | null>(null);
@@ -180,7 +184,10 @@ export default function App() {
   const headingTree = useMemo(() => buildHeadingTree(headings), [headings]);
   const selectedHeading = headings.find(h => h.id === selectedHeadingId) ?? headings[0] ?? null;
   const activeBody = selectedHeading && editorMode === "section" ? sectionBody(markdown, selectedHeading) : markdown;
-  const activeBlock = useMemo(() => syntheticBlock(project, activeBody), [project, activeBody]);
+  const activeBlock = useMemo(
+    () => syntheticBlock(project, activeBody, selectedHeading?.id, selectedHeading?.title, selectedHeading?.level),
+    [project, activeBody, selectedHeading],
+  );
   const findHits = useMemo(
     () => findMatches(activeBody, findQuery, { caseSensitive: findCaseSensitive }),
     [activeBody, findQuery, findCaseSensitive],
@@ -210,6 +217,8 @@ export default function App() {
       setSelectedHeadingId(headings[0]?.id ?? null);
     }
   }, [headings, selectedHeadingId]);
+
+  useEffect(() => setAgentSelection(undefined), [project.filePath, selectedHeadingId, editorMode]);
 
   const { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace } = useWorkspaceSession({
     project, desktop, setProject, notify,
@@ -546,6 +555,43 @@ export default function App() {
     });
   };
 
+  const captureAgentSelection = (selection: { start: number; end: number }) => {
+    if (selection.start === selection.end) {
+      setAgentSelection(undefined);
+      return;
+    }
+    const baseOffset = selectedHeading && editorMode === "section" ? selectedHeading.start : 0;
+    setAgentSelection({
+      start: baseOffset + selection.start,
+      end: baseOffset + selection.end,
+      text: activeBody.slice(selection.start, selection.end),
+      scope: editorMode === "section" ? "section" : "document",
+      sectionId: selectedHeading?.id,
+      sectionTitle: selectedHeading?.title,
+    });
+  };
+  const validAgentSelection = agentSelection
+    && markdown.slice(agentSelection.start, agentSelection.end) === agentSelection.text
+    ? agentSelection
+    : undefined;
+
+  const applyAgentEditDraft = (draft: AgentDraft) => {
+    const applied = applyAgentDraftToMarkdown(markdown, draft);
+    const nextHeadings = parseMarkdownHeadings(applied.markdown);
+    const nextHeading = applied.headingId ? nextHeadings.find(item => item.id === applied.headingId) : undefined;
+    setMarkdown(applied.markdown);
+    if (nextHeading) setSelectedHeadingId(nextHeading.id);
+    if (applied.selectionStart !== undefined && applied.selectionEnd !== undefined) {
+      requestAnimationFrame(() => {
+        const sectionOffset = editorMode === "section" && nextHeading ? nextHeading.start : 0;
+        const start = Math.max(0, applied.selectionStart! - sectionOffset);
+        const end = Math.max(start, applied.selectionEnd! - sectionOffset);
+        sourceEditorRef.current?.setSelection(start, end);
+        sourceEditorRef.current?.scrollToSelection();
+      });
+    }
+  };
+
   const exportAsMarkdown = async () => {
     setExportMenu(false);
     try {
@@ -871,6 +917,7 @@ export default function App() {
                 value={activeBody}
                 onChange={setActiveContent}
                 workspaceRoot={workspace?.root}
+                onSelectionChange={captureAgentSelection}
                 placeholder={editorMode === "full" ? "编辑完整 Markdown…" : "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片"}
               />
             </div>
@@ -895,6 +942,9 @@ export default function App() {
           block={activeBlock}
           updateProject={updateProject}
           updateBlock={updateActiveBlock}
+          agentSelection={validAgentSelection}
+          clearAgentSelection={() => setAgentSelection(undefined)}
+          applyAgentDraft={applyAgentEditDraft}
           notify={notify}
           openSettings={() => setSettingsOpen(true)}
           openSourcePreview={sourcePreview.open}

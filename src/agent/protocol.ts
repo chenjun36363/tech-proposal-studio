@@ -4,7 +4,38 @@ export interface TodoItem { content: string; status: "pending" | "in_progress" |
 
 export interface AgentToolCall { id: string; name: string; arguments: Record<string, unknown>; }
 export interface AgentToolResult { content: string; data?: unknown; isError: boolean; }
-export interface AgentDraft { callId: string; before: string; after: string; instruction: string; }
+export type AgentEditOperation = "replace_section" | "replace_selection" | "insert_section" | "delete_section" | "move_section";
+export interface AgentDraftTarget {
+  sectionId?: string;
+  sectionTitle?: string;
+  sectionLevel?: number;
+  position?: "before" | "after";
+  selectionStart?: number;
+  selectionEnd?: number;
+  selectionScope?: "section" | "document";
+  /** Target snapshot used to reject stale proposals before applying them. */
+  snapshot?: string;
+  destinationSectionId?: string;
+  destinationSectionTitle?: string;
+  /** Destination snapshot used together with snapshot for safe chapter movement. */
+  destinationSnapshot?: string;
+}
+export interface AgentDraft {
+  callId: string;
+  operation: AgentEditOperation;
+  target: AgentDraftTarget;
+  before: string;
+  after: string;
+  instruction: string;
+}
+export interface AgentEditorSelection {
+  start: number;
+  end: number;
+  text: string;
+  scope: "section" | "document";
+  sectionId?: string;
+  sectionTitle?: string;
+}
 
 export type AgentEvent =
   | { id: string; type: "run_started"; at: number; model: string }

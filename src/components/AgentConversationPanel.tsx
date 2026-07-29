@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageSquarePlus, Send, Square, Trash2 } from "lucide-react";
+import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageSquarePlus, Send, Square, Trash2, X } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
 import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, compactAgentConversation, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch } from "../agent/conversationStore";
-import { createProposalToolRegistry, proposalAgentSystemPrompt } from "../agent/proposalTools";
-import type { AgentDraft, AgentEvent, AgentRunStatus, TodoItem } from "../agent/protocol";
+import { buildEditorSelectionPrompt, createProposalToolRegistry, proposalAgentSystemPrompt } from "../agent/proposalTools";
+import type { AgentDraft, AgentEditorSelection, AgentEvent, AgentRunStatus, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings } from "../agent/settings";
 import { listProjectMemories } from "../agent/memoryService";
@@ -21,11 +21,21 @@ function conversationTitle(task: string) {
   return task.replace(/\s+/g, " ").trim().slice(0, 24) || "新会话";
 }
 
-export function AgentConversationPanel({ project, block, pinnedContext, updateBlock, notify }: {
+function draftCopy(draft: AgentDraft) {
+  if (draft.operation === "move_section") return { title: "章节移动待确认", before: "待移动章节", after: "目标位置章节" };
+  if (draft.operation === "replace_selection") return { title: "选区修改待确认", before: "选区原文", after: "替换稿" };
+  if (draft.operation === "insert_section") return { title: "章节插入待确认", before: "插入位置", after: "待插入章节" };
+  if (draft.operation === "delete_section") return { title: "章节删除待确认", before: "待删除章节", after: "删除后" };
+  return { title: "章节修改待确认", before: "章节原文", after: "修改稿" };
+}
+
+export function AgentConversationPanel({ project, block, pinnedContext, editorSelection, clearEditorSelection, applyDraft, notify }: {
   project: Project;
   block: DocumentBlock;
   pinnedContext: ResolvedAgentContext[];
-  updateBlock: (updater: (block: DocumentBlock) => DocumentBlock) => void;
+  editorSelection?: AgentEditorSelection;
+  clearEditorSelection: () => void;
+  applyDraft: (draft: AgentDraft) => void;
   notify: (message: string) => void;
 }) {
   const [conversations, setConversations] = useState<AgentConversation[]>([]);
@@ -81,6 +91,8 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
   const pinnedContextOnly = Boolean(active?.pinnedContextOnly && pinnedContext.length > 0);
   const webSearchEnabled = active?.webSearchEnabled === true;
   const knowledgeSearchEnabled = active?.knowledgeSearchEnabled !== false;
+  const pendingDraftCopy = draft ? draftCopy(draft) : null;
+  const pendingRevisedContent = draft?.operation === "move_section" ? draft.target.destinationSnapshot ?? "" : draft?.after ?? "";
 
   const activateConversation = async (next: AgentConversation) => {
     try {
@@ -183,17 +195,25 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
   const rejectDraft = () => { setReviewOpen(false); setDraft(null); settleDraft(false); };
   const acceptDraft = () => {
     if (!draft) return;
-    updateBlock(current => ({ ...current, content: draft.after }));
-    setReviewOpen(false);
-    setDraft(null);
-    settleDraft(true);
-    notify("Agent 修改已应用到当前章节");
+    try {
+      applyDraft(draft);
+      setReviewOpen(false);
+      setDraft(null);
+      settleDraft(true);
+      notify("Agent 编辑提案已应用");
+    } catch (error) {
+      setReviewOpen(false);
+      setDraft(null);
+      settleDraft(false);
+      notify(error instanceof Error ? error.message : "提案应用失败");
+    }
   };
 
 
   const send = async () => {
     const task = input.trim();
     if (!task || !active) return;
+    const capturedSelection = editorSelection;
     let config;
     try {
       config = resolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
@@ -219,7 +239,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
       return [pendingConversation, ...remaining];
     });
     try {
-    const registry = createProposalToolRegistry({ project, block, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+    const registry = createProposalToolRegistry({ project, block, selection: capturedSelection, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
     if (pinnedContextOnly || !agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
     if (!agentSettings.memoryEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
@@ -230,6 +250,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     if (!agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) promptParts.push("知识库检索当前已停用。不得调用 search_knowledge 或 read_knowledge，也不得声称已执行知识库检索。");
     if (!webSearchEnabled) promptParts.push("联网搜索当前已停用。不得调用 web_search 或 read_web_page。");
     else promptParts.push(`本轮最多执行 ${agentSettings.webSearchMaxCalls} 次联网搜索，达到上限后不得再次调用 web_search。`);
+    if (capturedSelection) promptParts.push(buildEditorSelectionPrompt(capturedSelection));
     if (agentSettings.planningEnabled) promptParts.push("首轮必须先调用 write_todo 制定本次任务的执行计划，再执行读取、检索或修改操作。");
     const memories = agentSettings.memoryEnabled ? await listProjectMemories(project, false) : [];
     const requestMessages = buildProposalAgentMessages({
@@ -289,16 +310,16 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     </div>
 
     {draft && <section className="agent-draft">
-      <header><div><FileSearch size={15} /><span>章节修改待确认</span></div><small>{draft.instruction}</small></header>
-      <div className="agent-diff-stats"><span className="removed">原文 {draft.before.length.toLocaleString()} 字</span><span className="added">修改后 {draft.after.length.toLocaleString()} 字</span></div>
+      <header><div><FileSearch size={15} /><span>{pendingDraftCopy?.title}</span></div><small>{draft.instruction}</small></header>
+      <div className="agent-diff-stats"><span className="removed">原文 {draft.before.length.toLocaleString()} 字</span><span className="added">修改后 {pendingRevisedContent.length.toLocaleString()} 字</span></div>
       <div className="agent-draft-compare">
         <section className="original">
-          <div><b>优化前原文</b><span>{draft.before.length.toLocaleString()} 字</span></div>
-          <pre>{draft.before || "（当前章节为空）"}</pre>
+          <div><b>{pendingDraftCopy?.before}</b><span>{draft.before.length.toLocaleString()} 字</span></div>
+          <pre>{draft.before || (draft.operation === "insert_section" ? `将在「${draft.target.sectionTitle ?? "目标章节"}」${draft.target.position === "before" ? "之前" : "之后"}插入` : "（当前内容为空）")}</pre>
         </section>
         <section className="revised">
-          <div><b>Agent 优化稿</b><span>{draft.after.length.toLocaleString()} 字</span></div>
-          <pre>{draft.after}</pre>
+          <div><b>{pendingDraftCopy?.after}</b><span>{pendingRevisedContent.length.toLocaleString()} 字</span></div>
+          <pre>{pendingRevisedContent || "（整个章节将被删除）"}</pre>
         </section>
       </div>
       <div><button type="button" onClick={() => setReviewOpen(true)}><Maximize2 size={13} />放大审核</button><button type="button" onClick={rejectDraft}>拒绝</button><button type="button" className="primary" onClick={acceptDraft}><Check size={13} />接受修改</button></div>
@@ -318,6 +339,10 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
         <BookOpen size={13} /><span>{`引用资料${pinnedContext.length}条`}</span>
       </label>
     </div>
+    {editorSelection && <div className="agent-selection-capture" title={editorSelection.text}>
+      <span><FileSearch size={13} /><b>已捕获选区</b><small>{editorSelection.text.length.toLocaleString()} 字 · {editorSelection.sectionTitle ?? (editorSelection.scope === "document" ? "全文" : "当前章节")}</small></span>
+      <button type="button" title="清除已捕获选区" onClick={clearEditorSelection} disabled={running}><X size={13} /></button>
+    </div>}
     <div className="agent-chat-composer">
       <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="输入消息，Enter 发送，Shift+Enter 换行" disabled={running} />
       {running
