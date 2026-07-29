@@ -6,4 +6,8 @@ describe("normalizeCommitMessage", () => {
     expect(normalizeCommitMessage("```text\n\"feat: 增加 Git 历史\"\n额外解释\n```"))
       .toBe("feat: 增加 Git 历史");
   });
+
+  it("limits unexpectedly verbose model output", () => {
+    expect(normalizeCommitMessage(`feat: ${"长".repeat(150)}`)).toHaveLength(120);
+  });
 });
