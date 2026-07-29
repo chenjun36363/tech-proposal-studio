@@ -102,11 +102,10 @@ Desktop only, hosted in the right panel. Rust uses `portable-pty` (`terminal_ope
 - Loads current key, then migrates from legacy key if needed.
 - `ensureCommands` migrates missing agent-check presets on older projects.
 
-**Connection config (model + search)** lives in the workspace file  
-`<workspace.root>/.gouan/connections.json` via `src/connections.ts` (`loadWorkspaceConnections` / `saveWorkspaceConnections`).  
-Loaded on desktop workspace boot and when applying a workspace root; written when the user saves Settings.  
+**Connection config (model + search)** lives in the app-data SQLite `workspace.db`, table `workspace_connections`, keyed by workspace root, via `src/connections.ts` (`loadWorkspaceConnections` / `saveWorkspaceConnections`).
+Loaded on desktop workspace boot and when applying a workspace root; written when the user saves Settings. Legacy `<workspace.root>/.gouan/connections.json` is imported once when no database row exists and is never written again.
 Browser mode (no root) keeps the same JSON shape under localStorage key `tech-proposal-studio.connections.v1`.  
-API keys **are** stored in that workspace file (user-requested); they still never go into the project cache (`tech-proposal-studio.project.v1`).
+API keys **are** stored in that SQLite row (user-requested); they still never go into the project cache (`tech-proposal-studio.project.v1`).
 
 Rust keyring (`store_secret` / `load_secret`): service `com.techproposal.studio`, with one-time copy from `cn.gouan.writer` if present. Saving settings also mirrors keys into keyring so model calls can fill empty API key from keyring when possible.
 

@@ -29,6 +29,15 @@ function isAbsolutePath(src: string): boolean {
   return /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(src);
 }
 
+/** marked URL-encodes non-ASCII image destinations; filesystem APIs need the decoded path. */
+export function decodeLocalImagePath(src: string): string {
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    return src;
+  }
+}
+
 /** Resolve relative markdown images against the open file dir, else workspace root (paste → assets/). */
 function rewriteLocalImages(html: string, filePath?: string, workspaceRoot?: string): string {
   if (!isDesktop()) return html;
@@ -41,10 +50,11 @@ function rewriteLocalImages(html: string, filePath?: string, workspaceRoot?: str
   return html.replace(/<img\s+([^>]*?)src=["']([^"']+)["']([^>]*)>/gi, (full, pre, src, post) => {
     if (/^(https?:|data:|asset:|blob:|tauri:)/i.test(src)) return full;
     try {
-      const normalized = src.replace(/\\/g, "/");
+      const decoded = decodeLocalImagePath(src);
+      const normalized = decoded.replace(/\\/g, "/");
       let abs = "";
-      if (isAbsolutePath(src) || isAbsolutePath(normalized)) {
-        abs = src;
+      if (isAbsolutePath(decoded) || isAbsolutePath(normalized)) {
+        abs = decoded;
       } else {
         // Prefer workspace root for assets/… (paste target); else file directory
         if (/^assets\//i.test(normalized) && workspaceRoot) {
@@ -102,7 +112,6 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   placeholder,
 }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
   const composingRef = useRef(false);
   const [draft, setDraft] = useState(value);
 
@@ -174,22 +183,8 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     }
   };
 
-  const syncHighlightScroll = () => {
-    const textarea = taRef.current;
-    const highlight = highlightRef.current;
-    if (!textarea || !highlight) return;
-    highlight.scrollTop = textarea.scrollTop;
-    highlight.scrollLeft = textarea.scrollLeft;
-  };
-
   return (
     <div className="md-source-editor">
-      <div ref={highlightRef} className="md-source-highlight" aria-hidden="true">
-        {draft.split("\n").map((line, index) => {
-          const heading = /^(#{1,6})(?:[ \t]+|$)/.exec(line);
-          return <div className={heading ? `md-source-heading heading-${heading[1].length}` : undefined} key={index}>{line || " "}</div>;
-        })}
-      </div>
       <textarea
         ref={taRef}
         className="md-source"
@@ -197,7 +192,6 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
         placeholder={placeholder ?? "在此编辑 Markdown…"}
         spellCheck={false}
         wrap="soft"
-        onScroll={syncHighlightScroll}
         onChange={(e) => {
           const next = e.target.value;
           setDraft(next);

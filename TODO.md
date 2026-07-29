@@ -22,6 +22,60 @@
 - [ ] 清理不应提交的运行数据，例如 `workspace/.gouan/*.db` 和 Agent 会话实例文件。
 - [ ] 完成定向测试、全量测试和生产构建。
 
+## P0 Agent 会话存储 SQLite 改造
+
+目标：桌面端以 `<workspace.root>/.gouan/conversations.db` 作为 Agent 会话唯一真源；前端以内存运行态为即时数据源，通过增量事件同步持久化结果。发送、切换、新建、删除和修改会话开关均不得依赖整页刷新或整库重载。
+
+### 存储模型
+
+- [x] 新建独立 Rust `agent_conversations` 存储模块，不复用应用数据目录 `workspace.db`，也不混入记忆模块 `memory.db`。
+- [x] 创建 `agent_conversation` 表：`id`、`project_id`、`title`、`summary`、三个会话开关、`created_at`、`updated_at`、`revision`。
+- [x] 创建 `agent_conversation_message` 表：`conversation_id`、`sequence`、`role`、`message_json`、`created_at`，以 `(conversation_id, sequence)` 为主键并启用级联删除。
+- [x] 创建 `agent_conversation_meta` 表记录 schema 版本和 JSON 迁移完成标记。
+- [x] 为 `project_id + updated_at`、`conversation_id + sequence` 建立索引。
+- [ ] 数据库连接启用 `foreign_keys`、`busy_timeout` 和 WAL；schema 升级必须在事务中完成并使用 `PRAGMA user_version`。
+- [x] `message_json` 保留完整 `AgentMessage` 契约，避免拆散 tool call、tool result 和扩展字段；列表查询不得读取消息 JSON。
+
+### Tauri 命令与事件
+
+- [x] 增加 `agent_conversation_list(project_id, workspace_root)`，只返回会话摘要和开关。
+- [x] 增加 `agent_conversation_get(id, workspace_root)`，按 `sequence` 返回单个完整会话。
+- [x] 增加 `agent_conversation_upsert(input, workspace_root)`，在一个事务中更新元数据和消息；使用 `revision` 检测陈旧写入。
+- [x] 增加 `agent_conversation_patch(id, patch, expected_revision)`，用于标题和会话开关的局部更新，不重写消息。
+- [x] 增加 `agent_conversation_delete`、`agent_conversation_clear_project`，返回受影响 ID。
+- [ ] 所有成功变更发送统一 `agent-conversations:changed` 事件，载荷使用 `upsert`、`delete`、`clear`，并携带 `projectId`、`conversationId`、摘要和 `revision`。
+- [ ] 所有数据库操作放入阻塞线程；同一会话写入在前端继续串行排队，Rust 事务作为最终一致性边界。
+
+### JSON 迁移与兼容
+
+- [x] 首次打开工作区数据库时，如果未标记迁移且存在 `.gouan/agent-conversations.json`，解析、校验并在单个事务中导入。
+- [ ] 按会话 ID 幂等导入；非法会话跳过并返回可见警告，不能导致整个数据库不可用。
+- [x] 导入成功后写入迁移标记；旧 JSON 保留为只读备份，不再由新代码写入。
+- [ ] localStorage 继续作为浏览器模式适配器；桌面端只在 SQLite 尚无数据且 JSON 迁移源不存在时执行一次 legacy localStorage 导入。
+- [ ] 迁移失败时继续使用旧存储读取且禁止覆盖 JSON；修复后可安全重试。
+
+### 前端运行态
+
+- [ ] 将 `conversationStore.ts` 拆为统一接口和 Browser/SQLite 两个 adapter，React 组件不得直接调用 `invoke` 或读取 JSON。
+- [ ] 建立按 `conversationId` 索引的运行时缓存，保存消息、事件、Todo、草稿审核、运行状态和 AbortController。
+- [x] 切换会话优先同步激活运行时缓存；缓存未命中时只加载目标会话，不重新加载会话列表。
+- [ ] 新建会话先乐观插入空运行态，再后台持久化；失败只回滚该会话。
+- [x] 删除会话先局部移除，成功事件确认；删除当前会话时只激活内存中的下一条，不重新查询列表。
+- [x] 会话开关先更新运行态并调用 `patch`；不得触发完整会话 upsert 或时间线重建。
+- [ ] Agent 运行中的 token、工具事件和 Todo 只更新运行态；在稳定检查点或结束时持久化，不因切换面板而 abort。
+- [ ] 订阅 Rust 增量事件并按 `revision` reconcile；忽略旧事件，禁止以整列表替换当前运行态。
+- [ ] 限制闲置完整会话缓存数量并使用 LRU 淘汰；当前会话、运行中会话和待审核草稿不得淘汰。
+
+### 测试与切换
+
+- [ ] Rust 覆盖 schema 初始化、版本迁移、事务回滚、级联删除、分页列表、单会话读取和 revision 冲突。
+- [ ] 覆盖 JSON 正常迁移、重复迁移、部分非法数据、空文件、损坏文件和 localStorage legacy 导入。
+- [ ] 覆盖重叠保存严格串行、后写不被先写覆盖、失败写不推进 revision、数据库 busy 后可重试。
+- [ ] 前端覆盖发送中切换会话、后台完成后回切、新建、删除、三个开关、外部增量事件和 LRU 淘汰。
+- [ ] 增加回归断言：上述操作不得调用完整列表查询，不得卸载 Agent runner，不得触发页面 reload。
+- [ ] 先以开发开关启用 SQLite adapter，完成真实工作区迁移验证后删除 JSON 写路径和临时开关。
+- [ ] 完成 `pnpm test`、`pnpm build`、Rust 测试及 Tauri 手工流程，再清理 `.gouan/agent-conversations.json` 写命令。
+
 ## P1 Agent 文档编辑工具
 
 目标：让 Agent 根据用户指令和当前编辑上下文，自动选择章节改写、选区修改、章节插入或章节删除工具；所有操作都必须经过审核。

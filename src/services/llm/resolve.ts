@@ -76,7 +76,12 @@ export function resolveActiveModelConfig(
   if (!provider) throw new Error("所选模型供应商不存在，请重新选择");
   if (!provider.enabled) throw new Error(`供应商「${provider.name}」已禁用`);
   if (!provider.baseUrl.trim()) throw new Error(`请先填写供应商「${provider.name}」的 API 地址`);
-  if (requireActive && provider.activeModels.length && !provider.activeModels.includes(selection.model)) {
+  if (
+    requireActive &&
+    provider.activeModels.length &&
+    !provider.activeModels.includes(selection.model) &&
+    !(provider.catalog?.some(catalog => catalog.id === selection.model))
+  ) {
     throw new Error(`模型「${selection.model}」未在供应商「${provider.name}」中启用`);
   }
   return {

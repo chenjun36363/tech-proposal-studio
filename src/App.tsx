@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, Globe2, Highlighter, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Trash2, Undo2, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Trash2, Undo2, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { searchWeb } from "./services/search";
 import { isDesktop } from "./services/runtime";
 import { saveMarkdown } from "./services/system";
-import { downloadDocx } from "./docxExport";
 import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./findReplace";
 import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./markdownEditor";
 import {
@@ -71,6 +70,8 @@ import { useKnowledgeTransfer } from "./features/knowledge/useKnowledgeTransfer"
 import { InspectorPanel, type InspectorTab } from "./features/inspector/InspectorPanel";
 import { WebSearchModal } from "./features/search/WebSearchModal";
 import { EnvironmentModal } from "./features/environment/EnvironmentModal";
+import { WordExportModal } from "./components/WordExportModal";
+import { GitDiffView, GitSidebar, type GitDiffSelection } from "./features/git/GitWorkspace";
 import {
   saveProjectConnections,
 } from "./connections";
@@ -147,6 +148,7 @@ export default function App() {
   const [exportMenu, setExportMenu] = useState(false);
   const [fileMenu, setFileMenu] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [wordExportOpen, setWordExportOpen] = useState(false);
   const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("section");
   const [viewMode, setViewMode] = useState<"split" | "edit" | "preview">("split");
@@ -158,6 +160,9 @@ export default function App() {
   const [collapsedHeadings, setCollapsedHeadings] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [workspaceDocsCollapsed, setWorkspaceDocsCollapsed] = useState(false);
+  const [leftView, setLeftView] = useState<"outline" | "git">("outline");
+  const [gitDiff, setGitDiff] = useState<GitDiffSelection | null>(null);
+  const [gitDiffActive, setGitDiffActive] = useState(false);
   const confirmDeleteRef = useRef<number>(0);
   const sourcePreview = useSourcePreview();
   const rightDrag = useRef<{ startX: number; startW: number } | null>(null);
@@ -553,17 +558,7 @@ export default function App() {
 
   const exportAsWord = async () => {
     setExportMenu(false);
-    setExporting(true);
-    try {
-      const path = await downloadDocx(project);
-      if (path) notify(`Word 已保存：${path}`);
-      else if (path === undefined && isDesktop()) notify("已取消导出");
-      else notify("已导出 Word (.docx)");
-    } catch (e: any) {
-      notify(e?.message ?? "导出 Word 失败");
-    } finally {
-      setExporting(false);
-    }
+    setWordExportOpen(true);
   };
 
   const onRightResizeStart = (e: React.MouseEvent) => {
@@ -676,7 +671,7 @@ export default function App() {
     >
       <aside className="left-panel">
         <div className="panel-heading">
-          <span>目录</span>
+          <span>{leftView === "outline" ? "目录" : "源代码管理"}</span>
           <div>
             <IconButton title="新建 Markdown 文件" onClick={() => void createNewFile()}><FilePlus2 size={15} /></IconButton>
             <IconButton title="打开工作区 Markdown" onClick={() => void openFromDialog()}><FolderOpen size={15} /></IconButton>
@@ -688,6 +683,11 @@ export default function App() {
             </IconButton>
           </div>
         </div>
+        <div className="left-view-tabs" aria-label="左侧面板视图">
+          <button className={leftView === "outline" ? "active" : ""} type="button" onClick={() => setLeftView("outline")} title="文档目录"><FileText size={14} /><span>目录</span></button>
+          <button className={leftView === "git" ? "active" : ""} type="button" onClick={() => setLeftView("git")} title="Git 源代码管理"><GitBranch size={14} /><span>Git</span></button>
+        </div>
+        {leftView === "outline" ? <>
         <div className="toc-mode">
           <button className={editorMode === "section" ? "active" : ""} onClick={() => setEditorMode("section")}>按章节</button>
           <button className={editorMode === "full" ? "active" : ""} onClick={() => setEditorMode("full")}>全文</button>
@@ -750,25 +750,33 @@ export default function App() {
             </div>}
           </div>
         )}
+        </> : <GitSidebar
+          root={workspace?.root ?? ""}
+          project={project}
+          selected={gitDiff}
+          onSelect={selection => { setGitDiff(selection); setGitDiffActive(Boolean(selection)); }}
+          notify={notify}
+        />}
       </aside>
       <div className="left-splitter" onMouseDown={onLeftResizeStart} title="拖动调整左侧面板宽度" />
       <main className="editor-area">
         <div className="editor-title">
           <div>
-            <span>{editorMode === "full" ? "全文" : selectedHeading ? `H${selectedHeading.level}` : "正文"}</span>
+            <span>{gitDiffActive && gitDiff ? (gitDiff.kind === "commit" ? "提交历史" : gitDiff.staged ? "暂存区差异" : "工作区差异") : editorMode === "full" ? "全文" : selectedHeading ? `H${selectedHeading.level}` : "正文"}</span>
             <input
-              value={editorMode === "full" ? project.name : (selectedHeading?.title ?? project.name)}
-              readOnly={editorMode === "section"}
+              value={gitDiffActive && gitDiff ? (gitDiff.kind === "commit" ? gitDiff.title : gitDiff.path) : editorMode === "full" ? project.name : (selectedHeading?.title ?? project.name)}
+              readOnly={gitDiffActive || editorMode === "section"}
               onChange={e => editorMode === "full" && updateProject(p => ({ ...p, name: e.target.value }), false)}
             />
           </div>
           <div className="view-toggle">
-            <button className={viewMode === "edit" ? "active" : ""} onClick={() => setViewMode("edit")}>源码</button>
-            <button className={viewMode === "split" ? "active" : ""} onClick={() => setViewMode("split")}>分栏</button>
-            <button className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>预览</button>
+            <button className={!gitDiffActive && viewMode === "edit" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("edit"); }}>源码</button>
+            <button className={!gitDiffActive && viewMode === "split" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("split"); }}>分栏</button>
+            <button className={!gitDiffActive && viewMode === "preview" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("preview"); }}>预览</button>
+            {gitDiff && <button className={gitDiffActive ? "active" : ""} type="button" title="返回最近查看的 Git 差异" onClick={() => setGitDiffActive(true)}><GitCompare size={13} />Diff</button>}
           </div>
         </div>
-        <div className="heading-toolbar" title="选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）">
+        {!gitDiffActive && <div className="heading-toolbar" title="选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）">
           <div className="heading-toolbar-row">
             <span className="heading-toolbar-label">设置标题</span>
             <div className="heading-level-group">
@@ -805,8 +813,8 @@ export default function App() {
               <Replace size={14} /> 替换
             </button>
           </div>
-        </div>
-        {findOpen && (
+        </div>}
+        {!gitDiffActive && findOpen && (
           <div className="find-replace-bar">
             <div className="find-replace-row">
               <label>
@@ -855,7 +863,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className={`md-workspace mode-${viewMode}`}>
+        {gitDiffActive && gitDiff ? <GitDiffView root={workspace?.root ?? ""} selection={gitDiff} /> : <div className={`md-workspace mode-${viewMode}`}>
           {(viewMode === "edit" || viewMode === "split") && (
             <div className="md-pane source-pane">
               <MarkdownSourceEditor
@@ -876,7 +884,7 @@ export default function App() {
               />
             </div>
           )}
-        </div>
+        </div>}
       </main>
       {rightOpen ? <>
         <div className="right-splitter" onMouseDown={onRightResizeStart} title="拖动调整右侧面板宽度" />
@@ -907,6 +915,7 @@ export default function App() {
       notify={notify}
       close={sourcePreview.close}
     />}
+    {wordExportOpen && <WordExportModal project={project} close={() => setWordExportOpen(false)} notify={notify} />}
     {settingsOpen && <SettingsModal
       project={project}
       close={() => setSettingsOpen(false)}

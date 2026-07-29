@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearAgentConversations, compactAgentConversation, createAgentConversation, listAgentConversations, saveAgentConversation } from "./conversationStore";
+import { applyAgentConversationChange, clearAgentConversations, compactAgentConversation, createAgentConversation, listAgentConversations, saveAgentConversation } from "./conversationStore";
 
 describe("agent conversation storage", () => {
   beforeEach(() => localStorage.clear());
@@ -10,11 +10,27 @@ describe("agent conversation storage", () => {
     await saveAgentConversation({ ...createAgentConversation("project-b"), title: "B" });
     expect((await listAgentConversations("project-a")).map(item => item.title)).toEqual(["A"]);
   });
+  it("serializes overlapping saves without losing either conversation", async () => {
+    const first = { ...createAgentConversation("project-a"), title: "First" };
+    const second = { ...createAgentConversation("project-a"), title: "Second" };
+    await Promise.all([saveAgentConversation(first), saveAgentConversation(second)]);
+    expect(new Set((await listAgentConversations("project-a")).map(item => item.title))).toEqual(new Set(["First", "Second"]));
+  });
 
   it("starts new conversations with web search disabled", () => {
     const conversation = createAgentConversation("project-a");
     expect(conversation.webSearchEnabled).toBe(false);
     expect(conversation.knowledgeSearchEnabled).toBe(true);
+  });
+  it("applies conversation changes without reloading storage", () => {
+    const first = createAgentConversation("project-a");
+    const second = { ...createAgentConversation("project-a"), updatedAt: first.updatedAt + 1 };
+    const other = createAgentConversation("project-b");
+    const saved = applyAgentConversationChange([first, other], { projectId: "project-a", type: "saved", conversation: second });
+    expect(saved.map(item => item.id)).toEqual([second.id, first.id, other.id]);
+    const deleted = applyAgentConversationChange(saved, { projectId: "project-a", type: "deleted", conversationId: first.id });
+    expect(deleted.map(item => item.id)).toEqual([second.id, other.id]);
+    expect(applyAgentConversationChange(deleted, { projectId: "project-a", type: "cleared" })).toEqual([other]);
   });
 
   it("compacts old messages into a bounded summary", () => {

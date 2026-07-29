@@ -52,6 +52,54 @@ const HEADING_SIZES = [SIZE_H1, SIZE_H2, SIZE_H3, SIZE_H4, SIZE_H5, SIZE_H6] as 
 
 const MAX_IMAGE_WIDTH_PX = 520;
 
+export interface DocxExportSettings {
+  headingFont: string;
+  bodyFont: string;
+  headingSizes: [number, number, number, number, number, number];
+  bodySize: number;
+  lineSpacing: number;
+  firstLineIndent: number;
+  bodyBefore: number;
+  bodyAfter: number;
+  headingBefore: [number, number, number, number, number, number];
+  headingAfter: [number, number, number, number, number, number];
+  maxImageWidth: number;
+}
+
+export const DEFAULT_DOCX_EXPORT_SETTINGS: DocxExportSettings = {
+  headingFont: "黑体",
+  bodyFont: "宋体",
+  headingSizes: [22, 16, 14, 12, 12, 10.5],
+  bodySize: 12,
+  lineSpacing: 1.5,
+  firstLineIndent: 2,
+  bodyBefore: 0,
+  bodyAfter: 0,
+  headingBefore: [14, 12, 10, 9, 8, 7],
+  headingAfter: [7, 6, 5, 5, 4, 4],
+  maxImageWidth: MAX_IMAGE_WIDTH_PX,
+};
+
+export interface DocxImageCheckItem {
+  alt: string;
+  source: string;
+  path: string | null;
+  status: "ready" | "missing" | "unsupported" | "external";
+  message: string;
+}
+
+export interface DocxImageCheckResult {
+  total: number;
+  ready: number;
+  issues: DocxImageCheckItem[];
+  items: DocxImageCheckItem[];
+}
+
+const halfPoints = (points: number) => Math.max(1, Math.round(points * 2));
+const twips = (points: number) => Math.max(0, Math.round(points * 20));
+const lineTwips = (multiple: number) => Math.max(240, Math.round(multiple * 240));
+const exportFont = (name: string) => ({ eastAsia: name, ascii: name, hAnsi: name });
+
 function plainText(line: string): string {
   return line
     .replace(/\*\*(.+?)\*\*/g, "$1")
@@ -66,9 +114,10 @@ function plainText(line: string): string {
 function runsFromInline(
   line: string,
   base?: { italics?: boolean; color?: string; font?: typeof BODY_FONT | string; size?: number },
+  settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS,
 ): TextRun[] {
-  const font = base?.font ?? BODY_FONT;
-  const size = base?.size ?? SIZE_BODY;
+  const font = base?.font ?? exportFont(settings.bodyFont);
+  const size = base?.size ?? halfPoints(settings.bodySize);
   const pieces: TextRun[] = [];
   const re = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
   let last = 0;
@@ -127,7 +176,7 @@ function runsFromInline(
   return pieces;
 }
 
-function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolean }): Paragraph {
+function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolean }, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Paragraph {
   if (opts?.code) {
     return new Paragraph({
       children: [new TextRun({ text: line.length ? line : " ", font: CODE_FONT, size: SIZE_CODE })],
@@ -139,18 +188,16 @@ function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolea
       children: runsFromInline(line, {
         italics: true,
         color: "555555",
-        font: BODY_FONT,
-        size: SIZE_BODY,
-      }),
+        font: exportFont(settings.bodyFont),
+        size: halfPoints(settings.bodySize),
+      }, settings),
       indent: { left: 420 },
     });
   }
   return new Paragraph({
-    children: runsFromInline(line, { font: BODY_FONT, size: SIZE_BODY }),
-    // 正文首行缩进 2 字符 ≈ 480 twips
-    indent: { firstLine: 480 },
-    // 正文 1.5 倍行距
-    spacing: { line: 360, lineRule: LineRuleType.AUTO },
+    children: runsFromInline(line, { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize) }, settings),
+    indent: { firstLine: Math.round(settings.firstLineIndent * settings.bodySize * 20) },
+    spacing: { before: twips(settings.bodyBefore), after: twips(settings.bodyAfter), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO },
   });
 }
 
@@ -168,7 +215,7 @@ function parseTableRows(block: string[]): string[][] {
     .filter((r) => r.some((c) => c.length));
 }
 
-function tableFromMarkdown(rows: string[][]): Table {
+function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Table {
   const colCount = Math.max(...rows.map((r) => r.length), 1);
   const width = Math.floor(9000 / colCount);
   // 表格边框：1pt(=size 8) 实线，深灰，确保网格线清晰可见
@@ -205,8 +252,8 @@ function tableFromMarkdown(rows: string[][]): Table {
                   children: [
                     new TextRun({
                       text: text || " ",
-                      font: BODY_FONT,
-                      size: 20,
+                      font: exportFont(settings.bodyFont),
+                      size: halfPoints(Math.max(9, settings.bodySize - 2)),
                       bold: ri === 0,
                     }),
                   ],
@@ -319,8 +366,8 @@ function scaleImage(width: number, height: number, maxWidth: number): { width: n
   return { width: Math.round(width * ratio), height: Math.round(height * ratio) };
 }
 
-function resolveLocalImagePath(src: string, filePath?: string, workspaceRoot?: string): string | null {
-  const cleaned = src.trim().replace(/^<|>$/g, "").split(/\s+/)[0];
+export function resolveLocalImagePath(src: string, filePath?: string, workspaceRoot?: string): string | null {
+  const cleaned = decodeLocalImageSource(src);
   if (!cleaned || /^(https?:|data:|asset:|blob:|tauri:)/i.test(cleaned)) return null;
   const normalized = cleaned.replace(/\\/g, "/");
   if (isAbsolutePath(cleaned) || isAbsolutePath(normalized)) return cleaned;
@@ -330,6 +377,47 @@ function resolveLocalImagePath(src: string, filePath?: string, workspaceRoot?: s
   if (filePath) return joinPath(dirname(filePath), normalized);
   if (workspaceRoot) return joinPath(workspaceRoot, normalized);
   return null;
+}
+
+function decodeLocalImageSource(src: string): string {
+  const unwrapped = src.trim().replace(/^<|>$/g, "");
+  try {
+    return decodeURIComponent(unwrapped);
+  } catch {
+    return unwrapped;
+  }
+}
+
+export function extractMarkdownImages(markdown: string): Array<{ alt: string; source: string }> {
+  const images: Array<{ alt: string; source: string }> = [];
+  const pattern = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+)(?:\s+["'][^"']*["'])?)\s*\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(markdown))) {
+    images.push({ alt: match[1], source: match[2] ?? match[3] });
+  }
+  return images;
+}
+
+function matchImageOnly(line: string): { alt: string; source: string } | null {
+  const match = line.match(/^\s*!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+)(?:\s+["'][^"']*["'])?)\s*\)\s*$/);
+  return match ? { alt: match[1], source: match[2] ?? match[3] } : null;
+}
+
+export async function checkDocxImages(project: Project): Promise<DocxImageCheckResult> {
+  const references = extractMarkdownImages(exportMarkdown(project));
+  const items = await Promise.all(references.map(async ({ alt, source }): Promise<DocxImageCheckItem> => {
+    if (/^https?:/i.test(source)) {
+      return { alt, source, path: null, status: "external", message: "外部图片不会在本地导出中下载" };
+    }
+    const path = resolveLocalImagePath(source, project.filePath, project.workspace?.root);
+    if (!path) return { alt, source, path, status: "missing", message: "无法解析图片路径" };
+    const bytes = await loadImageBytes(path);
+    if (!bytes?.length) return { alt, source, path, status: "missing", message: "图片文件不存在或无法读取" };
+    const type = imageTypeFromPath(path) ?? sniffImageType(bytes);
+    if (!type) return { alt, source, path, status: "unsupported", message: "仅支持 PNG、JPEG、GIF、BMP" };
+    return { alt, source, path, status: "ready", message: "可嵌入" };
+  }));
+  return { total: items.length, ready: items.filter(item => item.status === "ready").length, issues: items.filter(item => item.status !== "ready"), items };
 }
 
 async function loadImageBytes(path: string): Promise<Uint8Array | null> {
@@ -357,6 +445,7 @@ async function paragraphFromImage(
   src: string,
   filePath?: string,
   workspaceRoot?: string,
+  settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS,
 ): Promise<Paragraph> {
   const abs = resolveLocalImagePath(src, filePath, workspaceRoot);
   if (!abs) {
@@ -364,8 +453,8 @@ async function paragraphFromImage(
       children: [
         new TextRun({
           text: alt ? `[图片: ${alt}]` : `[图片: ${src}]`,
-          font: BODY_FONT,
-          size: SIZE_BODY,
+          font: exportFont(settings.bodyFont),
+          size: halfPoints(settings.bodySize),
           italics: true,
           color: "666666",
         }),
@@ -379,8 +468,8 @@ async function paragraphFromImage(
       children: [
         new TextRun({
           text: alt ? `[图片无法加载: ${alt}]` : `[图片无法加载: ${src}]`,
-          font: BODY_FONT,
-          size: SIZE_BODY,
+          font: exportFont(settings.bodyFont),
+          size: halfPoints(settings.bodySize),
           italics: true,
           color: "666666",
         }),
@@ -394,8 +483,8 @@ async function paragraphFromImage(
       children: [
         new TextRun({
           text: `[不支持的图片格式: ${src}]`,
-          font: BODY_FONT,
-          size: SIZE_BODY,
+          font: exportFont(settings.bodyFont),
+          size: halfPoints(settings.bodySize),
           italics: true,
           color: "666666",
         }),
@@ -404,7 +493,7 @@ async function paragraphFromImage(
   }
 
   const natural = readImageSize(bytes, type);
-  const sized = scaleImage(natural.width, natural.height, MAX_IMAGE_WIDTH_PX);
+  const sized = scaleImage(natural.width, natural.height, settings.maxImageWidth);
   const options: IImageOptions = {
     type,
     data: bytes,
@@ -422,21 +511,22 @@ async function paragraphFromImage(
   });
 }
 
-function headingParagraph(level: number, title: string, centeredTitle: boolean): Paragraph {
-  const size = HEADING_SIZES[Math.min(Math.max(level, 1), 6) - 1];
+function headingParagraph(level: number, title: string, centeredTitle: boolean, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Paragraph {
+  const index = Math.min(Math.max(level, 1), 6) - 1;
+  const size = halfPoints(settings.headingSizes[index]);
   if (level === 1 && centeredTitle) {
     return new Paragraph({
       children: [
         new TextRun({
           text: title,
-          font: HEADING_FONT,
+          font: exportFont(settings.headingFont),
           bold: true,
-          size: SIZE_H1,
+          size: halfPoints(settings.headingSizes[0]),
           color: "000000",
         }),
       ],
       heading: HeadingLevel.TITLE,
-      spacing: { after: 200, line: 360, lineRule: LineRuleType.AUTO },
+      spacing: { after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO },
       alignment: AlignmentType.CENTER,
     });
   }
@@ -444,19 +534,19 @@ function headingParagraph(level: number, title: string, centeredTitle: boolean):
     children: [
       new TextRun({
         text: title,
-        font: HEADING_FONT,
+        font: exportFont(settings.headingFont),
         bold: true,
         size,
         color: "000000",
       }),
     ],
     heading: HEADING_LEVELS[Math.min(level, 6) - 1],
-    spacing: { before: 240, after: 120, line: 360, lineRule: LineRuleType.AUTO },
+    spacing: { before: twips(settings.headingBefore[index]), after: twips(settings.headingAfter[index]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO },
   });
 }
 
 /** Build DOCX from project markdown body (fallback to legacy sections). */
-export async function buildDocx(project: Project): Promise<Document> {
+export async function buildDocx(project: Project, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Promise<Document> {
   const markdown = exportMarkdown(project);
   const children: FileChild[] = [];
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
@@ -475,7 +565,7 @@ export async function buildDocx(project: Project): Promise<Document> {
       continue;
     }
     if (inCode) {
-      children.push(paragraphFromLine(line, { code: true }));
+      children.push(paragraphFromLine(line, { code: true }, settings));
       i += 1;
       continue;
     }
@@ -488,7 +578,7 @@ export async function buildDocx(project: Project): Promise<Document> {
         i += 1;
       }
       const rows = parseTableRows(block);
-      if (rows.length) children.push(tableFromMarkdown(rows));
+      if (rows.length) children.push(tableFromMarkdown(rows, settings));
       continue;
     }
 
@@ -503,18 +593,18 @@ export async function buildDocx(project: Project): Promise<Document> {
           i += 1;
           continue;
         }
-        children.push(headingParagraph(1, title, true));
+        children.push(headingParagraph(1, title, true, settings));
       } else {
-        children.push(headingParagraph(level, title, false));
+        children.push(headingParagraph(level, title, false, settings));
       }
       i += 1;
       continue;
     }
 
     // Image-only line: ![alt](src)
-    const imageOnly = line.match(/^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    const imageOnly = matchImageOnly(line);
     if (imageOnly) {
-      children.push(await paragraphFromImage(imageOnly[1], imageOnly[2], filePath, workspaceRoot));
+      children.push(await paragraphFromImage(imageOnly.alt, imageOnly.source, filePath, workspaceRoot, settings));
       i += 1;
       continue;
     }
@@ -527,21 +617,21 @@ export async function buildDocx(project: Project): Promise<Document> {
         const img = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
         if (img) {
           if (textBuf.trim()) {
-            children.push(paragraphFromLine(textBuf.trim()));
+            children.push(paragraphFromLine(textBuf.trim(), undefined, settings));
             textBuf = "";
           }
-          children.push(await paragraphFromImage(img[1], img[2], filePath, workspaceRoot));
+          children.push(await paragraphFromImage(img[1], img[2], filePath, workspaceRoot, settings));
         } else {
           textBuf += part;
         }
       }
-      if (textBuf.trim()) children.push(paragraphFromLine(textBuf.trim()));
+      if (textBuf.trim()) children.push(paragraphFromLine(textBuf.trim(), undefined, settings));
       i += 1;
       continue;
     }
 
     if (line.startsWith("> ")) {
-      children.push(paragraphFromLine(line.replace(/^>\s?/, ""), { quote: true }));
+      children.push(paragraphFromLine(line.replace(/^>\s?/, ""), { quote: true }, settings));
       i += 1;
       continue;
     }
@@ -550,7 +640,7 @@ export async function buildDocx(project: Project): Promise<Document> {
       const text = line.replace(/^\s*[-*+]\s+/, "");
       children.push(
         new Paragraph({
-          children: runsFromInline(text, { font: BODY_FONT, size: SIZE_BODY }),
+          children: runsFromInline(text, { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize) }, settings),
           indent: { left: 360 },
           bullet: { level: 0 },
         }),
@@ -563,9 +653,9 @@ export async function buildDocx(project: Project): Promise<Document> {
       children.push(
         new Paragraph({
           children: runsFromInline(line.replace(/^\s*\d+\.\s+/, ""), {
-            font: BODY_FONT,
-            size: SIZE_BODY,
-          }),
+            font: exportFont(settings.bodyFont),
+            size: halfPoints(settings.bodySize),
+          }, settings),
           indent: { left: 360 },
         }),
       );
@@ -579,7 +669,7 @@ export async function buildDocx(project: Project): Promise<Document> {
       continue;
     }
 
-    children.push(paragraphFromLine(line));
+    children.push(paragraphFromLine(line, undefined, settings));
     i += 1;
   }
 
@@ -587,7 +677,7 @@ export async function buildDocx(project: Project): Promise<Document> {
     // 空文档：仅保留封面与目录，正文占位标题也放到封面逻辑中处理
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: "（正文为空）", font: BODY_FONT, size: SIZE_BODY, color: "999999" })],
+        children: [new TextRun({ text: "（正文为空）", font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize), color: "999999" })],
       }),
     );
   }
@@ -601,18 +691,18 @@ export async function buildDocx(project: Project): Promise<Document> {
       alignment: AlignmentType.CENTER,
       spacing: { before: 3200 },
       children: [
-        new TextRun({ text: projectName, font: HEADING_FONT, bold: true, size: 56, color: "000000" }),
+        new TextRun({ text: projectName, font: exportFont(settings.headingFont), bold: true, size: 56, color: "000000" }),
       ],
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { before: 1600 },
-      children: [new TextRun({ text: today, font: BODY_FONT, size: 24, color: "666666" })],
+      children: [new TextRun({ text: today, font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize), color: "666666" })],
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { before: 200 },
-      children: [new TextRun({ text: "构案 · TechProposal Studio", font: BODY_FONT, size: 20, color: "999999" })],
+      children: [new TextRun({ text: "构案 · TechProposal Studio", font: exportFont(settings.bodyFont), size: halfPoints(Math.max(9, settings.bodySize - 2)), color: "999999" })],
     }),
     new Paragraph({ children: [new PageBreak()] }),
   ];
@@ -629,8 +719,8 @@ export async function buildDocx(project: Project): Promise<Document> {
     styles: {
       default: {
         document: {
-          run: { font: BODY_FONT, size: SIZE_BODY, color: "000000" },
-          paragraph: { spacing: { line: 360, lineRule: LineRuleType.AUTO } },
+          run: { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize), color: "000000" },
+          paragraph: { spacing: { before: twips(settings.bodyBefore), after: twips(settings.bodyAfter), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO } },
         },
       },
       paragraphStyles: [
@@ -639,56 +729,56 @@ export async function buildDocx(project: Project): Promise<Document> {
           name: "Title",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H1, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 0, after: 200, line: 360, lineRule: LineRuleType.AUTO }, alignment: AlignmentType.CENTER, outlineLevel: 0 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[0]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: 0, after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, alignment: AlignmentType.CENTER, outlineLevel: 0 },
         },
         {
           id: "Heading1",
           name: "Heading 1",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H1, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 280, after: 140, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 0 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[0]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: twips(settings.headingBefore[0]), after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 0 },
         },
         {
           id: "Heading2",
           name: "Heading 2",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H2, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 240, after: 120, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 1 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[1]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: twips(settings.headingBefore[1]), after: twips(settings.headingAfter[1]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 1 },
         },
         {
           id: "Heading3",
           name: "Heading 3",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H3, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 200, after: 100, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 2 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[2]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: twips(settings.headingBefore[2]), after: twips(settings.headingAfter[2]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 2 },
         },
         {
           id: "Heading4",
           name: "Heading 4",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H4, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 180, after: 100, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 3 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[3]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: twips(settings.headingBefore[3]), after: twips(settings.headingAfter[3]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 3 },
         },
         {
           id: "Heading5",
           name: "Heading 5",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H5, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 160, after: 80, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 4 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[4]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: twips(settings.headingBefore[4]), after: twips(settings.headingAfter[4]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 4 },
         },
         {
           id: "Heading6",
           name: "Heading 6",
           basedOn: "Normal",
           next: "Normal",
-          run: { font: HEADING_FONT, size: SIZE_H6, bold: true, color: "000000" },
-          paragraph: { spacing: { before: 140, after: 80, line: 360, lineRule: LineRuleType.AUTO }, outlineLevel: 5 },
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[5]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: twips(settings.headingBefore[5]), after: twips(settings.headingAfter[5]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 5 },
         },
         {
           id: "Code",
@@ -731,8 +821,8 @@ function safeFileName(name: string): string {
  * Browser / WebView: Packer.toBuffer uses Node buffers and throws
  * "nodebuffer is not supported by this platform". Prefer Blob/ArrayBuffer.
  */
-export async function buildDocxBytes(project: Project): Promise<Uint8Array> {
-  const doc = await buildDocx(project);
+export async function buildDocxBytes(project: Project, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Promise<Uint8Array> {
+  const doc = await buildDocx(project, settings);
   try {
     const ab = await Packer.toArrayBuffer(doc);
     return new Uint8Array(ab);
@@ -751,9 +841,11 @@ export async function buildDocxBytes(project: Project): Promise<Uint8Array> {
   return buf instanceof Uint8Array ? buf : new Uint8Array(buf as ArrayBuffer);
 }
 
-export async function downloadDocx(project: Project): Promise<string | void> {
+export async function downloadDocx(project: Project, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Promise<string | void> {
   const fileName = `${safeFileName(project.name)}.docx`;
-  const bytes = await buildDocxBytes(project);
+  const check = await checkDocxImages(project);
+  if (check.issues.length) throw new Error(`图片检查未通过：${check.issues.length} 个链接无法嵌入`);
+  const bytes = await buildDocxBytes(project, settings);
 
   if (isDesktop()) {
     try {

@@ -50,7 +50,10 @@ fn safe_stem(file_name: &str) -> String {
     let cleaned: String = stem
         .chars()
         .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            // Keep the generated Markdown destination parseable without depending on
+            // every renderer to balance punctuation in a bare link destination.
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '(' | ')' | '[' | ']'
+            | '{' | '}' => '_',
             _ => c,
         })
         .collect();
@@ -64,12 +67,18 @@ fn safe_stem(file_name: &str) -> String {
 
 fn rewrite_image_paths(markdown: &str, asset_rel: &str) -> String {
     let asset = asset_rel.replace('\\', "/").trim_matches('/').to_string();
-    let mut out = markdown.replace("](./images/", &format!("]({asset}/"));
-    out = out.replace("](images/", &format!("]({asset}/"));
-    out = out.replace("](./Images/", &format!("]({asset}/"));
-    out = out.replace("](Images/", &format!("]({asset}/"));
-    // bare relative paths sometimes used without images/ prefix but under images dir in zip
-    out
+    let image_link = regex::Regex::new(
+        r"(?i)(!\[[^\]]*\]\()<?(?:\./)?(?:[^\s<>()]+/)*images/([^\s<>()/]+)>?(\))",
+    )
+    .expect("valid MinerU image regex");
+
+    image_link
+        .replace_all(markdown, |captures: &regex::Captures<'_>| {
+            // Angle-bracket destinations remain valid when the import directory has
+            // spaces or punctuation (for example a Word filename containing brackets).
+            format!("{}<{}/{}>{}", &captures[1], asset, &captures[2], &captures[3])
+        })
+        .into_owned()
 }
 
 fn extract_zip_markdown_and_images(
@@ -474,14 +483,19 @@ fn uuid_like() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::rewrite_image_paths;
+    use super::{rewrite_image_paths, safe_stem};
 
     #[test]
     fn rewrites_common_image_prefixes() {
-        let md = "![a](images/a.png)\n![b](./images/b.jpg)\n![c](Images/c.gif)";
-        let out = rewrite_image_paths(md, "assets/import-demo");
-        assert!(out.contains("](assets/import-demo/a.png)"));
-        assert!(out.contains("](assets/import-demo/b.jpg)"));
-        assert!(out.contains("](assets/import-demo/c.gif)"));
+        let md = "![a](images/a.png)\n![b](./images/b.jpg)\n![c](result/Images/c.gif)";
+        let out = rewrite_image_paths(md, "assets/import-demo (1)");
+        assert!(out.contains("](<assets/import-demo (1)/a.png>)"));
+        assert!(out.contains("](<assets/import-demo (1)/b.jpg>)"));
+        assert!(out.contains("](<assets/import-demo (1)/c.gif>)"));
+    }
+
+    #[test]
+    fn import_directory_stem_avoids_markdown_brackets() {
+        assert_eq!(safe_stem("用户手册(3)(1).docx"), "用户手册_3__1_");
     }
 }

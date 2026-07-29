@@ -1,10 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { isDesktop } from "../services/runtime";
 import type { AgentMessage } from "./protocol";
 import { persistentAgentMessages, safeTurnSplitIndex, summarizeAgentMessage } from "./messageUtils";
 
 const KEY = "tech-proposal-studio.agent-conversations.v1";
+const TAURI_CHANGE_EVENT = "agent-conversations:changed";
 export const AGENT_CONVERSATIONS_CHANGED = "tech-proposal-studio:agent-conversations-changed";
+
+const browserWriteQueues = new Map<string, Promise<void>>();
+let desktopBridge: Promise<() => void> | null = null;
 
 export interface AgentConversation {
   id: string;
@@ -17,6 +22,38 @@ export interface AgentConversation {
   knowledgeSearchEnabled?: boolean;
   createdAt: number;
   updatedAt: number;
+  revision?: number;
+  messagesLoaded?: boolean;
+  messageCount?: number;
+  lastMessagePreview?: string;
+}
+
+export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled">>;
+
+export type AgentConversationChange =
+  | { projectId: string; type: "saved"; conversation: AgentConversation }
+  | { projectId: string; type: "deleted"; conversationId: string }
+  | { projectId: string; type: "cleared" };
+
+export function applyAgentConversationChange(current: AgentConversation[], change: AgentConversationChange): AgentConversation[] {
+  if (change.type === "cleared") return current.filter(item => item.projectId !== change.projectId);
+  if (change.type === "deleted") return current.filter(item => item.id !== change.conversationId);
+  const existing = current.find(item => item.id === change.conversation.id);
+  const conversation = !change.conversation.messagesLoaded && existing?.messagesLoaded
+    ? { ...change.conversation, messages: existing.messages, messagesLoaded: true }
+    : change.conversation;
+  return [conversation, ...current.filter(item => item.id !== conversation.id)]
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function notifyChanged(change: AgentConversationChange) {
+  window.dispatchEvent(new CustomEvent(AGENT_CONVERSATIONS_CHANGED, { detail: change }));
+}
+
+function ensureDesktopBridge() {
+  if (!isDesktop() || desktopBridge) return;
+  desktopBridge = listen<AgentConversationChange>(TAURI_CHANGE_EVENT, event => notifyChanged(event.payload));
+  void desktopBridge.catch(() => { desktopBridge = null; });
 }
 
 function parseConversations(raw: string | null): AgentConversation[] {
@@ -37,69 +74,129 @@ function writeLocal(conversations: AgentConversation[]) {
   localStorage.setItem(KEY, JSON.stringify(conversations));
 }
 
-async function readWorkspace(root: string): Promise<AgentConversation[] | null> {
-  if (!isDesktop() || !root.trim()) return null;
-  const raw = await invoke<string | null>("read_agent_conversations", { workspaceRoot: root });
-  return raw === null ? null : parseConversations(raw);
+function withBrowserWriteLock<T>(projectId: string, task: () => Promise<T>): Promise<T> {
+  const previous = browserWriteQueues.get(projectId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(task);
+  const tail = next.then(() => undefined, () => undefined);
+  browserWriteQueues.set(projectId, tail);
+  return next.finally(() => {
+    if (browserWriteQueues.get(projectId) === tail) browserWriteQueues.delete(projectId);
+  });
 }
 
-async function writeWorkspace(root: string, conversations: AgentConversation[]) {
-  if (!isDesktop() || !root.trim()) return;
-  await invoke("write_agent_conversations", { workspaceRoot: root, content: JSON.stringify(conversations, null, 2) });
+function requireWorkspaceRoot(workspaceRoot?: string): string {
+  const root = workspaceRoot?.trim();
+  if (!root) throw new Error("工作目录不能为空");
+  return root;
 }
 
-async function readAll(projectId: string, workspaceRoot?: string): Promise<AgentConversation[]> {
-  if (isDesktop() && workspaceRoot?.trim()) {
-    const stored = await readWorkspace(workspaceRoot);
-    if (stored !== null) return stored;
-    const migrated = readLocal().filter(item => item.projectId === projectId);
-    await writeWorkspace(workspaceRoot, migrated);
-    return migrated;
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, milliseconds));
+}
+
+async function upsertDesktopConversation(conversation: AgentConversation, workspaceRoot: string): Promise<AgentConversation> {
+  let candidate = conversation;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await invoke<AgentConversation>("agent_conversation_upsert", { workspaceRoot, conversation: candidate });
+    } catch (error) {
+      const message = errorText(error);
+      if (message.includes("会话已在其他位置更新") && attempt === 0) {
+        const latest = await invoke<AgentConversation>("agent_conversation_get", { workspaceRoot, id: candidate.id });
+        candidate = {
+          ...candidate,
+          revision: latest.revision,
+          pinnedContextOnly: latest.pinnedContextOnly,
+          webSearchEnabled: latest.webSearchEnabled,
+          knowledgeSearchEnabled: latest.knowledgeSearchEnabled,
+        };
+        continue;
+      }
+      if ((message.includes("database is locked") || message.includes("database is busy")) && attempt < 2) {
+        await wait(75 * (attempt + 1));
+        continue;
+      }
+      throw error;
+    }
   }
-  return readLocal();
-}
-
-async function writeAll(projectId: string, workspaceRoot: string | undefined, conversations: AgentConversation[]) {
-  const local = readLocal().filter(item => item.projectId !== projectId);
-  await writeWorkspace(workspaceRoot ?? "", conversations);
-  writeLocal([...local, ...conversations.filter(item => item.projectId === projectId)]);
-}
-
-function notifyChanged(projectId: string) {
-  window.dispatchEvent(new CustomEvent(AGENT_CONVERSATIONS_CHANGED, { detail: { projectId } }));
+  throw new Error("保存会话失败");
 }
 
 export async function listAgentConversations(projectId: string, workspaceRoot?: string): Promise<AgentConversation[]> {
-  const all = await readAll(projectId, workspaceRoot);
-  return all.filter(item => item.projectId === projectId).sort((a, b) => b.updatedAt - a.updatedAt);
+  if (isDesktop()) {
+    ensureDesktopBridge();
+    return invoke<AgentConversation[]>("agent_conversation_list", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), projectId });
+  }
+  return readLocal().filter(item => item.projectId === projectId).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function getAgentConversation(conversationId: string, workspaceRoot?: string): Promise<AgentConversation> {
+  if (isDesktop()) {
+    ensureDesktopBridge();
+    return invoke<AgentConversation>("agent_conversation_get", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), id: conversationId });
+  }
+  const conversation = readLocal().find(item => item.id === conversationId);
+  if (!conversation) throw new Error("会话不存在");
+  return { ...conversation, messagesLoaded: true };
 }
 
 export function createAgentConversation(projectId: string, pinnedContextOnly = false): AgentConversation {
   const now = Date.now();
-  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, createdAt: now, updatedAt: now };
+  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
 }
 
 export async function saveAgentConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {
-  const next = { ...conversation, messages: persistentAgentMessages(conversation.messages), updatedAt: Date.now() };
-  const all = await readAll(conversation.projectId, workspaceRoot);
-  const index = all.findIndex(item => item.id === next.id);
-  if (index >= 0) all[index] = next;
-  else all.push(next);
-  await writeAll(conversation.projectId, workspaceRoot, all);
-  return next;
+  const next = { ...conversation, messages: persistentAgentMessages(conversation.messages), updatedAt: Date.now(), messagesLoaded: true };
+  if (isDesktop()) {
+    ensureDesktopBridge();
+    const saved = await upsertDesktopConversation(next, requireWorkspaceRoot(workspaceRoot));
+    return saved;
+  }
+  return withBrowserWriteLock(conversation.projectId, async () => {
+    const all = readLocal();
+    writeLocal([next, ...all.filter(item => item.id !== next.id)]);
+    notifyChanged({ projectId: next.projectId, type: "saved", conversation: next });
+    return next;
+  });
+}
+
+export async function patchAgentConversation(conversation: AgentConversation, patch: AgentConversationPatch, workspaceRoot?: string): Promise<AgentConversation> {
+  if (isDesktop()) {
+    ensureDesktopBridge();
+    const saved = await invoke<AgentConversation>("agent_conversation_patch", {
+      workspaceRoot: requireWorkspaceRoot(workspaceRoot),
+      patch: { id: conversation.id, projectId: conversation.projectId, ...patch },
+    });
+    return saved;
+  }
+  return saveAgentConversation({ ...conversation, ...patch }, workspaceRoot);
 }
 
 export async function deleteAgentConversation(conversationId: string, projectId: string, workspaceRoot?: string) {
-  const all = await readAll(projectId, workspaceRoot);
-  await writeAll(projectId, workspaceRoot, all.filter(item => item.id !== conversationId));
-  notifyChanged(projectId);
+  if (isDesktop()) {
+    ensureDesktopBridge();
+    await invoke("agent_conversation_delete", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), projectId, id: conversationId });
+  } else {
+    await withBrowserWriteLock(projectId, async () => writeLocal(readLocal().filter(item => item.id !== conversationId)));
+  }
+  if (!isDesktop()) notifyChanged({ projectId, type: "deleted", conversationId });
 }
 
 export async function clearAgentConversations(projectId: string, workspaceRoot?: string): Promise<number> {
-  const all = await readAll(projectId, workspaceRoot);
-  const count = all.filter(item => item.projectId === projectId).length;
-  await writeAll(projectId, workspaceRoot, all.filter(item => item.projectId !== projectId));
-  notifyChanged(projectId);
+  let count: number;
+  if (isDesktop()) {
+    ensureDesktopBridge();
+    count = await invoke<number>("agent_conversation_clear_project", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), projectId });
+  } else {
+    const all = readLocal();
+    count = all.filter(item => item.projectId === projectId).length;
+    await withBrowserWriteLock(projectId, async () => writeLocal(readLocal().filter(item => item.projectId !== projectId)));
+  }
+  if (!isDesktop()) notifyChanged({ projectId, type: "cleared" });
   return count;
 }
 

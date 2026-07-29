@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Clock3, HardDrive, MessageSquareText, Trash2 } from "lucide-react";
-import { clearAgentConversations, deleteAgentConversation, listAgentConversations, type AgentConversation } from "../agent/conversationStore";
+import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, clearAgentConversations, deleteAgentConversation, listAgentConversations, type AgentConversation, type AgentConversationChange } from "../agent/conversationStore";
 import { isDesktop } from "../services/runtime";
 import type { Project } from "../types";
 
@@ -14,7 +14,7 @@ function conversationPreview(conversation: AgentConversation): string {
 }
 
 function messageCount(conversation: AgentConversation): number {
-  return conversation.messages.filter(item => item.role === "user" || item.role === "assistant").length;
+  return conversation.messageCount ?? conversation.messages.filter(item => item.role === "user" || item.role === "assistant").length;
 }
 
 export function ConversationHistorySettings({ project }: { project: Project }) {
@@ -36,7 +36,15 @@ export function ConversationHistorySettings({ project }: { project: Project }) {
     }
   };
 
-  useEffect(() => { void reload(); }, [project.id, root]);
+  useEffect(() => {
+    void reload();
+    const onChanged = (event: Event) => {
+      const change = (event as CustomEvent<AgentConversationChange>).detail;
+      if (change?.projectId === project.id) setConversations(current => applyAgentConversationChange(current, change));
+    };
+    window.addEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged);
+    return () => window.removeEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged);
+  }, [project.id, root]);
 
   const remove = async (conversation: AgentConversation) => {
     if (!window.confirm(`删除会话“${conversation.title}”？此操作无法撤销。`)) return;
@@ -67,13 +75,13 @@ export function ConversationHistorySettings({ project }: { project: Project }) {
   };
 
   const storageLabel = isDesktop() && root
-    ? `${root.replace(/[\\/]+$/, "")}\\.gouan\\agent-conversations.json`
+    ? `${root.replace(/[\\/]+$/, "")}\\.gouan\\conversations.db`
     : "浏览器 localStorage";
 
   return <div className="settings-section-content conversation-history-settings">
     <div className="conversation-history-summary">
       <div><MessageSquareText size={18} /><span><b>{conversations.length}</b><small>历史会话</small></span></div>
-      <div><HardDrive size={17} /><span><b>{isDesktop() && root ? "工作区文件" : "浏览器存储"}</b><small title={storageLabel}>{storageLabel}</small></span></div>
+      <div><HardDrive size={17} /><span><b>{isDesktop() && root ? "SQLite 数据库" : "浏览器存储"}</b><small title={storageLabel}>{storageLabel}</small></span></div>
       <button type="button" className="danger-action" onClick={() => void clearAll()} disabled={!conversations.length || busyId !== null}><Trash2 size={14} />清空全部</button>
     </div>
 
