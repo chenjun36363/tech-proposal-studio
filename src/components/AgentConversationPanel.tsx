@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageSquarePlus, Send, Square, Trash2 } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
-import { AGENT_CONVERSATIONS_CHANGED, compactAgentConversation, createAgentConversation, deleteAgentConversation, listAgentConversations, saveAgentConversation, type AgentConversation } from "../agent/conversationStore";
+import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, compactAgentConversation, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch } from "../agent/conversationStore";
 import { createProposalToolRegistry, proposalAgentSystemPrompt } from "../agent/proposalTools";
 import type { AgentDraft, AgentEvent, AgentRunStatus, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
@@ -51,16 +51,23 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
       try {
         const loaded = await listAgentConversations(project.id, workspaceRoot);
         if (cancelled) return;
-        const initial = loaded[0] ?? createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
-        setConversations(loaded.length ? loaded : [initial]);
-        setActiveId(current => loaded.some(item => item.id === current) ? current : initial.id);
+        const preferred = loaded.find(item => item.id === activeId) ?? loaded[0];
+        const initial = preferred
+          ? (preferred.messagesLoaded ? preferred : await getAgentConversation(preferred.id, workspaceRoot))
+          : createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
+        if (cancelled) return;
+        setConversations(loaded.length ? applyAgentConversationChange(loaded, { projectId: project.id, type: "saved", conversation: initial }) : [initial]);
+        setActiveId(initial.id);
       } catch (error) {
         if (!cancelled) notify(error instanceof Error ? error.message : "历史会话加载失败");
       }
     };
     const onChanged = (event: Event) => {
-      const changedProjectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId;
-      if (!changedProjectId || changedProjectId === project.id) void load();
+      const change = (event as CustomEvent<AgentConversationChange>).detail;
+      if (!change || change.projectId !== project.id) return;
+      setConversations(current => applyAgentConversationChange(current, change));
+      if (change.type === "deleted") setActiveId(current => current === change.conversationId ? "" : current);
+      if (change.type === "cleared") setActiveId("");
     };
     void load();
     window.addEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged);
@@ -75,6 +82,21 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
   const webSearchEnabled = active?.webSearchEnabled === true;
   const knowledgeSearchEnabled = active?.knowledgeSearchEnabled !== false;
 
+  const activateConversation = async (next: AgentConversation) => {
+    try {
+      const resolved = next.messagesLoaded ? next : await getAgentConversation(next.id, workspaceRoot);
+      setConversations(current => applyAgentConversationChange(current, { projectId: project.id, type: "saved", conversation: resolved }));
+      setActiveId(resolved.id);
+      setEvents([]);
+      setDraft(null);
+      const restored = latestTodosFromMessages(resolved.messages);
+      setTodos(restored);
+      setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "会话加载失败");
+    }
+  };
+
   useEffect(() => {
     const restored = latestTodosFromMessages(active?.messages ?? []);
     setTodos(restored);
@@ -83,7 +105,6 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
 
   const commitConversation = async (conversation: AgentConversation) => {
     const saved = await saveAgentConversation(compactAgentConversation(conversation, agentSettings.recentMessages), workspaceRoot);
-    setConversations(await listAgentConversations(project.id, workspaceRoot));
     setActiveId(saved.id);
     return saved;
   };
@@ -92,12 +113,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     void (async () => {
       try {
         const created = await saveAgentConversation(createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly), workspaceRoot);
-        setConversations(await listAgentConversations(project.id, workspaceRoot));
-        setActiveId(created.id);
-        setEvents([]);
-        setDraft(null);
-        setTodos([]);
-        setTodosCollapsed(false);
+        await activateConversation(created);
       } catch (error) {
         notify(error instanceof Error ? error.message : "新建会话失败");
       }
@@ -108,33 +124,35 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     if (!active || running) return;
     void (async () => {
       try {
+        const remaining = conversations.filter(item => item.id !== active.id);
         await deleteAgentConversation(active.id, project.id, workspaceRoot);
-        const remaining = await listAgentConversations(project.id, workspaceRoot);
         const next = remaining[0] ?? createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
-        setConversations(remaining.length ? remaining : [next]);
-        setActiveId(next.id);
-        setEvents([]);
-        setDraft(null);
-        const restored = latestTodosFromMessages(next.messages);
-        setTodos(restored);
-        setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed"));
+        if (!remaining.length) setConversations([next]);
+        await activateConversation(next);
       } catch (error) {
         notify(error instanceof Error ? error.message : "删除会话失败");
       }
     })();
   };
-  const setPinnedContextOnly = (value: boolean) => {
+  const updateActiveConversationRuntime = (patch: AgentConversationPatch) => {
     if (!active) return;
-    void commitConversation({ ...active, pinnedContextOnly: value }).catch(error => notify(error instanceof Error ? error.message : "会话设置保存失败"));
+    const previous = active;
+    setConversations(current => current.map(item => item.id === active.id ? { ...item, ...patch } : item));
+    if ((active.revision ?? 0) === 0) return;
+    void patchAgentConversation(active, patch, workspaceRoot)
+      .then(saved => setConversations(current => applyAgentConversationChange(current, {
+        projectId: project.id,
+        type: "saved",
+        conversation: saved,
+      })))
+      .catch(error => {
+        setConversations(current => current.map(item => item.id === previous.id ? previous : item));
+        notify(error instanceof Error ? error.message : "会话设置保存失败");
+      });
   };
-  const setWebSearchEnabled = (value: boolean) => {
-    if (!active) return;
-    void commitConversation({ ...active, webSearchEnabled: value }).catch(error => notify(error instanceof Error ? error.message : "会话设置保存失败"));
-  };
-  const setKnowledgeSearchEnabled = (value: boolean) => {
-    if (!active) return;
-    void commitConversation({ ...active, knowledgeSearchEnabled: value }).catch(error => notify(error instanceof Error ? error.message : "会话设置保存失败"));
-  };
+  const setPinnedContextOnly = (value: boolean) => updateActiveConversationRuntime({ pinnedContextOnly: value });
+  const setWebSearchEnabled = (value: boolean) => updateActiveConversationRuntime({ webSearchEnabled: value });
+  const setKnowledgeSearchEnabled = (value: boolean) => updateActiveConversationRuntime({ knowledgeSearchEnabled: value });
   const stopRun = () => {
     abortRef.current?.abort();
   };
@@ -196,13 +214,10 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     setTodosCollapsed(false);
     setDraft(null);
     setInput("");
-    try {
-      await commitConversation(pendingConversation);
-    } catch (error) {
-      setRunStatus("failed");
-      notify(error instanceof Error ? error.message : "会话保存失败");
-      return;
-    }
+    setConversations(current => {
+      const remaining = current.filter(item => item.id !== pendingConversation.id);
+      return [pendingConversation, ...remaining];
+    });
     try {
     const registry = createProposalToolRegistry({ project, block, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
@@ -228,11 +243,21 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     });
       const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
       const runtimeMessages = result.messages.slice(1);
+      const completedConversation = { ...pendingConversation, messages: runtimeMessages };
+      setConversations(current => applyAgentConversationChange(current, {
+        projectId: project.id,
+        type: "saved",
+        conversation: completedConversation,
+      }));
       setEvents([]);
-      await commitConversation({ ...pendingConversation, messages: runtimeMessages });
       setRunStatus(result.status);
       setTodosCollapsed(result.status === "completed");
       if (result.status === "round_limit_reached") notify(`Agent 已达到 ${agentSettings.maxRounds} 轮执行上限`);
+      try {
+        await commitConversation(completedConversation);
+      } catch (saveError) {
+        notify(`AI 回复已保留在当前会话，但写入 SQLite 失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") setRunStatus("cancelled");
       else { setRunStatus("failed"); notify(error instanceof Error ? error.message : "Agent 执行失败"); }
@@ -243,7 +268,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
 
   return <div className="inspector-content agent-chat-panel">
     <header className="agent-chat-head">
-      <select value={active?.id ?? ""} onChange={event => { const next = conversations.find(item => item.id === event.target.value); setActiveId(event.target.value); setEvents([]); setDraft(null); const restored = latestTodosFromMessages(next?.messages ?? []); setTodos(restored); setTodosCollapsed(restored.length > 0 && restored.every(todo => todo.status === "completed")); }} disabled={running} aria-label="Agent 会话">
+      <select value={active?.id ?? ""} onChange={event => { const next = conversations.find(item => item.id === event.target.value); if (next) void activateConversation(next); }} disabled={running} aria-label="Agent 会话">
         {conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
       <button type="button" title="新建会话" onClick={createConversation} disabled={running}><MessageSquarePlus size={15} /></button>
@@ -302,4 +327,3 @@ export function AgentConversationPanel({ project, block, pinnedContext, updateBl
     {draft && reviewOpen && <AgentDraftReviewModal draft={draft} close={() => setReviewOpen(false)} reject={rejectDraft} accept={acceptDraft} />}
   </div>;
 }
-

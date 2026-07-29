@@ -24,7 +24,8 @@ pub(crate) fn init_db(app: &AppHandle) -> Result<(), String> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );",
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    crate::connections::initialize_schema(&db)
 }
 
 #[derive(Deserialize)]

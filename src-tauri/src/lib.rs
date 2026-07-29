@@ -18,10 +18,14 @@ mod system;
 mod terminal;
 mod ccswitch;
 mod process;
+mod agent_conversations;
+mod connections;
+mod git;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
 
 use terminal::{terminal_close, terminal_open, terminal_resize, terminal_write, TerminalState};
+use git::{git_commit, git_commit_diff, git_diff, git_discard, git_fetch, git_init, git_log, git_pull, git_push, git_set_remote, git_stage, git_stage_all, git_staged_summary, git_status, git_unstage, git_unstage_all};
 
 
 pub(crate) use model::ModelConfig;
@@ -289,37 +293,6 @@ fn write_text_file(path: String, content: String) -> Result<String, String> {
     Ok(file_path.to_string_lossy().into())
 }
 
-fn agent_conversations_path(workspace_root: &str) -> Result<PathBuf, String> {
-    if workspace_root.trim().is_empty() {
-        return Err("工作目录不能为空".into());
-    }
-    Ok(PathBuf::from(workspace_root)
-        .join(".gouan")
-        .join("agent-conversations.json"))
-}
-
-#[tauri::command]
-fn read_agent_conversations(workspace_root: String) -> Result<Option<String>, String> {
-    let path = agent_conversations_path(&workspace_root)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    fs::read_to_string(path)
-        .map(Some)
-        .map_err(|e| format!("读取历史会话失败: {e}"))
-}
-
-#[tauri::command]
-fn write_agent_conversations(workspace_root: String, content: String) -> Result<String, String> {
-    let path = agent_conversations_path(&workspace_root)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建会话目录失败: {e}"))?;
-    }
-    fs::write(&path, content.as_bytes())
-        .map_err(|e| format!("保存历史会话失败: {e}"))?;
-    Ok(path.to_string_lossy().into())
-}
-
 #[tauri::command]
 fn rename_file(old_path: String, new_path: String) -> Result<String, String> {
     let old = PathBuf::from(&old_path);
@@ -559,6 +532,22 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            git_status,
+            git_init,
+            git_stage,
+            git_unstage,
+            git_commit,
+            git_diff,
+            git_set_remote,
+            git_pull,
+            git_push,
+            git_fetch,
+            git_log,
+            git_commit_diff,
+            git_stage_all,
+            git_unstage_all,
+            git_discard,
+            git_staged_summary,
             list_models,
             generate_text,
             generate_text_stream,
@@ -594,12 +583,18 @@ pub fn run() {
             open_external_url,
             read_binary_file,
             write_text_file,
-            read_agent_conversations,
-            write_agent_conversations,
+            agent_conversations::agent_conversation_list,
+            agent_conversations::agent_conversation_get,
+            agent_conversations::agent_conversation_upsert,
+            agent_conversations::agent_conversation_patch,
+            agent_conversations::agent_conversation_delete,
+            agent_conversations::agent_conversation_clear_project,
             rename_file,
             delete_file,
             write_library_markdown,
             save_image_to_workspace
+            ,connections::load_workspace_connections
+            ,connections::save_workspace_connections
             ,ccswitch::list_ccswitch_providers
             ,knowledge::knowledge_scan
             ,knowledge::knowledge_import_markdown

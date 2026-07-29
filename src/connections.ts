@@ -12,7 +12,6 @@ import type {
 import { createProject, makeId } from "./data";
 import { isDesktop } from "./services/runtime";
 import { invoke } from "@tauri-apps/api/core";
-import { readTextFile, writeTextFile } from "./workspace";
 import { isLlmProtocol, deriveModelSnapshot, LEGACY_PROVIDER_ID } from "./services/llm/resolve";
 import { createDefaultProvider, createDefaultSelection } from "./services/llm/defaults";
 
@@ -299,11 +298,10 @@ function saveBrowserConnections(conn: ConnectionSettings) {
 export async function loadWorkspaceConnections(root?: string): Promise<ConnectionSettings | null> {
   if (root && isDesktop()) {
     try {
-      const text = await readTextFile(connectionsFilePath(root));
-      if (!text.trim()) return null;
-      return normalizeConnections(JSON.parse(text));
+      const payload = await invoke<unknown | null>("load_workspace_connections", { root });
+      return payload ? normalizeConnections(payload) : null;
     } catch {
-      // missing file is fine
+      // Missing or unreadable desktop configuration falls back to defaults.
     }
   }
   if (!isDesktop()) return loadBrowserConnections();
@@ -321,9 +319,7 @@ export async function saveWorkspaceConnections(root: string | undefined, conn: C
     mineru: normalized.mineru,
   };
   if (root && isDesktop()) {
-    const path = connectionsFilePath(root);
-    await writeTextFile(path, `${JSON.stringify(payload, null, 2)}\n`);
-    return path;
+    return invoke<string>("save_workspace_connections", { root, payload });
   }
   if (!isDesktop()) {
     saveBrowserConnections(normalized);

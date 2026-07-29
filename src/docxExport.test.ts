@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createProject } from "./data";
-import { buildDocx, buildDocxBytes, readImageSize } from "./docxExport";
+import { buildDocx, buildDocxBytes, extractMarkdownImages, readImageSize, resolveLocalImagePath } from "./docxExport";
 
 // Minimal 1x1 PNG
 const PNG_1x1 = Uint8Array.from([
@@ -25,6 +25,16 @@ describe("Word export", () => {
 
   it("reads PNG dimensions from IHDR", () => {
     expect(readImageSize(PNG_1x1, "png")).toEqual({ width: 1, height: 1 });
+  });
+
+  it("extracts angle-bracket image destinations with Chinese, spaces and brackets", () => {
+    expect(extractMarkdownImages("正文\n![](<assets/import-常州 方案(1)/image.png>)\n"))
+      .toEqual([{ alt: "", source: "assets/import-常州 方案(1)/image.png" }]);
+  });
+
+  it("resolves encoded workspace asset paths without truncating spaces", () => {
+    expect(resolveLocalImagePath("<assets/import-%E5%B8%B8%E5%B7%9E%20%E6%96%B9%E6%A1%88/image.png>", "E:\\workspace\\proposal.md", "E:\\workspace"))
+      .toBe("E:\\workspace\\assets\\import-常州 方案\\image.png");
   });
 
   it("embeds local image bytes when path is absolute", async () => {

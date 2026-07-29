@@ -1,20 +1,21 @@
 import { useEffect, useState } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ExternalLink, Eye, FilePlus2, FolderSearch, Globe2, Minus, RefreshCw, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ExternalLink, Eye, FilePlus2, FolderSearch, Globe2, LoaderCircle, Minus, RefreshCw, Search, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { HeadingReviewModal } from "../../components/HeadingReviewModal";
 import { IconButton } from "../../components/IconButton";
 import { SourcePreviewModal } from "../../components/SourcePreviewModal";
+import { importWordOrPdfToWorkspace } from "../../documentImport";
 import {
   analyzeKnowledgeMarkdown, applyKnowledgeHeadings, deleteKnowledgeFile, listKnowledgeBackups,
   indexPendingKnowledge, listKnowledge, listKnowledgeSectionChunks, listKnowledgeSections, onKnowledgeProgress,
-  removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, setKnowledgeSectionQuality,
+  removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, searchKnowledge, setKnowledgeSectionQuality,
 } from "../../knowledge";
 import { openExternalUrl } from "../../services/system";
 import type {
   DocumentBlock, HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision,
-  KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem,
+  KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult,
   KnowledgeSection, Project, SourceRecord, WorkspacePaths,
 } from "../../types";
-import { importMarkdownToWorkspace, pickMarkdownFile, readTextFile } from "../../workspace";
+import { deleteFile, importMarkdownToWorkspace, pickDocumentFile, pickMarkdownFile, readTextFile } from "../../workspace";
 
 type ProjectUpdater = (updater: (project: Project) => Project) => void;
 type BlockUpdater = (updater: (block: DocumentBlock) => DocumentBlock) => void;
@@ -42,6 +43,9 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   const [headingReview, setHeadingReview] = useState<HeadingDetectionResult | null>(null);
   const [headingCandidates, setHeadingCandidates] = useState<HeadingCandidate[]>([]);
   const [preview, setPreview] = useState<{ source: SourceRecord; markdown: string; loading: boolean; error: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
 
   const reload = async () => {
     if (!project.workspace?.root) return;
@@ -66,6 +70,24 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     const timer = window.setInterval(() => setBusySeconds(value => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [busy]);
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query || !project.workspace) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearchResults([]);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setSearching(true);
+      void searchKnowledge(project.workspace!, query, ["good", "normal", "bad"], undefined, 50)
+        .then(results => { if (!cancelled) setSearchResults(results); })
+        .catch(error => { if (!cancelled) notify(error instanceof Error ? error.message : "知识库搜索失败"); })
+        .finally(() => { if (!cancelled) setSearching(false); });
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [searchQuery, project.workspace?.root]);
 
   const analyze = async (path: string) => {
     if (!project.workspace) return;
@@ -82,6 +104,37 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     if (!project.workspace) return notify("请先配置工作目录");
     const path = await pickMarkdownFile("上传知识 Markdown", project.workspace.historyDir);
     if (path) await analyze(path);
+  };
+  const importWordPdf = async () => {
+    if (!project.workspace) return notify("请先配置工作目录");
+    const sourcePath = await pickDocumentFile("选择要导入知识库的 Word / PDF（推荐 .docx / .pdf）", project.workspace.root);
+    if (!sourcePath) return;
+    setBusy(true);
+    setProgress({ documentId: "", stage: "document_parsing", current: 0, total: 0, message: "正在通过 MinerU 解析 Word / PDF…" });
+    let temporaryPath = "";
+    try {
+      const converted = await importWordOrPdfToWorkspace(sourcePath, project.workspace.root, project.mineru);
+      temporaryPath = converted.path;
+      setProgress({ documentId: "", stage: "structure_scanning", current: 0, total: 0, message: "文档解析完成，正在识别标题和章节结构…" });
+      const result = await analyzeKnowledgeMarkdown(project.workspace, converted.path, project.model);
+      setHeadingReview(result);
+      setHeadingCandidates(result.candidates);
+      let cleanupWarning = "";
+      try {
+        await deleteFile(converted.path);
+        temporaryPath = "";
+      } catch {
+        cleanupWarning = `；工作区临时文件 ${converted.path.split(/[\\/]/).pop()} 未能删除`;
+      }
+      await refreshWorkspaceDocs(project.workspace);
+      notify(`已解析 ${converted.sourceFileName}，请确认知识库章节结构${converted.assetRelativeDir ? `；图片已保存到 ${converted.assetRelativeDir}` : ""}${cleanupWarning}`);
+    } catch (error) {
+      if (temporaryPath) await refreshWorkspaceDocs(project.workspace).catch(() => undefined);
+      notify(error instanceof Error ? error.message : "Word/PDF 导入知识库失败");
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
   };
   const rebuildChanged = async () => {
     if (!project.workspace || !changed.length) return;
@@ -182,6 +235,10 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
       setPreview({ source, markdown: markdown || `# ${section.title}\n\n（该章节暂无正文）`, loading: false, error: "" });
     } catch (error) { setPreview({ source, markdown: "", loading: false, error: error instanceof Error ? error.message : "读取知识片段失败" }); }
   };
+  const previewSearchResult = (result: KnowledgeSearchResult) => {
+    const source: SourceRecord = { id: result.chunk.id, kind: "local", title: `${result.chunk.documentTitle} / ${result.chunk.headingPath}`, location: `knowledge:${result.chunk.documentId}`, excerpt: result.excerpt, fingerprint: result.chunk.id, accessedAt: new Date().toISOString(), heading: result.chunk.headingPath };
+    setPreview({ source, markdown: result.chunk.content, loading: false, error: "" });
+  };
   const markSectionQuality = async (section: KnowledgeSection, quality: KnowledgeChunkQuality) => {
     if (!project.workspace || section.quality === quality) return;
     setBusy(true);
@@ -202,9 +259,16 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   return <div className="modal-backdrop knowledge-manager-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
     <div className="modal knowledge-manager-modal" onMouseDown={event => event.stopPropagation()}>
       <div className="modal-title"><div><BookOpen size={19} /><span>知识管理</span></div><IconButton title="关闭" onClick={() => !busy && close()}><X size={18} /></IconButton></div>
-      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button className="primary" disabled={busy} onClick={() => void importFile()}><FilePlus2 size={15} />导入 Markdown</button></div></div>
+      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button disabled={busy} onClick={() => void importWordPdf()} title="通过 MinerU 将 Word/PDF 转为 Markdown"><FilePlus2 size={15} />导入 Word/PDF</button><button className="primary" disabled={busy} onClick={() => void importFile()}><FilePlus2 size={15} />导入 Markdown</button></div></div>
+      <label className="knowledge-search"><Search size={16} /><input type="search" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索文档标题、章节和正文" aria-label="搜索知识库" />{searching && <LoaderCircle className="spinning" size={15} />}{searchQuery && !searching && <IconButton title="清空搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton>}</label>
       {progress && busy && !headingReview && <div className="knowledge-progress"><span>{progress.message}</span><b>{progress.stage === "structure_ai" ? `已等待 ${busySeconds} 秒` : progress.total > 1 ? `${progress.current}/${progress.total}` : `已进行 ${busySeconds} 秒`}</b></div>}
-      <div className="knowledge-manager-body">
+      {searchQuery.trim() ? <section className="knowledge-search-results">
+        <div className="knowledge-manager-heading"><span>搜索结果</span><b>{searchResults.length}</b></div>
+        <div className="knowledge-manager-scroll">
+          {searchResults.map(result => <button className="knowledge-search-result" key={result.chunk.id} onClick={() => previewSearchResult(result)}><div><b>{result.chunk.documentTitle}</b><span>{result.chunk.headingPath}</span></div><p>{result.excerpt}</p><Eye size={14} /></button>)}
+          {!searching && !searchResults.length && <div className="knowledge-manager-empty"><Search size={20} /><span>没有找到匹配的知识内容</span></div>}
+        </div>
+      </section> : <div className="knowledge-manager-body">
         <section className="knowledge-manager-column"><div className="knowledge-manager-heading"><span>待处理与更新</span><b>{pending.length}</b></div><div className="knowledge-manager-scroll">
           {pending.map(item => <article className="knowledge-manager-pending" key={item.path}><div><b>{item.title}</b><span title={item.path}>{item.path}</span></div><em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "索引待更新" : "尚未入库"}</em><div className="knowledge-pending-actions"><button disabled={busy} onClick={() => void analyze(item.path)}>{item.state === "changed" ? "重新识别" : "识别结构"}</button><button disabled={busy} onClick={() => void returnPendingToWorkspace(item)}><Undo2 size={13} />转回工作区</button><IconButton title="删除知识副本" disabled={busy} onClick={() => void deletePending(item)}><Trash2 size={13} /></IconButton></div></article>)}
           {!pending.length && <div className="knowledge-manager-empty"><Check size={20} /><span>所有知识文档均已就绪</span></div>}
@@ -219,7 +283,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
           </div>)}
           {!readyDocuments.length && <div className="knowledge-manager-empty"><BookOpen size={20} /><span>暂无已就绪文档</span></div>}
         </div></section>
-      </div>
+      </div>}
     </div>
     {headingReview && <HeadingReviewModal result={headingReview} candidates={headingCandidates} setCandidates={setHeadingCandidates} busy={busy} progress={progress} busySeconds={busySeconds} close={() => { if (!busy) { setHeadingReview(null); setHeadingCandidates([]); } }} confirm={() => void confirmReview()} />}
     {preview && <SourcePreviewModal source={preview.source} markdown={preview.markdown} loading={preview.loading} error={preview.error} workspaceRoot={project.workspace?.root} notify={notify} close={() => setPreview(null)} />}
