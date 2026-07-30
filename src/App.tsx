@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
@@ -67,6 +67,7 @@ import { MemorySettingsPanel } from "./components/MemorySettingsPanel";
 import { ConversationHistorySettings } from "./components/ConversationHistorySettings";
 import { ModelSettingsSection } from "./features/settings/ModelSettingsSection";
 import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
+import { SkillsSettingsSection } from "./features/settings/SkillsSettingsSection";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useProposalFileActions } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
@@ -1150,7 +1151,7 @@ export default function App() {
 }
 
 function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project) => void | Promise<void> }) {
-  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "history" | "memory" | "parser" | "workspace">("model");
+  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "workspace">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
     if (!next.mineru) next.mineru = createProject().mineru;
@@ -1164,6 +1165,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     search: { title: "联网搜索", description: "配置搜索提供方、接口地址和上游搜索引擎。", icon: <Search size={15} /> },
     agent: { title: "Agent", description: "控制多轮执行、上下文、记忆与工具使用策略。", icon: <Settings size={15} /> },
     tools: { title: "工具", description: "管理注册给 AI 的工具及其可用状态。", icon: <Wrench size={15} /> },
+    skills: { title: "技能", description: "管理 Agent Skills、ClawHub 市场和本地运行环境。", icon: <Sparkles size={15} /> },
     history: { title: "历史会话", description: "查看并清理当前项目保存的 Agent 对话记录。", icon: <MessageSquareText size={15} /> },
     memory: { title: "记忆", description: "查看、审核和维护当前工作区的长期记忆。", icon: <Brain size={15} /> },
     parser: { title: "文档解析", description: "配置 Word 和 PDF 转换所使用的 MinerU 服务。", icon: <FilePlus2 size={15} /> },
@@ -1259,6 +1261,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
         </div>
       </div>}
       {section === "tools" && <ToolSettingsSection draft={draft} setDraft={setDraft} />}
+      {section === "skills" && <SkillsSettingsSection project={draft} setProject={setDraft} />}
       {section === "history" && <ConversationHistorySettings project={project} />}
       {section === "memory" && <div className="settings-section-content memory-section-content">
         <MemorySettingsPanel project={draft} />

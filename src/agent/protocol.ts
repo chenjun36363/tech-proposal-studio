@@ -5,6 +5,14 @@ export interface AgentUserQuestionOption { choice: Exclude<AgentUserQuestionChoi
 export interface AgentUserQuestion { question: string; options: [AgentUserQuestionOption, AgentUserQuestionOption, AgentUserQuestionOption]; }
 export interface AgentUserQuestionAnswer { choice: AgentUserQuestionChoice; answer: string; }
 
+export type AgentGitOperation = "stage" | "unstage" | "commit" | "create_branch" | "switch_branch" | "stash_push" | "stash_pop" | "fetch" | "pull" | "push";
+export interface AgentGitApprovalRequest {
+  operation: AgentGitOperation;
+  title: string;
+  description: string;
+  details: Array<{ label: string; value: string }>;
+}
+
 export interface TodoItem { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string; }
 
 export interface AgentToolCall { id: string; name: string; arguments: Record<string, unknown>; }

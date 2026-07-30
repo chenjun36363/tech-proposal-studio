@@ -3,6 +3,7 @@ export type AgentCitationMode = "required" | "preferred" | "off";
 
 export interface AgentSettings {
   disabledTools: string[];
+  enabledSkills: import("../skills").SkillReference[];
   contextCompressionTokens: number;
   maxRounds: number;
   webSearchMaxCalls: number;
@@ -22,6 +23,7 @@ export interface AgentSettings {
 
 export const defaultAgentSettings: AgentSettings = {
   disabledTools: [],
+  enabledSkills: [],
   contextCompressionTokens: 48000,
   maxRounds: 20,
   webSearchMaxCalls: 2,
@@ -46,6 +48,10 @@ export function normalizeAgentSettings(value: Partial<AgentSettings> | null | un
   const source = value ?? {};
   return {
     disabledTools: Array.isArray(source.disabledTools) ? [...new Set(source.disabledTools.filter((name): name is string => typeof name === "string"))] : [],
+    enabledSkills: Array.isArray(source.enabledSkills) ? source.enabledSkills.filter((skill): skill is import("../skills").SkillReference => Boolean(
+      skill && typeof skill.name === "string" && ["builtin", "global", "workspace"].includes(skill.scope)
+      && typeof skill.baseDir === "string" && typeof skill.skillFile === "string",
+    )) : [],
     contextCompressionTokens: Math.round(numberInRange(source.contextCompressionTokens, defaultAgentSettings.contextCompressionTokens, 8000, 200000)),
     maxRounds: Math.round(numberInRange(source.maxRounds, defaultAgentSettings.maxRounds, 4, 50)),
     webSearchMaxCalls: Math.round(numberInRange(source.webSearchMaxCalls, defaultAgentSettings.webSearchMaxCalls, 1, 10)),

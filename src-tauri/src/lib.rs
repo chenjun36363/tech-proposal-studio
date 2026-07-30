@@ -22,6 +22,7 @@ mod agent_conversations;
 mod connections;
 mod git;
 mod privileged;
+mod skills;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
 
@@ -644,6 +645,20 @@ pub fn run() {
             ,memory::memory_accept
             ,memory::memory_delete
             ,memory::memory_rebuild
+            ,skills::skill_discover
+            ,skills::skill_read
+            ,skills::skill_read_resource
+            ,skills::skill_validate
+            ,skills::skill_create
+            ,skills::skill_install
+            ,skills::skill_delete
+            ,skills::skill_package
+            ,skills::skill_market_search
+            ,skills::skill_market_detail
+            ,skills::skill_check_updates
+            ,skills::skill_update
+            ,skills::skill_runtime_status
+            ,skills::skill_run_command
         ])
         .run(tauri::generate_context!())
         .expect("failed to run application");

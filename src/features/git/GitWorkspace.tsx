@@ -4,6 +4,7 @@ import { ArchiveRestore, ArrowDownToLine, ArrowUpFromLine, Check, CloudDownload,
 import { commitGitChanges, createGitBranch, discardGitFile, fetchGitRepository, getGitBranches, getGitCommitDiff, getGitDiff, getGitLog, getGitStagedSummary, getGitStatus, initGitRepository, popGitStash, pullGitRepository, pushGitRepository, setGitRemote, stageAllGitFiles, stageGitFile, stashGitChanges, switchGitBranch, unstageAllGitFiles, unstageGitFile, type GitBranchInfo, type GitCommitSummary, type GitFileStatus, type GitRepositoryStatus } from "../../services/git";
 import type { Project } from "../../types";
 import { generateCommitMessage } from "./commitMessage";
+import { AGENT_GIT_CHANGED } from "../../agent/gitTools";
 
 export type GitDiffSelection = { kind: "working"; path: string; staged: boolean } | { kind: "commit"; commit: string; title: string };
 
@@ -81,9 +82,14 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     const refreshVisible = () => { if (!document.hidden) void refresh(); };
+    const refreshAgentChange = (event: Event) => {
+      const changedRoot = (event as CustomEvent<{ root?: string }>).detail?.root;
+      if (!changedRoot || changedRoot === root) void refresh();
+    };
     const timer = window.setInterval(refreshVisible, 5000);
     window.addEventListener("focus", refreshVisible);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refreshVisible); };
+    window.addEventListener(AGENT_GIT_CHANGED, refreshAgentChange);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refreshVisible); window.removeEventListener(AGENT_GIT_CHANGED, refreshAgentChange); };
   }, [refresh]);
   useEffect(() => {
     if (view !== "history" || !status.isRepository) return;

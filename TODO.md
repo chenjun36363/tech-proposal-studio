@@ -18,6 +18,21 @@
 2. P4 全文优化：在安全编辑工具之上增加全文规划、逐章生成和一致性复核。
 3. P1/P2 能力基础设施：随后补强会话可靠性和工作区实时同步，确保长任务和外部编辑安全。
 
+## P6 Agent Skills 与技能市场
+
+目标：以 Agent Skills 渐进披露协议扩展 Agent 能力，所有实际执行继续通过应用受控工具与会话权限完成。
+
+- [x] 支持 `SKILL.md` frontmatter，并兼容 `skill.json` 与 README 回退格式。
+- [x] 支持内置、全局 app-data 与工作区 `.gouan/skills/` 三层发现，工作区同名技能优先。
+- [x] 增加路径越界、符号链接、文件大小、脚本 shebang、ZIP 解包和原子安装校验。
+- [x] 增加创建、安装、校验、删除、打包、ClawHub 搜索/详情/安装/更新检查接口。
+- [x] 会话 SQLite 保存 `enabledSkills`；Agent 只注入摘要并通过 `skills_manager` 按需读取全文。
+- [x] 增加受控 `skill_run_command`，限制程序、工作目录、环境、超时和输出，并逐次确认。
+- [x] 内置 DOCX、Excel、agent-browser 三个 Skill，提供 Python/Node/CLI 运行环境诊断。
+- [x] 设置页增加已安装、ClawHub、本地安装、创建和运行环境视图。
+- [ ] 在 Tauri 桌面端手工验证 ClawHub 实际安装与更新、DOCX/XLSX 产物以及 agent-browser 导航和截图。
+- [ ] 为市场下载补充发布者签名或可验证哈希；当前仅执行传输状态与本地结构校验。
+
 ## P0 当前改动收尾
 
 当前工作区已有章节删除、章节移动、自定义模板和 Agent 会话持久化相关改动，合并前需要统一收尾：

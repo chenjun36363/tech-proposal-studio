@@ -165,7 +165,7 @@ pub(crate) fn child_path_env() -> Option<std::ffi::OsString> {
     env::join_paths(parts).ok()
 }
 
-fn quote_cmd_arg(arg: &str) -> String {
+pub(crate) fn quote_cmd_arg(arg: &str) -> String {
     if arg.is_empty() {
         return "\"\"".into();
     }

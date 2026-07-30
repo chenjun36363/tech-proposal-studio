@@ -49,6 +49,21 @@ const TOOL_LABELS: Record<string, string> = {
   write_todo: "更新执行计划",
   ask_user: "向用户提问",
   propose_section_update: "提交章节修改",
+  git_status: "读取 Git 状态",
+  git_diff: "读取 Git 差异",
+  git_log: "读取 Git 历史",
+  git_show_commit: "读取提交详情",
+  git_list_branches: "读取 Git 分支",
+  git_stage: "暂存 Git 变更",
+  git_unstage: "取消 Git 暂存",
+  git_commit: "创建 Git 提交",
+  git_create_branch: "创建 Git 分支",
+  git_switch_branch: "切换 Git 分支",
+  git_stash_push: "保存 Git stash",
+  git_stash_pop: "应用 Git stash",
+  git_fetch: "获取远程更新",
+  git_pull: "拉取远程更新",
+  git_push: "推送 Git 分支",
 };
 
 function toolLabel(name: string) {

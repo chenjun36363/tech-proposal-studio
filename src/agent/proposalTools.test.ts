@@ -3,7 +3,7 @@ import { createProject } from "../data";
 import { searchWeb } from "../services/search";
 import { fetchKnowledgeWebPage } from "../knowledge";
 import type { DocumentBlock } from "../types";
-import { buildEditorSelectionPrompt, createProposalToolRegistry } from "./proposalTools";
+import { buildEditorSelectionPrompt, createProposalToolRegistry, normalizeMemoryToolArgs } from "./proposalTools";
 
 vi.mock("../services/search", () => ({ searchWeb: vi.fn() }));
 vi.mock("../knowledge", async importOriginal => {
@@ -20,6 +20,28 @@ const block: DocumentBlock = {
   status: "draft",
   sourceRefs: [],
 };
+
+describe("project memory tool arguments", () => {
+  it("accepts the fact alias and derives omitted metadata", () => {
+    expect(normalizeMemoryToolArgs({ fact: "用户是 LIMS 解决方案专家。后续建议围绕该领域展开。" })).toEqual({
+      title: "用户是 LIMS 解决方案专家",
+      content: "用户是 LIMS 解决方案专家。后续建议围绕该领域展开。",
+      memoryType: "fact",
+    });
+  });
+
+  it("preserves explicit canonical arguments", () => {
+    expect(normalizeMemoryToolArgs({ title: "部署约束", content: "系统必须离线部署", memory_type: "constraint" })).toEqual({
+      title: "部署约束",
+      content: "系统必须离线部署",
+      memoryType: "constraint",
+    });
+  });
+
+  it("still rejects calls without memory content", () => {
+    expect(() => normalizeMemoryToolArgs({ title: "空记忆" })).toThrow("缺少参数：content");
+  });
+});
 
 function registry(reviewDraft: () => boolean | Promise<boolean> = () => true) {
   const project = createProject();

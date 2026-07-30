@@ -1,4 +1,4 @@
-import type { AgentDraft, AgentEditorSelection, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
+import type { AgentDraft, AgentEditorSelection, AgentGitApprovalRequest, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
 import { AgentToolRegistry, objectSchema } from "./toolRegistry";
 import type { DocumentBlock, Project } from "../types";
 import { searchWeb } from "../services/search";
@@ -8,6 +8,7 @@ import { privilegedFileOperation, runPrivilegedPowerShell } from "../services/pr
 
 import { fetchKnowledgeWebPage, getKnowledgeSectionScope, searchKnowledge } from "../knowledge";
 import { proposeProjectMemory, readProjectMemory, searchProjectMemories } from "./memoryService";
+import { registerAgentGitTools, type AgentGitRuntime } from "./gitTools";
 const text = (value: unknown, field: string) => {
   if (typeof value !== "string" || !value.trim()) throw new Error(`缺少参数：${field}`);
   return value.trim();
@@ -16,6 +17,20 @@ const markdownText = (value: unknown, field: string) => {
   if (typeof value !== "string" || !value.trim()) throw new Error(`缺少参数：${field}`);
   return value;
 };
+
+const MEMORY_TYPES = ["decision", "preference", "constraint", "fact", "reference"] as const;
+type MemoryToolType = typeof MEMORY_TYPES[number];
+
+export function normalizeMemoryToolArgs(args: Record<string, unknown>): { title: string; content: string; memoryType: MemoryToolType } {
+  const content = text(args.content ?? args.fact, "content");
+  const title = typeof args.title === "string" && args.title.trim()
+    ? args.title.trim()
+    : content.replace(/\s+/g, " ").replace(/[。！？.!?].*$/s, "").slice(0, 36).trim() || content.slice(0, 36);
+  const memoryType = typeof args.memory_type === "string" && MEMORY_TYPES.includes(args.memory_type as MemoryToolType)
+    ? args.memory_type as MemoryToolType
+    : "fact";
+  return { title, content, memoryType };
+}
 
 export const proposalAgentSystemPrompt = `你是“构案”中的软件技术方案 Agent。你的职责是基于当前方案和明确提供的资料，完成可审计的方案写作任务。
 
@@ -64,6 +79,8 @@ export function createProposalToolRegistry(params: {
   askUser?: (question: AgentUserQuestion, signal: AbortSignal) => Promise<AgentUserQuestionAnswer>;
   fullAccess?: boolean;
   workspaceRuntime?: AgentWorkspaceRuntime;
+  gitRuntime?: AgentGitRuntime;
+  reviewGitOperation?: (request: AgentGitApprovalRequest, signal: AbortSignal) => Promise<boolean>;
   onDocumentSearch?: (search: AgentSearchHighlight) => void;
 }) {
   const { project, block } = params;
@@ -309,9 +326,10 @@ export function createProposalToolRegistry(params: {
       },
     })
     .register({
-      definition: { type: "function", function: { name: "remember_project_fact", description: "提出一条待用户审核的长期记忆。不得保存密钥、临时步骤、知识库原文、工具日志或可直接从方案读取的普通事实。", parameters: objectSchema({ title: { type: "string", description: "简短语义标题" }, content: { type: "string", description: "一条自包含的稳定事实" }, memory_type: { type: "string", enum: ["decision", "preference", "constraint", "fact", "reference"] } }, ["title", "content", "memory_type"]) } },
+      definition: { type: "function", function: { name: "remember_project_fact", description: "提出一条待用户审核的长期记忆。不得保存密钥、临时步骤、知识库原文、工具日志或可直接从方案读取的普通事实。", parameters: objectSchema({ title: { type: "string", description: "简短语义标题；省略时会从正文生成" }, content: { type: "string", description: "一条自包含的稳定事实" }, fact: { type: "string", description: "content 的兼容别名；优先使用 content" }, memory_type: { type: "string", description: "记忆类型；省略时为 fact", enum: ["decision", "preference", "constraint", "fact", "reference"] } }, []) } },
       execute: async args => {
-        const memory = await proposeProjectMemory(project, { title: text(args.title, "title"), content: text(args.content, "content"), memoryType: text(args.memory_type, "memory_type") as "decision" | "preference" | "constraint" | "fact" | "reference" });
+        const input = normalizeMemoryToolArgs(args);
+        const memory = await proposeProjectMemory(project, input);
         return { content: `已生成待审核记忆：${memory.title}。用户可在设置 > 记忆中确认。`, data: memory, isError: false };
       },
     })
@@ -455,6 +473,10 @@ export function createProposalToolRegistry(params: {
         definition: { type: "function", function: { name: "run_powershell", description: "执行任意 PowerShell 脚本，不设超时。完整输出写入临时日志，返回末尾 64KB。", parameters: objectSchema({ script: { type: "string" }, cwd: { type: "string" } }, ["script"]) } },
         execute: async (args,signal) => { const result=await runPrivilegedPowerShell(text(args.script,"script"),typeof args.cwd==="string"?args.cwd:project.workspace?.root,signal); return {content:`退出码：${result.exitCode}\n日志：${result.logPath}\n\n${result.outputTail}`,data:{runId:result.runId,exitCode:result.exitCode,logPath:result.logPath,sensitive:true,persistedSummary:`[PowerShell] 退出码 ${result.exitCode}，日志：${result.logPath}`},isError:result.exitCode!==0}; },
       });
+  }
+
+  if (params.gitRuntime && params.reviewGitOperation && project.workspace?.root && isDesktop()) {
+    registerAgentGitTools(registry, params.gitRuntime, params.reviewGitOperation);
   }
 
   if (!activeHeading) registry.unregister("read_current_section").unregister("propose_section_update");
