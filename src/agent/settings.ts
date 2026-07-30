@@ -2,6 +2,7 @@ export type AgentResponseStyle = "concise" | "balanced" | "detailed";
 export type AgentCitationMode = "required" | "preferred" | "off";
 
 export interface AgentSettings {
+  disabledTools: string[];
   contextCompressionTokens: number;
   maxRounds: number;
   webSearchMaxCalls: number;
@@ -20,6 +21,7 @@ export interface AgentSettings {
 }
 
 export const defaultAgentSettings: AgentSettings = {
+  disabledTools: [],
   contextCompressionTokens: 48000,
   maxRounds: 20,
   webSearchMaxCalls: 2,
@@ -43,6 +45,7 @@ const numberInRange = (value: unknown, fallback: number, min: number, max: numbe
 export function normalizeAgentSettings(value: Partial<AgentSettings> | null | undefined): AgentSettings {
   const source = value ?? {};
   return {
+    disabledTools: Array.isArray(source.disabledTools) ? [...new Set(source.disabledTools.filter((name): name is string => typeof name === "string"))] : [],
     contextCompressionTokens: Math.round(numberInRange(source.contextCompressionTokens, defaultAgentSettings.contextCompressionTokens, 8000, 200000)),
     maxRounds: Math.round(numberInRange(source.maxRounds, defaultAgentSettings.maxRounds, 4, 50)),
     webSearchMaxCalls: Math.round(numberInRange(source.webSearchMaxCalls, defaultAgentSettings.webSearchMaxCalls, 1, 10)),

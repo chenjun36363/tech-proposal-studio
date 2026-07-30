@@ -1,5 +1,11 @@
 [CmdletBinding()]
-param()
+param(
+    [ValidateRange(1, 10)]
+    [int]$MaxAttempts = 3,
+
+    [ValidateRange(1, 300)]
+    [int]$RetryDelaySeconds = 10
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -36,10 +42,33 @@ Push-Location $projectRoot
 try {
     Write-Host "Building TechProposal Studio NSIS installer..." -ForegroundColor Cyan
     $buildCommand = 'call "{0}" -no_logo -arch=x64 && pnpm tauri build --bundles nsis' -f $vsDevCmd
-    & $env:ComSpec /D /S /C $buildCommand
+    $buildExitCode = 1
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "EXE build failed with exit code $LASTEXITCODE."
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        if ($attempt -gt 1) {
+            Write-Host "Retrying EXE build (attempt $attempt of $MaxAttempts)..." -ForegroundColor Yellow
+        }
+
+        & $env:ComSpec /D /S /C $buildCommand
+        $buildExitCode = $LASTEXITCODE
+        if ($buildExitCode -eq 0) {
+            break
+        }
+
+        if ($attempt -lt $MaxAttempts) {
+            $delay = $RetryDelaySeconds * $attempt
+            Write-Warning "EXE build attempt $attempt failed with exit code $buildExitCode. Retrying in $delay seconds; completed downloads and build artifacts will be reused."
+            Start-Sleep -Seconds $delay
+        }
+    }
+
+    if ($buildExitCode -ne 0) {
+        throw @"
+EXE build failed after $MaxAttempts attempts (exit code $buildExitCode).
+If the output shows a timeout while downloading NSIS, verify access to:
+https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip
+On a proxied network, set HTTPS_PROXY (and HTTP_PROXY when required) before running this script. Tauri caches a successful tool download, so rerunning the command will reuse it.
+"@
     }
 
     $bundleDir = Join-Path $projectRoot "src-tauri\target\release\bundle\nsis"

@@ -97,7 +97,7 @@ pub(in crate::knowledge) fn list_documents(
 ) -> Result<Vec<KnowledgeDocument>, String> {
     let db = knowledge_db(workspace)?;
     let mut stmt = db
-        .prepare("SELECT id,source_type,title,location,source_url,fingerprint,status,error,section_count,chunk_count,updated_at,structure_status FROM knowledge_documents ORDER BY updated_at DESC,title")
+        .prepare("SELECT d.id,d.source_type,d.title,d.location,d.source_url,d.fingerprint,d.status,d.error,d.section_count,d.chunk_count,d.updated_at,d.structure_status,COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c WHERE c.document_id=d.id),0) FROM knowledge_documents d ORDER BY d.updated_at DESC,d.title")
         .map_err(|e| e.to_string())?;
     let result = stmt
         .query_map([], |row| {
@@ -114,6 +114,7 @@ pub(in crate::knowledge) fn list_documents(
                 chunk_count: row.get(9)?,
                 updated_at: row.get(10)?,
                 structure_status: row.get(11)?,
+                char_count: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -128,7 +129,7 @@ pub(in crate::knowledge) fn list_sections(
 ) -> Result<Vec<KnowledgeSection>, String> {
     let db = knowledge_db(workspace)?;
     let mut stmt = db
-        .prepare("SELECT s.id,s.document_id,s.parent_id,s.title,s.heading_path,s.level,s.position,s.chunk_count,s.heading_source,s.original_line,s.confidence,COALESCE(c.quality,'normal') FROM knowledge_sections s LEFT JOIN knowledge_chunks c ON c.section_id=s.id WHERE s.document_id=?1 ORDER BY s.position")
+        .prepare("SELECT s.id,s.document_id,s.parent_id,s.title,s.heading_path,s.level,s.position,s.chunk_count,s.heading_source,s.original_line,s.confidence,COALESCE((SELECT c.quality FROM knowledge_chunks c JOIN knowledge_chunk_sections m ON m.chunk_id=c.id WHERE m.section_id=s.id ORDER BY c.position LIMIT 1),'normal'),COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c JOIN knowledge_chunk_sections m ON m.chunk_id=c.id WHERE m.section_id=s.id),0) FROM knowledge_sections s WHERE s.document_id=?1 ORDER BY s.position")
         .map_err(|e| e.to_string())?;
     let result = stmt
         .query_map([document_id], |row| {
@@ -145,6 +146,7 @@ pub(in crate::knowledge) fn list_sections(
                 original_line: row.get(9)?,
                 confidence: row.get(10)?,
                 quality: row.get(11)?,
+                char_count: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?

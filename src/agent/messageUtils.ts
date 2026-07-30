@@ -18,5 +18,12 @@ export function safeTurnSplitIndex(messages: AgentMessage[], target: number, min
 }
 
 export function persistentAgentMessages(messages: AgentMessage[]): AgentMessage[] {
-  return messages.filter(message => !message.transient).map(({ transient: _transient, ...message }) => message);
+  return messages.filter(message => !message.transient).map(({ transient: _transient, ...message }) => {
+    const data = message.tool_result_data;
+    if (message.role === "tool" && data && typeof data === "object" && (data as Record<string, unknown>).sensitive === true) {
+      const { sensitive: _sensitive, persistedSummary, ...audit } = data as Record<string, unknown>;
+      return { ...message, content: typeof persistedSummary === "string" ? persistedSummary : "[敏感工具结果未持久化]", tool_result_data: audit };
+    }
+    return message;
+  });
 }

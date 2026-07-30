@@ -27,13 +27,18 @@ describe("AgentDraftReviewModal", () => {
     expect(overlay?.parentElement).toBe(document.body);
     expect(panel.querySelector(".agent-review-overlay")).toBeNull();
     const html = overlay?.innerHTML ?? "";
-    expect(html).toContain("优化前正文");
-    expect(html).toContain("优化后正文");
+    const text = overlay?.textContent ?? "";
+    expect(text).toContain("优化前正文");
+    expect(text).toContain("优化后正文");
     expect(html).toContain("同步滚动");
     expect(html).toContain("调整原文与优化稿宽度");
     expect(html).toContain("恢复均分");
     expect(html).toContain("拒绝修改");
     expect(html).toContain("接受并替换");
+    expect(html).toContain("agent-review-diff-line delete");
+    expect(html).toContain("agent-review-diff-line add");
+    expect(html).toContain("原稿差异");
+    expect(html).toContain("修订稿差异");
 
     act(() => root.unmount());
     panel.remove();
@@ -61,6 +66,7 @@ describe("AgentDraftReviewModal", () => {
     expect(html).toContain("删除章节将同时删除其全部子章节");
     expect(html).toContain("整个章节将被删除");
     expect(html).toContain("确认删除");
+    expect(html).toContain("-3 行");
 
     act(() => root.unmount());
     panel.remove();
@@ -83,6 +89,8 @@ describe("AgentDraftReviewModal", () => {
     expect(html).toContain("将「风险」移动到「测试」之前");
     expect(html).toContain("目标内容");
     expect(html).toContain("接受并移动");
+    expect(html).toContain("正文未修改，仅调整位置");
+    expect(html).not.toContain("agent-review-diff-line delete");
     act(() => root.unmount());
     panel.remove();
   });

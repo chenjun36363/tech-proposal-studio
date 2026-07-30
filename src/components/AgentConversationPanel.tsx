@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageSquarePlus, Send, Square, Trash2, X } from "lucide-react";
+import { BookOpen, Bot, Check, Database, FileSearch, Globe2, Maximize2, MessageSquarePlus, Send, ShieldAlert, Square, Trash2, X } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
 import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, compactAgentConversation, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch } from "../agent/conversationStore";
-import { buildEditorSelectionPrompt, createProposalToolRegistry, proposalAgentSystemPrompt } from "../agent/proposalTools";
-import type { AgentDraft, AgentEditorSelection, AgentEvent, AgentRunStatus, TodoItem } from "../agent/protocol";
+import { buildEditorSelectionPrompt, createProposalToolRegistry, proposalAgentSystemPrompt, type AgentSearchHighlight, type AgentWorkspaceRuntime } from "../agent/proposalTools";
+import type { AgentDraft, AgentEditorSelection, AgentEvent, AgentRunStatus, AgentUserQuestion, AgentUserQuestionAnswer, AgentUserQuestionChoice, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings } from "../agent/settings";
 import { listProjectMemories } from "../agent/memoryService";
@@ -16,6 +16,7 @@ import { latestTodosFromMessages } from "../agent/todos";
 import { AgentTodoPlan } from "./AgentTodoPlan";
 
 type DraftDecision = { resolve: (approved: boolean) => void; cleanup: () => void };
+type QuestionDecision = { resolve: (answer: AgentUserQuestionAnswer) => void; cleanup: () => void };
 
 function conversationTitle(task: string) {
   return task.replace(/\s+/g, " ").trim().slice(0, 24) || "新会话";
@@ -29,13 +30,15 @@ function draftCopy(draft: AgentDraft) {
   return { title: "章节修改待确认", before: "章节原文", after: "修改稿" };
 }
 
-export function AgentConversationPanel({ project, block, pinnedContext, editorSelection, clearEditorSelection, applyDraft, notify }: {
+export function AgentConversationPanel({ project, block, pinnedContext, editorSelection, clearEditorSelection, applyDraft, workspaceRuntime, onDocumentSearch, notify }: {
   project: Project;
   block: DocumentBlock;
   pinnedContext: ResolvedAgentContext[];
   editorSelection?: AgentEditorSelection;
   clearEditorSelection: () => void;
   applyDraft: (draft: AgentDraft) => void;
+  workspaceRuntime?: AgentWorkspaceRuntime;
+  onDocumentSearch?: (search: AgentSearchHighlight) => void;
   notify: (message: string) => void;
 }) {
   const [conversations, setConversations] = useState<AgentConversation[]>([]);
@@ -47,12 +50,16 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [todosCollapsed, setTodosCollapsed] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [userQuestion, setUserQuestion] = useState<AgentUserQuestion | null>(null);
+  const [questionChoice, setQuestionChoice] = useState<AgentUserQuestionChoice>("A");
+  const [customAnswer, setCustomAnswer] = useState("");
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
   const abortRef = useRef<AbortController | null>(null);
   const draftDecisionRef = useRef<DraftDecision | null>(null);
+  const questionDecisionRef = useRef<QuestionDecision | null>(null);
   const agentSettings = normalizeAgentSettings(project.agent);
   const aiEnabled = project.model?.enabled !== false;
-  const running = runStatus === "running" || runStatus === "waiting_approval";
+  const running = runStatus === "running" || runStatus === "waiting_approval" || runStatus === "waiting_user";
   const workspaceRoot = project.workspace?.root;
 
   useEffect(() => {
@@ -91,6 +98,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const pinnedContextOnly = Boolean(active?.pinnedContextOnly && pinnedContext.length > 0);
   const webSearchEnabled = active?.webSearchEnabled === true;
   const knowledgeSearchEnabled = active?.knowledgeSearchEnabled !== false;
+  const fullAccessEnabled = active?.fullAccessEnabled === true;
   const pendingDraftCopy = draft ? draftCopy(draft) : null;
   const pendingRevisedContent = draft?.operation === "move_section" ? draft.target.destinationSnapshot ?? "" : draft?.after ?? "";
 
@@ -150,7 +158,15 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     if (!active) return;
     const previous = active;
     setConversations(current => current.map(item => item.id === active.id ? { ...item, ...patch } : item));
-    if ((active.revision ?? 0) === 0) return;
+    if ((active.revision ?? 0) === 0) {
+      void saveAgentConversation({ ...active, ...patch }, workspaceRoot)
+        .then(saved => setConversations(current => applyAgentConversationChange(current, { projectId: project.id, type: "saved", conversation: saved })))
+        .catch(error => {
+          setConversations(current => current.map(item => item.id === previous.id ? previous : item));
+          notify(error instanceof Error ? error.message : "会话设置保存失败");
+        });
+      return;
+    }
     void patchAgentConversation(active, patch, workspaceRoot)
       .then(saved => setConversations(current => applyAgentConversationChange(current, {
         projectId: project.id,
@@ -165,6 +181,13 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const setPinnedContextOnly = (value: boolean) => updateActiveConversationRuntime({ pinnedContextOnly: value });
   const setWebSearchEnabled = (value: boolean) => updateActiveConversationRuntime({ webSearchEnabled: value });
   const setKnowledgeSearchEnabled = (value: boolean) => updateActiveConversationRuntime({ knowledgeSearchEnabled: value });
+  const setFullAccessEnabled = (value: boolean) => {
+    if (!active) return;
+    if (!value) return updateActiveConversationRuntime({ fullAccessEnabled: false });
+    if (active.fullAccessAcknowledged) return updateActiveConversationRuntime({ fullAccessEnabled: true });
+    const accepted = window.confirm("完全访问将允许 AI 无需逐项确认即可修改文档、访问任意系统路径、永久删除文件并执行任意 PowerShell 命令。\n\n这些操作可能无法恢复。仅在你信任当前任务和模型时开启。是否继续？");
+    if (accepted) updateActiveConversationRuntime({ fullAccessEnabled: true, fullAccessAcknowledged: true });
+  };
   const stopRun = () => {
     abortRef.current?.abort();
   };
@@ -177,7 +200,12 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     setRunStatus("running");
     decision.resolve(approved);
   };
-  const reviewDraft = (nextDraft: AgentDraft, signal: AbortSignal) => new Promise<boolean>((resolve, reject) => {
+  const reviewDraft = (nextDraft: AgentDraft, signal: AbortSignal) => {
+    if (fullAccessEnabled) {
+      applyDraft(nextDraft);
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve, reject) => {
     const onAbort = () => {
       signal.removeEventListener("abort", onAbort);
       if (draftDecisionRef.current?.resolve === resolve) draftDecisionRef.current = null;
@@ -190,7 +218,35 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     signal.addEventListener("abort", onAbort, { once: true });
     setDraft(nextDraft);
     setRunStatus("waiting_approval");
+    });
+  };
+
+  const askUser = (question: AgentUserQuestion, signal: AbortSignal) => new Promise<AgentUserQuestionAnswer>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      if (questionDecisionRef.current?.resolve === resolve) questionDecisionRef.current = null;
+      setUserQuestion(null);
+      reject(new DOMException("Agent 任务已取消", "AbortError"));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    questionDecisionRef.current = { resolve, cleanup };
+    signal.addEventListener("abort", onAbort, { once: true });
+    setQuestionChoice("A");
+    setCustomAnswer("");
+    setUserQuestion(question);
+    setRunStatus("waiting_user");
   });
+
+  const submitUserAnswer = () => {
+    const decision = questionDecisionRef.current;
+    if (!decision || (questionChoice === "D" && !customAnswer.trim())) return;
+    const selected = userQuestion?.options.find(option => option.choice === questionChoice);
+    decision.cleanup();
+    questionDecisionRef.current = null;
+    setUserQuestion(null);
+    setRunStatus("running");
+    decision.resolve({ choice: questionChoice, answer: questionChoice === "D" ? customAnswer.trim() : selected?.overview ?? "" });
+  };
 
   const rejectDraft = () => { setReviewOpen(false); setDraft(null); settleDraft(false); };
   const acceptDraft = () => {
@@ -239,7 +295,8 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       return [pendingConversation, ...remaining];
     });
     try {
-    const registry = createProposalToolRegistry({ project, block, selection: capturedSelection, reviewDraft, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+    const registry = createProposalToolRegistry({ project, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, onDocumentSearch, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+    for (const toolName of agentSettings.disabledTools) registry.unregister(toolName);
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
     if (pinnedContextOnly || !agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
     if (!agentSettings.memoryEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
@@ -251,7 +308,11 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     if (!webSearchEnabled) promptParts.push("联网搜索当前已停用。不得调用 web_search 或 read_web_page。");
     else promptParts.push(`本轮最多执行 ${agentSettings.webSearchMaxCalls} 次联网搜索，达到上限后不得再次调用 web_search。`);
     if (capturedSelection) promptParts.push(buildEditorSelectionPrompt(capturedSelection));
-    if (agentSettings.planningEnabled) promptParts.push("首轮必须先调用 write_todo 制定本次任务的执行计划，再执行读取、检索或修改操作。");
+    promptParts.push(fullAccessEnabled
+      ? "本会话已开启完全访问。所有已提供的写入和系统工具均可直接执行，无需请求逐项确认；必须如实报告成功、失败和实际目标。"
+      : "本会话未开启完全访问。文档修改必须提交审核提案，且不得尝试系统级文件或命令操作。");
+    const planningToolEnabled = agentSettings.planningEnabled && registry.has("write_todo");
+    if (planningToolEnabled) promptParts.push("首轮必须先调用 write_todo 制定本次任务的执行计划，再执行读取、检索或修改操作。");
     const memories = agentSettings.memoryEnabled ? await listProjectMemories(project, false) : [];
     const requestMessages = buildProposalAgentMessages({
       systemPrompt: promptParts.join("\n\n"),
@@ -262,7 +323,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       memories,
       memoryIndexLimit: agentSettings.memoryIndexLimit,
     });
-      const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: agentSettings.planningEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
+      const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: planningToolEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
       const runtimeMessages = result.messages.slice(1);
       const completedConversation = { ...pendingConversation, messages: runtimeMessages };
       setConversations(current => applyAgentConversationChange(current, {
@@ -325,6 +386,23 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       <div><button type="button" onClick={() => setReviewOpen(true)}><Maximize2 size={13} />放大审核</button><button type="button" onClick={rejectDraft}>拒绝</button><button type="button" className="primary" onClick={acceptDraft}><Check size={13} />接受修改</button></div>
     </section>}
 
+    {userQuestion && <section className="agent-user-question" aria-label="Agent 向用户提问">
+      <header><b>需要你补充上下文</b><span>{userQuestion.question}</span></header>
+      <div className="agent-question-options">
+        {userQuestion.options.map(option => <label key={option.choice} className={questionChoice === option.choice ? "selected" : ""}>
+          <input type="radio" name="agent-user-question" checked={questionChoice === option.choice} onChange={() => setQuestionChoice(option.choice)} />
+          <strong><i>{option.choice}</i>{option.title}{option.choice === "A" && <small>推荐</small>}</strong>
+          <span>{option.overview}</span>
+        </label>)}
+        <label className={questionChoice === "D" ? "selected custom" : "custom"}>
+          <input type="radio" name="agent-user-question" checked={questionChoice === "D"} onChange={() => setQuestionChoice("D")} />
+          <strong><i>D</i>用户输入</strong>
+          <textarea value={customAnswer} onFocus={() => setQuestionChoice("D")} onChange={event => setCustomAnswer(event.target.value)} placeholder="输入你的方案或补充说明" />
+        </label>
+      </div>
+      <button type="button" className="primary" onClick={submitUserAnswer} disabled={questionChoice === "D" && !customAnswer.trim()}><Check size={13} />提交选择</button>
+    </section>}
+
     <div className="agent-tool-toggles">
       <label className="agent-tool-toggle" title="允许 Agent 检索和阅读工作区知识库">
         <input type="checkbox" checked={knowledgeSearchEnabled} disabled={running || pinnedContextOnly || !agentSettings.knowledgeToolsEnabled} onChange={event => setKnowledgeSearchEnabled(event.target.checked)} />
@@ -337,6 +415,10 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       <label className="agent-context-toggle" title={`仅使用已引用资料，共 ${pinnedContext.length} 条`}>
         <input type="checkbox" checked={pinnedContextOnly} disabled={!pinnedContext.length || running} onChange={event => setPinnedContextOnly(event.target.checked)} />
         <BookOpen size={13} /><span>{`引用资料${pinnedContext.length}条`}</span>
+      </label>
+      <label className={`agent-tool-toggle agent-full-access ${fullAccessEnabled ? "active" : ""}`} title="允许 Agent 无需逐项确认执行文档、文件和系统命令操作">
+        <input type="checkbox" checked={fullAccessEnabled} disabled={running} onChange={event => setFullAccessEnabled(event.target.checked)} />
+        <ShieldAlert size={13} /><span>完全访问</span>
       </label>
     </div>
     {editorSelection && <div className="agent-selection-capture" title={editorSelection.text}>

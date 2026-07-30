@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { isDesktop } from "./runtime";
 
 export interface GitFileStatus { path: string; indexStatus: string; worktreeStatus: string }
-export interface GitRepositoryStatus { isRepository: boolean; branch: string; upstream: string | null; ahead: number; behind: number; remoteUrl: string | null; files: GitFileStatus[] }
+export interface GitRepositoryStatus { isRepository: boolean; branch: string; upstream: string | null; ahead: number; behind: number; stashCount: number; remoteUrl: string | null; files: GitFileStatus[] }
+export interface GitBranchInfo { name: string; kind: "local" | "remote"; current: boolean }
 export interface GitDiffResult { path: string; staged: boolean; patch: string }
 export interface GitCommitSummary { hash: string; shortHash: string; subject: string; author: string; authoredAt: string; refs: string[] }
 
@@ -11,6 +12,11 @@ function desktopOnly() {
 }
 
 export async function getGitStatus(root: string) { desktopOnly(); return invoke<GitRepositoryStatus>("git_status", { root }); }
+export async function getGitBranches(root: string) { desktopOnly(); return invoke<GitBranchInfo[]>("git_branches", { root }); }
+export async function switchGitBranch(root: string, branch: GitBranchInfo) { desktopOnly(); return invoke<void>("git_switch_branch", { root, branch: branch.name, kind: branch.kind }); }
+export async function createGitBranch(root: string, branch: string) { desktopOnly(); return invoke<void>("git_create_branch", { root, branch }); }
+export async function stashGitChanges(root: string) { desktopOnly(); return invoke<void>("git_stash_push", { root }); }
+export async function popGitStash(root: string) { desktopOnly(); return invoke<void>("git_stash_pop", { root }); }
 export async function initGitRepository(root: string) { desktopOnly(); return invoke<void>("git_init", { root }); }
 export async function stageGitFile(root: string, path: string) { desktopOnly(); return invoke<void>("git_stage", { root, path }); }
 export async function unstageGitFile(root: string, path: string) { desktopOnly(); return invoke<void>("git_unstage", { root, path }); }

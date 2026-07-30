@@ -20,6 +20,8 @@ export interface AgentConversation {
   pinnedContextOnly?: boolean;
   webSearchEnabled?: boolean;
   knowledgeSearchEnabled?: boolean;
+  fullAccessEnabled?: boolean;
+  fullAccessAcknowledged?: boolean;
   createdAt: number;
   updatedAt: number;
   revision?: number;
@@ -28,7 +30,7 @@ export interface AgentConversation {
   lastMessagePreview?: string;
 }
 
-export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled">>;
+export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged">>;
 
 export type AgentConversationChange =
   | { projectId: string; type: "saved"; conversation: AgentConversation }
@@ -113,6 +115,8 @@ async function upsertDesktopConversation(conversation: AgentConversation, worksp
           pinnedContextOnly: latest.pinnedContextOnly,
           webSearchEnabled: latest.webSearchEnabled,
           knowledgeSearchEnabled: latest.knowledgeSearchEnabled,
+          fullAccessEnabled: latest.fullAccessEnabled,
+          fullAccessAcknowledged: latest.fullAccessAcknowledged,
         };
         continue;
       }
@@ -146,7 +150,7 @@ export async function getAgentConversation(conversationId: string, workspaceRoot
 
 export function createAgentConversation(projectId: string, pinnedContextOnly = false): AgentConversation {
   const now = Date.now();
-  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
+  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, fullAccessEnabled: false, fullAccessAcknowledged: false, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
 }
 
 export async function saveAgentConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {

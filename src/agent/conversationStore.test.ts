@@ -21,6 +21,8 @@ describe("agent conversation storage", () => {
     const conversation = createAgentConversation("project-a");
     expect(conversation.webSearchEnabled).toBe(false);
     expect(conversation.knowledgeSearchEnabled).toBe(true);
+    expect(conversation.fullAccessEnabled).toBe(false);
+    expect(conversation.fullAccessAcknowledged).toBe(false);
   });
   it("applies conversation changes without reloading storage", () => {
     const first = createAgentConversation("project-a");
@@ -64,6 +66,14 @@ describe("agent conversation storage", () => {
     conversation.messages = [{ role: "user", content: "真实任务" }, { role: "user", content: "内部提示", transient: true }];
     await saveAgentConversation(conversation);
     expect((await listAgentConversations("project-a"))[0].messages).toEqual([{ role: "user", content: "真实任务" }]);
+  });
+
+  it("redacts sensitive tool output while retaining audit metadata", async () => {
+    const conversation = createAgentConversation("project-a");
+    conversation.messages = [{ role: "tool", tool_call_id: "tool-1", content: "secret output", tool_result_data: { sensitive: true, persistedSummary: "[PowerShell] exit 0", logPath: "C:\\logs\\1.log" } }];
+    await saveAgentConversation(conversation);
+    const [saved] = await listAgentConversations("project-a");
+    expect(saved.messages[0]).toEqual(expect.objectContaining({ content: "[PowerShell] exit 0", tool_result_data: { logPath: "C:\\logs\\1.log" } }));
   });
 
   it("clears only the selected project's history", async () => {

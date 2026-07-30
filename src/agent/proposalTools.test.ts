@@ -115,6 +115,48 @@ describe("proposal agent web search tool", () => {
   });
 });
 
+describe("proposal agent ask user tool", () => {
+  it("waits for a choice and returns it as structured context", async () => {
+    const askUser = vi.fn().mockResolvedValue({ choice: "B", answer: "接受更高实施风险" });
+    const tools = createProposalToolRegistry({
+      project: createProject(), block, reviewDraft: () => true, askUser, onTodos: () => undefined,
+    });
+    const result = await tools.execute({
+      id: "ask-1",
+      name: "ask_user",
+      arguments: {
+        question: "本次改造应采用哪种范围？",
+        recommended: { title: "核心流程", overview: "先覆盖主要业务路径" },
+        aggressive: { title: "全面改造", overview: "一次覆盖全部模块" },
+        conservative: { title: "最小试点", overview: "仅改造单个模块" },
+      },
+    }, new AbortController().signal);
+
+    expect(askUser).toHaveBeenCalledOnce();
+    expect(result.isError).toBe(false);
+    expect(result.content).toContain("用户已选择方案 B");
+    expect(result.data).toEqual(expect.objectContaining({ kind: "user_question", answer: { choice: "B", answer: "接受更高实施风险" } }));
+  });
+
+  it("returns custom user input verbatim", async () => {
+    const tools = createProposalToolRegistry({
+      project: createProject(), block, reviewDraft: () => true,
+      askUser: async () => ({ choice: "D", answer: "先完成支付模块，再评估其余范围" }),
+      onTodos: () => undefined,
+    });
+    const result = await tools.execute({
+      id: "ask-custom", name: "ask_user", arguments: {
+        question: "范围如何确定？",
+        recommended: { title: "推荐", overview: "推荐概述" },
+        aggressive: { title: "激进", overview: "激进概述" },
+        conservative: { title: "保守", overview: "保守概述" },
+      },
+    }, new AbortController().signal);
+
+    expect(result.content).toContain("先完成支付模块，再评估其余范围");
+  });
+});
+
 describe("proposal agent todo tool", () => {
   it("accepts a complete plan with one active item", async () => {
     const onTodos = vi.fn();
@@ -146,7 +188,7 @@ describe("proposal agent draft review", () => {
     let decide: ((approved: boolean) => void) | undefined;
     const tools = registry(() => new Promise<boolean>(resolve => { decide = resolve; }));
     let settled = false;
-    const pending = tools.execute({ id: "draft-wait", name: "propose_section_update", arguments: { markdown: "## 等待", instruction: "更新" } }, new AbortController().signal).finally(() => { settled = true; });
+    const pending = tools.execute({ id: "draft-wait", name: "propose_section_update", arguments: { markdown: "## 当前章节\n\n等待", instruction: "更新" } }, new AbortController().signal).finally(() => { settled = true; });
     await Promise.resolve();
     expect(settled).toBe(false);
     decide?.(true);
@@ -158,18 +200,18 @@ describe("proposal agent draft review", () => {
     const tools = registry(reviewDraft);
     const signal = new AbortController().signal;
 
-    const proposed = await tools.execute({ id: "draft-1", name: "propose_section_update", arguments: { markdown: "## 新正文", instruction: "更新" } }, signal);
+    const proposed = await tools.execute({ id: "draft-1", name: "propose_section_update", arguments: { markdown: "## 当前章节\n\n新正文", instruction: "更新" } }, signal);
     const current = await tools.execute({ id: "read-1", name: "read_current_section", arguments: {} }, signal);
 
     expect(proposed).toEqual(expect.objectContaining({ isError: false, data: expect.objectContaining({ approved: true }) }));
-    expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ before: "## 当前章节", after: "## 新正文" }), signal);
-    expect(current.content).toBe("## 新正文");
+    expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ before: "## 当前章节", after: "## 当前章节\n\n新正文" }), signal);
+    expect(current.content).toBe("## 当前章节\n\n新正文");
   });
 
   it("keeps the current section unchanged after rejection", async () => {
     const tools = registry(() => false);
     const signal = new AbortController().signal;
-    const proposed = await tools.execute({ id: "draft-2", name: "propose_section_update", arguments: { markdown: "## 被拒绝", instruction: "更新" } }, signal);
+    const proposed = await tools.execute({ id: "draft-2", name: "propose_section_update", arguments: { markdown: "## 当前章节\n\n被拒绝", instruction: "更新" } }, signal);
     const current = await tools.execute({ id: "read-2", name: "read_current_section", arguments: {} }, signal);
 
     expect(proposed).toEqual(expect.objectContaining({ isError: false, data: expect.objectContaining({ approved: false }) }));
@@ -178,6 +220,79 @@ describe("proposal agent draft review", () => {
 });
 
 describe("proposal agent document editing tools", () => {
+  it("finds literal text with case and section scope controls", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 背景\n\nLIMS lims\n\n## 架构\n\nLIMS";
+    const onDocumentSearch = vi.fn();
+    const tools = createProposalToolRegistry({ project, block: { ...block, sectionId: "背景", content: "## 背景\n\nLIMS lims" }, reviewDraft: () => true, onDocumentSearch, onTodos: () => undefined });
+    const signal = new AbortController().signal;
+    const insensitive = await tools.execute({ id: "find-all", name: "find_document_text", arguments: { query: "lims", case_sensitive: false, scope: "document" } }, signal);
+    const section = await tools.execute({ id: "find-section", name: "find_document_text", arguments: { query: "LIMS", case_sensitive: true, scope: "section", heading_id: "背景" } }, signal);
+    expect(insensitive.data).toEqual(expect.objectContaining({ count: 3 }));
+    expect(section.data).toEqual(expect.objectContaining({ count: 1 }));
+    expect(onDocumentSearch).toHaveBeenLastCalledWith({ query: "LIMS", caseSensitive: true, scope: "section", headingId: "背景" });
+  });
+
+  it("targets the requested chapter and rejects a draft from another chapter", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 第2章 需求分析\n\n需求正文\n\n## 第7章 实施计划\n\n计划正文";
+    const reviewDraft = vi.fn().mockResolvedValue(false);
+    const tools = createProposalToolRegistry({
+      project,
+      block: { ...block, sectionId: "第2章-需求分析", content: "## 第2章 需求分析\n\n需求正文" },
+      reviewDraft,
+      onTodos: () => undefined,
+    });
+    const signal = new AbortController().signal;
+
+    const acceptedTarget = await tools.execute({ id: "targeted", name: "propose_section_update", arguments: { heading_id: "第7章-实施计划", markdown: "## 第7章 实施计划\n\n新计划", instruction: "更新计划" } }, signal);
+    const wrongChapter = await tools.execute({ id: "wrong", name: "propose_section_update", arguments: { heading_id: "第2章-需求分析", markdown: "## 第7章 实施计划\n\n新计划", instruction: "错误目标" } }, signal);
+    const changedNumberStyle = await tools.execute({ id: "number-style", name: "propose_section_update", arguments: { heading_id: "第7章-实施计划", markdown: "## 第七章 实施计划\n\n新计划", instruction: "错误改号" } }, signal);
+
+    expect(acceptedTarget.isError).toBe(false);
+    expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ before: expect.stringContaining("计划正文"), target: expect.objectContaining({ sectionId: "第7章-实施计划" }) }), signal);
+    expect(wrongChapter).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("标题与目标章节不一致") }));
+    expect(changedNumberStyle).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("标题与目标章节不一致") }));
+  });
+
+  it("replaces the first or all literal matches through a document draft", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 背景\n\n旧词和旧词";
+    const reviewDraft = vi.fn().mockResolvedValue(true);
+    const tools = createProposalToolRegistry({ project, block: { ...block, sectionId: "背景", content: "## 背景\n\n旧词和旧词" }, reviewDraft, onTodos: () => undefined });
+    const signal = new AbortController().signal;
+    await tools.execute({ id: "replace", name: "replace_document_text", arguments: { query: "旧词", replacement: "新词", occurrence: "all", scope: "document" } }, signal);
+    const current = await tools.execute({ id: "read", name: "read_current_section", arguments: {} }, signal);
+    expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ operation: "replace_document", after: expect.stringContaining("新词和新词") }), signal);
+    expect(current.content).toContain("新词和新词");
+  });
+
+  it("inserts H2-H6 headings and renames the single H1", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 背景\n\n正文";
+    const reviewDraft = vi.fn().mockResolvedValue(false);
+    const tools = createProposalToolRegistry({ project, block: { ...block, sectionId: "背景", content: "## 背景\n\n正文" }, reviewDraft, onTodos: () => undefined });
+    const signal = new AbortController().signal;
+    await tools.execute({ id: "heading", name: "insert_heading", arguments: { target_heading_id: "背景", position: "after", level: 4, title: "部署细节", body: "内容" } }, signal);
+    await tools.execute({ id: "title", name: "rename_document_title", arguments: { title: "新方案" } }, signal);
+    expect(reviewDraft).toHaveBeenNthCalledWith(1, expect.objectContaining({ operation: "insert_section", after: "#### 部署细节\n\n内容" }), signal);
+    expect(reviewDraft).toHaveBeenNthCalledWith(2, expect.objectContaining({ operation: "replace_document", after: expect.stringMatching(/^# 新方案/) }), signal);
+  });
+
+  it("switches the live tool context after creating a blank document", async () => {
+    const workspaceRuntime = {
+      listDocuments: vi.fn().mockResolvedValue([]),
+      createBlank: vi.fn().mockResolvedValue({ markdown: "# 新文件\n", filePath: "C:\\work\\新文件.md" }),
+      open: vi.fn(), save: vi.fn(), reload: vi.fn(), rename: vi.fn(), delete: vi.fn(),
+    };
+    const tools = createProposalToolRegistry({ project: createProject(), block, reviewDraft: () => true, onTodos: () => undefined, fullAccess: true, workspaceRuntime });
+    const signal = new AbortController().signal;
+    await tools.execute({ id: "create", name: "create_blank_document", arguments: { name: "新文件" } }, signal);
+    const outline = await tools.execute({ id: "outline-new", name: "get_proposal_outline", arguments: {} }, signal);
+    expect(outline.content).toContain("新文件");
+    expect(outline.content).not.toContain("当前章节");
+  });
+
   it("injects the captured selection into transient model context", () => {
     const prompt = buildEditorSelectionPrompt({
       start: 10,

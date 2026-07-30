@@ -3,7 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { decodeLocalImagePath, MarkdownSourceEditor } from "./markdownEditor";
+import { decodeLocalImagePath, highlightPreviewHtml, MarkdownSourceEditor } from "./markdownEditor";
 
 describe("local Markdown image paths", () => {
   it("decodes paths encoded by marked before filesystem resolution", () => {
@@ -18,6 +18,16 @@ describe("local Markdown image paths", () => {
 });
 
 describe("Markdown editor selection capture", () => {
+  it("renders all source matches in the mirrored highlight layer", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    act(() => root.render(createElement(MarkdownSourceEditor, { value: "LIMS 和 LIMS", onChange: () => undefined, highlights: [{ start: 0, end: 4 }, { start: 7, end: 11 }], activeHighlight: 1 })));
+    expect(host.querySelectorAll(".md-source-highlight mark")).toHaveLength(2);
+    expect(host.querySelectorAll(".md-source-highlight mark.active")).toHaveLength(1);
+    act(() => root.unmount());
+  });
+
   it("reports a non-empty selection before focus moves to the Agent input", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const host = document.createElement("div");
@@ -42,5 +52,15 @@ describe("Markdown editor selection capture", () => {
 
     act(() => root.unmount());
     host.remove();
+  });
+});
+
+describe("Markdown preview search highlighting", () => {
+  it("marks matching rendered text without changing element attributes", () => {
+    const html = highlightPreviewHtml('<p title="LIMS">LIMS 与 lims</p>', "lims", false);
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    expect(host.querySelector("p")?.getAttribute("title")).toBe("LIMS");
+    expect(host.querySelectorAll("mark.md-search-match")).toHaveLength(2);
   });
 });

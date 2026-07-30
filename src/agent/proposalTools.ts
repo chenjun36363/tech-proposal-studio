@@ -1,8 +1,10 @@
-import type { AgentDraft, AgentEditorSelection } from "./protocol";
+import type { AgentDraft, AgentEditorSelection, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
 import { AgentToolRegistry, objectSchema } from "./toolRegistry";
 import type { DocumentBlock, Project } from "../types";
 import { searchWeb } from "../services/search";
 import { applyAgentDraft, parseMarkdownHeadings, sectionBody } from "../markdownDoc";
+import { isDesktop } from "../services/runtime";
+import { privilegedFileOperation, runPrivilegedPowerShell } from "../services/privileged";
 
 import { fetchKnowledgeWebPage, getKnowledgeSectionScope, searchKnowledge } from "../knowledge";
 import { proposeProjectMemory, readProjectMemory, searchProjectMemories } from "./memoryService";
@@ -22,13 +24,27 @@ export const proposalAgentSystemPrompt = `你是“构案”中的软件技术�
 2. 需要事实依据时，优先使用用户明确加入上下文的资料；仍不足时用 search_knowledge 检索知识库，再用 read_knowledge 阅读相关章节。
 3. 规划工具可用时，首轮先用 write_todo 列出完整计划。每次调用都必须提交完整清单；始终仅有一个 in_progress，完成一步后立即更新，再开始下一步。
 4. 正文修改只能通过可用的 propose_* 工具提交，禁止声称已经直接写入文件。
-5. 改写当前章节使用 propose_section_update；改写非空选区使用 propose_selection_update；新增、删除或移动章节分别使用 propose_section_insert、propose_section_delete、propose_section_move。
-6. 章节修改稿必须保留正确的 Markdown 标题；插入章节不得创建第二个 H1；删除和移动工具不得操作文档 H1。移动章节时必须指定源章节、目标章节以及 before/after 位置。
-7. 不编造资料中不存在的事实；缺少关键输入时在最终回复中明确列出待确认项。
-8. 提交修改后，用一句简短总结说明改动依据，不要重复输出整篇正文。
-9. 用户明确加入的资料已直接提供在系统上下文中；其他知识先 search_knowledge，再 read_knowledge。
-10. 联网搜索可用时，仅在本地资料和知识库不足以回答时调用 web_search。需要搜索时直接调用工具，不要在回复文本中询问用户是否同意查询。搜索次数不得超过系统配置的单任务上限，每次任务最多阅读 3 个网页；优先选择政府、标准组织和厂商官方来源，达到足够依据后立即停止检索并完成用户任务，不要遍历全部结果或重复查询。需要依据网页正文时调用 read_web_page，不能只根据搜索摘要下结论。
-11. 只有跨会话仍有价值的事实、偏好或决策，才可调用 remember_project_fact 提出待审核记忆；不得声称记忆已被用户确认。`;
+5. 改写章节使用 propose_section_update，并传入刚由 get_proposal_outline 返回的 heading_id；改写非空选区使用 propose_selection_update；新增、删除或移动章节分别使用 propose_section_insert、propose_section_delete、propose_section_move。
+6. 章节修改稿必须完整保留目标章节的 Markdown 标题、标题层级和原有编号格式，不得把其他章节作为修改稿提交。插入章节不得创建第二个 H1；删除和移动工具不得操作文档 H1。移动章节时必须指定源章节、目标章节以及 before/after 位置。
+7. 接受插入、删除、移动或标题修改后，章节 ID 可能变化；继续操作前必须重新调用 get_proposal_outline，禁止复用旧 ID。不要声称系统已自动重编号；Agent 修改不会改写用户已有的标题编号格式。
+8. 不编造资料中不存在的事实；缺少关键输入时在最终回复中明确列出待确认项。
+9. 提交修改后，用一句简短总结说明改动依据，不要重复输出整篇正文。
+10. 用户明确加入的资料已直接提供在系统上下文中；其他知识先 search_knowledge，再 read_knowledge。
+11. 联网搜索可用时，仅在本地资料和知识库不足以回答时调用 web_search。需要搜索时直接调用工具，不要在回复文本中询问用户是否同意查询。搜索次数不得超过系统配置的单任务上限，每次任务最多阅读 3 个网页；优先选择政府、标准组织和厂商官方来源，达到足够依据后立即停止检索并完成用户任务，不要遍历全部结果或重复查询。需要依据网页正文时调用 read_web_page，不能只根据搜索摘要下结论。
+12. 只有跨会话仍有价值的事实、偏好或决策，才可调用 remember_project_fact 提出待审核记忆；不得声称记忆已被用户确认。
+13. 缺少会实质改变结果的关键上下文，且无法从当前对话、方案或可用资料中确定时，调用 ask_user。问题必须具体，并分别给出 A 首选推荐、B 更激进、C 更保守的方案概述；不要用普通回复代替工具提问，也不要询问可自行查明的信息。`;
+
+export interface AgentDocumentState { markdown: string; filePath?: string; }
+export interface AgentSearchHighlight { query: string; caseSensitive: boolean; scope: "document" | "section"; headingId?: string; }
+export interface AgentWorkspaceRuntime {
+  listDocuments: () => Promise<Array<{ title: string; path: string; size: number }>>;
+  createBlank: (name: string) => Promise<AgentDocumentState>;
+  open: (path: string) => Promise<AgentDocumentState>;
+  save: (markdown: string, path?: string) => Promise<AgentDocumentState>;
+  reload: (path?: string) => Promise<AgentDocumentState>;
+  rename: (name: string, path?: string) => Promise<AgentDocumentState>;
+  delete: (path: string, mode: "trash" | "permanent", currentPath?: string) => Promise<AgentDocumentState | null>;
+}
 
 export function buildEditorSelectionPrompt(selection: AgentEditorSelection): string {
   return `## 本轮编辑器选区
@@ -45,9 +61,14 @@ export function createProposalToolRegistry(params: {
   selection?: AgentEditorSelection;
   reviewDraft: (draft: AgentDraft, signal: AbortSignal) => boolean | Promise<boolean>;
   onTodos: (todos: Array<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm: string }>) => void;
+  askUser?: (question: AgentUserQuestion, signal: AbortSignal) => Promise<AgentUserQuestionAnswer>;
+  fullAccess?: boolean;
+  workspaceRuntime?: AgentWorkspaceRuntime;
+  onDocumentSearch?: (search: AgentSearchHighlight) => void;
 }) {
   const { project, block } = params;
   let currentMarkdown = project.markdown;
+  let currentFilePath = project.filePath;
   let currentHeadingId = block.sectionId !== "markdown" ? block.sectionId : undefined;
   let currentSelection = params.selection;
   const findHeading = (id?: string) => id ? parseMarkdownHeadings(currentMarkdown).find(item => item.id === id) : undefined;
@@ -79,11 +100,37 @@ export function createProposalToolRegistry(params: {
     }
     return {
       content: approved
-        ? "用户已接受修改提案。不要再次输出完整正文，请简要总结修改依据。"
+        ? `${draft.operation === "insert_section" || draft.operation === "delete_section" || draft.operation === "move_section" ? "章节结构已变化；继续操作前必须重新调用 get_proposal_outline。" : "用户已接受修改提案。"}不要再次输出完整正文，请简要总结修改依据。`
         : "用户已拒绝修改提案。请尊重该决定，必要时询问修改方向或结束任务。",
       data: { operation: draft.operation, instruction: draft.instruction, beforeChars: draft.before.length, afterChars: draft.after.length, approved },
       isError: false,
     };
+  };
+  const replaceWholeDocument = async (after: string, instruction: string, signal: AbortSignal) => reviewAndApply({
+    callId: crypto.randomUUID(), operation: "replace_document", before: currentMarkdown, after, instruction,
+    target: { snapshot: currentMarkdown },
+  }, signal);
+  const scopeRange = (scope: unknown, headingId: unknown) => {
+    if (scope === "section") {
+      const heading = requireHeading(text(headingId, "heading_id"));
+      return { start: heading.start, end: heading.end, heading };
+    }
+    return { start: 0, end: currentMarkdown.length, heading: undefined };
+  };
+  const findTextMatches = (query: string, caseSensitive: boolean, start: number, end: number) => {
+    const haystack = currentMarkdown.slice(start, end);
+    const source = caseSensitive ? haystack : haystack.toLocaleLowerCase();
+    const needle = caseSensitive ? query : query.toLocaleLowerCase();
+    const matches: Array<{ start: number; end: number; excerpt: string }> = [];
+    let cursor = 0;
+    while (cursor <= source.length - needle.length) {
+      const index = source.indexOf(needle, cursor);
+      if (index < 0) break;
+      const absolute = start + index;
+      matches.push({ start: absolute, end: absolute + query.length, excerpt: currentMarkdown.slice(Math.max(start, absolute - 40), Math.min(end, absolute + query.length + 40)) });
+      cursor = index + Math.max(needle.length, 1);
+    }
+    return matches;
   };
   const searchableWebUrls = new Set<string>();
   const searchedQueries = new Set<string>();
@@ -92,6 +139,36 @@ export function createProposalToolRegistry(params: {
   let webSearchCalls = 0;
   const registry = new AgentToolRegistry();
   registry
+    .register({
+      definition: { type: "function", function: {
+        name: "ask_user",
+        description: "仅在缺少无法从当前对话、方案或可用资料中获得的关键上下文时向用户提问，并暂停执行等待回答。必须描述一个明确问题，提供 A 首选推荐、B 更激进、C 更保守三种互斥方案；界面会自动提供 D 用户输入，不要自行添加第四项。用户回答将作为工具结果补充进当前上下文。",
+        parameters: objectSchema({
+          question: { type: "string", description: "需要用户补充上下文或作出决策的具体问题" },
+          recommended: { type: "object", description: "A：首选推荐方案", properties: { title: { type: "string" }, overview: { type: "string" } }, required: ["title", "overview"], additionalProperties: false },
+          aggressive: { type: "object", description: "B：收益或变化更大、风险也更高的激进方案", properties: { title: { type: "string" }, overview: { type: "string" } }, required: ["title", "overview"], additionalProperties: false },
+          conservative: { type: "object", description: "C：范围更小、风险更低的保守方案", properties: { title: { type: "string" }, overview: { type: "string" } }, required: ["title", "overview"], additionalProperties: false },
+        }, ["question", "recommended", "aggressive", "conservative"]),
+      } },
+      execute: async (args, signal) => {
+        if (!params.askUser) return { content: "当前界面无法接收用户回答。", isError: true };
+        const option = (value: unknown, field: string, choice: "A" | "B" | "C") => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`缺少参数：${field}`);
+          const item = value as Record<string, unknown>;
+          return { choice, title: text(item.title, `${field}.title`), overview: text(item.overview, `${field}.overview`) };
+        };
+        const question: AgentUserQuestion = {
+          question: text(args.question, "question"),
+          options: [option(args.recommended, "recommended", "A"), option(args.aggressive, "aggressive", "B"), option(args.conservative, "conservative", "C")],
+        };
+        const answer = await params.askUser(question, signal);
+        const selected = answer.choice === "D" ? undefined : question.options.find(item => item.choice === answer.choice);
+        const content = answer.choice === "D"
+          ? `用户补充了自定义上下文：\n问题：${question.question}\n用户输入：${answer.answer}`
+          : `用户已选择方案 ${answer.choice}。\n问题：${question.question}\n方案：${selected?.title}\n方案概述：${selected?.overview}`;
+        return { content, data: { kind: "user_question", question, answer }, isError: false };
+      },
+    })
     .register({
       definition: { type: "function", function: { name: "read_current_section", description: "读取当前正在编辑的技术方案章节。", parameters: objectSchema({}) } },
       execute: () => ({ content: currentBlockContent || "（当前章节为空）", data: { blockId: block.id }, isError: false }),
@@ -116,6 +193,51 @@ export function createProposalToolRegistry(params: {
       execute: () => currentSelection
         ? { content: currentSelection.text, data: currentSelection, isError: false }
         : { content: "当前没有非空选区。", isError: true },
+    })
+    .register({
+      definition: { type: "function", function: { name: "find_document_text", description: "在全文或指定章节中按普通文本查找，返回位置和上下文。", parameters: objectSchema({ query: { type: "string" }, case_sensitive: { type: "boolean" }, scope: { type: "string", enum: ["document", "section"] }, heading_id: { type: "string" } }, ["query"]) } },
+      execute: args => {
+        const query = text(args.query, "query");
+        params.onDocumentSearch?.({ query, caseSensitive: args.case_sensitive === true, scope: args.scope === "section" ? "section" : "document", headingId: typeof args.heading_id === "string" ? args.heading_id : undefined });
+        const range = scopeRange(args.scope, args.heading_id);
+        const matches = findTextMatches(query, args.case_sensitive === true, range.start, range.end);
+        return { content: matches.length ? JSON.stringify(matches, null, 2) : "没有找到匹配文本。", data: { query, count: matches.length, matches }, isError: false };
+      },
+    })
+    .register({
+      definition: { type: "function", function: { name: "replace_document_text", description: "在全文或指定章节中替换普通文本。普通模式提交审核，完全访问模式直接执行。", parameters: objectSchema({ query: { type: "string" }, replacement: { type: "string" }, case_sensitive: { type: "boolean" }, scope: { type: "string", enum: ["document", "section"] }, heading_id: { type: "string" }, occurrence: { type: "string", enum: ["first", "all"] }, instruction: { type: "string" } }, ["query", "replacement"]) } },
+      execute: async (args, signal) => {
+        const query = text(args.query, "query");
+        params.onDocumentSearch?.({ query, caseSensitive: args.case_sensitive === true, scope: args.scope === "section" ? "section" : "document", headingId: typeof args.heading_id === "string" ? args.heading_id : undefined });
+        if (typeof args.replacement !== "string") throw new Error("缺少参数：replacement");
+        const range = scopeRange(args.scope, args.heading_id);
+        const matches = findTextMatches(query, args.case_sensitive === true, range.start, range.end);
+        const selected = args.occurrence === "first" ? matches.slice(0, 1) : matches;
+        if (!selected.length) return { content: "没有找到可替换的文本。", data: { count: 0 }, isError: true };
+        let after = currentMarkdown;
+        for (const match of [...selected].reverse()) after = `${after.slice(0, match.start)}${args.replacement}${after.slice(match.end)}`;
+        return replaceWholeDocument(after, typeof args.instruction === "string" ? args.instruction : `替换 ${selected.length} 处文本`, signal);
+      },
+    })
+    .register({
+      definition: { type: "function", function: { name: "insert_heading", description: "在目标标题之前或之后插入 H2-H6 标题，可同时插入正文。", parameters: objectSchema({ target_heading_id: { type: "string" }, position: { type: "string", enum: ["before", "after"] }, level: { type: "integer", minimum: 2, maximum: 6 }, title: { type: "string" }, body: { type: "string" }, instruction: { type: "string" } }, ["target_heading_id", "position", "level", "title"]) } },
+      execute: async (args, signal) => {
+        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"));
+        const level = typeof args.level === "number" ? Math.floor(args.level) : 0;
+        if (level < 2 || level > 6) throw new Error("level 必须在 2 到 6 之间");
+        const position = text(args.position, "position"); if (position !== "before" && position !== "after") throw new Error("position 必须是 before 或 after");
+        const body = typeof args.body === "string" && args.body.trim() ? `\n\n${args.body.trim()}` : "";
+        return reviewAndApply({ callId: crypto.randomUUID(), operation: "insert_section", before: "", after: `${"#".repeat(level)} ${text(args.title, "title")}${body}`, instruction: typeof args.instruction === "string" ? args.instruction : "插入标题", target: { sectionId: heading.id, sectionTitle: heading.title, sectionLevel: heading.level, position, snapshot: sectionBody(currentMarkdown, heading) } }, signal);
+      },
+    })
+    .register({
+      definition: { type: "function", function: { name: "rename_document_title", description: "修改文档唯一 H1 标题。", parameters: objectSchema({ title: { type: "string" }, instruction: { type: "string" } }, ["title"]) } },
+      execute: async (args, signal) => {
+        const h1 = parseMarkdownHeadings(currentMarkdown).find(item => item.level === 1); if (!h1) throw new Error("当前文档没有 H1 标题");
+        const lineEnd = currentMarkdown.indexOf("\n", h1.start); const end = lineEnd < 0 ? currentMarkdown.length : lineEnd;
+        const after = `${currentMarkdown.slice(0, h1.start)}# ${text(args.title, "title")}${currentMarkdown.slice(end)}`;
+        return replaceWholeDocument(after, typeof args.instruction === "string" ? args.instruction : "修改文档标题", signal);
+      },
     })
     .register({
       definition: { type: "function", function: { name: "web_search", description: `联网搜索当前或外部信息。仅在已有资料不足时使用；启用后查询默认直接执行。本次任务最多调用 ${webSearchMaxCalls} 次。`, parameters: objectSchema({ query: { type: "string", description: "将发送给搜索服务的完整查询词" } }, ["query"]) } },
@@ -213,15 +335,23 @@ export function createProposalToolRegistry(params: {
       },
     })
     .register({
-      definition: { type: "function", function: { name: "propose_section_update", description: "提交完整的当前章节 Markdown 修改稿，供用户查看差异并决定是否接受。不会直接写入文件。", parameters: objectSchema({ markdown: { type: "string", description: "可完整替换当前章节的 Markdown" }, instruction: { type: "string", description: "本次修改的简短说明" } }, ["markdown", "instruction"]) } },
+      definition: { type: "function", function: { name: "propose_section_update", description: "按章节 ID 提交该章节的完整 Markdown 修改稿，供用户查看同一章节的差异并决定是否接受。不会直接写入文件。", parameters: objectSchema({ heading_id: { type: "string", description: "最近一次 get_proposal_outline 返回的目标章节 ID；省略时仅修改当前编辑章节" }, markdown: { type: "string", description: "完整替换目标章节的 Markdown；首行标题的层级、去编号标题和编号格式必须保持不变" }, instruction: { type: "string", description: "本次修改的简短说明" } }, ["markdown", "instruction"]) } },
       execute: async (args, signal) => {
-        const heading = findHeading(currentHeadingId);
+        const requestedId = typeof args.heading_id === "string" && args.heading_id.trim() ? args.heading_id.trim() : currentHeadingId;
+        const heading = findHeading(requestedId);
         if (!heading) throw new Error("当前没有可修改的有效章节");
         const after = markdownText(args.markdown ?? args.content, "markdown");
+        const revisedHeading = parseMarkdownHeadings(after)[0];
+        if (!revisedHeading || revisedHeading.start !== 0) throw new Error("修改稿必须以目标章节的 Markdown 标题开头");
+        if (revisedHeading.level !== heading.level) throw new Error(`修改稿标题层级与目标章节不一致：需要 H${heading.level}，收到 H${revisedHeading.level}`);
+        if (revisedHeading.title !== heading.title) {
+          throw new Error(`修改稿标题与目标章节不一致：目标为「${heading.title}」，收到「${revisedHeading.title}」。请读取正确章节后重新提交。`);
+        }
+        const before = sectionBody(currentMarkdown, heading);
         const instruction = typeof args.instruction === "string" && args.instruction.trim() ? args.instruction.trim() : "优化当前章节";
         const draft: AgentDraft = {
-          callId: crypto.randomUUID(), operation: "replace_section", before: currentBlockContent, after, instruction,
-          target: { sectionId: heading.id, sectionTitle: heading.title, sectionLevel: heading.level, snapshot: currentBlockContent },
+          callId: crypto.randomUUID(), operation: "replace_section", before, after, instruction,
+          target: { sectionId: heading.id, sectionTitle: heading.title, sectionLevel: heading.level, snapshot: before },
         };
         return reviewAndApply(draft, signal);
       },
@@ -292,6 +422,40 @@ export function createProposalToolRegistry(params: {
         return reviewAndApply(draft, signal);
       },
     });
+
+  const bindDocument = (state: AgentDocumentState) => {
+    currentMarkdown = state.markdown;
+    currentFilePath = state.filePath;
+    const first = parseMarkdownHeadings(currentMarkdown)[0];
+    currentHeadingId = first?.id;
+    currentBlockContent = first ? sectionBody(currentMarkdown, first) : currentMarkdown;
+    currentSelection = undefined;
+    return state;
+  };
+
+  if (params.fullAccess && params.workspaceRuntime) {
+    const runtime = params.workspaceRuntime;
+    registry
+      .register({ definition: { type: "function", function: { name: "list_workspace_documents", description: "列出工作区 Markdown 文档。", parameters: objectSchema({}) } }, execute: async () => { const rows = await runtime.listDocuments(); return { content: JSON.stringify(rows, null, 2), data: rows, isError: false }; } })
+      .register({ definition: { type: "function", function: { name: "create_blank_document", description: "在工作区创建只含一个 H1 的空白 Markdown 并切换到该文档。重名时失败。", parameters: objectSchema({ name: { type: "string", description: "文件名或文档标题" } }, ["name"]) } }, execute: async args => { const state=bindDocument(await runtime.createBlank(text(args.name,"name"))); return { content:`已创建并打开：${state.filePath}`,data:state,isError:false }; } })
+      .register({ definition: { type: "function", function: { name: "open_workspace_document", description: "打开工作区 Markdown 文档并将其设为后续工具的当前文档。", parameters: objectSchema({ path: { type: "string" } }, ["path"]) } }, execute: async args => { const state=bindDocument(await runtime.open(text(args.path,"path"))); return {content:`已打开：${state.filePath}`,data:state,isError:false}; } })
+      .register({ definition: { type: "function", function: { name: "save_current_document", description: "将 Agent 当前 Markdown 明确保存到磁盘。", parameters: objectSchema({}) } }, execute: async () => { const state=bindDocument(await runtime.save(currentMarkdown,currentFilePath)); return {content:`已保存：${state.filePath}`,data:state,isError:false}; } })
+      .register({ definition: { type: "function", function: { name: "reload_current_document", description: "从磁盘重新加载当前 Markdown，放弃编辑器中尚未保存的内容。", parameters: objectSchema({}) } }, execute: async () => { const state=bindDocument(await runtime.reload(currentFilePath)); return {content:`已重新加载：${state.filePath}`,data:state,isError:false}; } })
+      .register({ definition: { type: "function", function: { name: "rename_current_document", description: "重命名当前工作区 Markdown 文件。", parameters: objectSchema({ name: { type: "string" } }, ["name"]) } }, execute: async args => { const state=bindDocument(await runtime.rename(text(args.name,"name"),currentFilePath)); return {content:`已重命名：${state.filePath}`,data:state,isError:false}; } })
+      .register({ definition: { type: "function", function: { name: "delete_workspace_document", description: "将指定工作区 Markdown 移入回收站或永久删除。", parameters: objectSchema({ path: { type: "string" }, mode: { type: "string", enum: ["trash","permanent"] } }, ["path","mode"]) } }, execute: async args => { const mode=text(args.mode,"mode") as "trash"|"permanent"; const path=text(args.path,"path"); const state=await runtime.delete(path,mode,currentFilePath); if(state)bindDocument(state); return {content:`已${mode==="trash"?"移入回收站":"永久删除"}：${path}`,data:{path,mode},isError:false}; } });
+  }
+
+  if (params.fullAccess && typeof window !== "undefined" && isDesktop()) {
+    registry
+      .register({
+        definition: { type: "function", function: { name: "system_file_operation", description: "以系统级权限查询、读取、写入、创建、复制、移动、重命名或删除任意文件和目录。", parameters: objectSchema({ operation: { type: "string", enum: ["stat","list","read_text","write_text","create_directory","copy","move","rename","delete"] }, path: { type: "string" }, destination: { type: "string" }, content: { type: "string" }, delete_mode: { type: "string", enum: ["trash","permanent"] } }, ["operation","path"]) } },
+        execute: async args => { const result=await privilegedFileOperation({ operation:text(args.operation,"operation") as any,path:text(args.path,"path"),destination:typeof args.destination==="string"?args.destination:undefined,content:typeof args.content==="string"?args.content:undefined,deleteMode:args.delete_mode==="trash"?"trash":"permanent" }); return {content:JSON.stringify(result,null,2),data:{operation:result.operation,path:result.path,destination:result.destination,size:result.size,entryCount:result.entries?.length,sensitive:true,persistedSummary:`[系统文件操作] ${result.operation}: ${result.path}`},isError:false}; },
+      })
+      .register({
+        definition: { type: "function", function: { name: "run_powershell", description: "执行任意 PowerShell 脚本，不设超时。完整输出写入临时日志，返回末尾 64KB。", parameters: objectSchema({ script: { type: "string" }, cwd: { type: "string" } }, ["script"]) } },
+        execute: async (args,signal) => { const result=await runPrivilegedPowerShell(text(args.script,"script"),typeof args.cwd==="string"?args.cwd:project.workspace?.root,signal); return {content:`退出码：${result.exitCode}\n日志：${result.logPath}\n\n${result.outputTail}`,data:{runId:result.runId,exitCode:result.exitCode,logPath:result.logPath,sensitive:true,persistedSummary:`[PowerShell] 退出码 ${result.exitCode}，日志：${result.logPath}`},isError:result.exitCode!==0}; },
+      });
+  }
 
   if (!activeHeading) registry.unregister("read_current_section").unregister("propose_section_update");
   if (!currentSelection || currentSelection.start === currentSelection.end) registry.unregister("read_selected_text").unregister("propose_selection_update");

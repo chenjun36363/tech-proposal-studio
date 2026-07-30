@@ -707,15 +707,22 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
     new Paragraph({ children: [new PageBreak()] }),
   ];
 
-  // 目录页：基于标题样式 1-3 级生成，超链接可点击，结束后分页
+  // 目录页：Word 在首次打开时根据标题样式 1-3 级更新目录和页码。
   const tocChildren: FileChild[] = [
-    new TableOfContents("目录", { hyperlink: true, headingStyleRange: "1-3" }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: twips(12) },
+      children: [new TextRun({ text: "目录", font: exportFont(settings.headingFont), bold: true, size: halfPoints(settings.headingSizes[0]), color: "000000" })],
+    }),
+    new TableOfContents("目录", { hyperlink: true, headingStyleRange: "1-3", beginDirty: true }),
     new Paragraph({ children: [new PageBreak()] }),
   ];
 
   const documentChildren: FileChild[] = [...coverChildren, ...tocChildren, ...children];
 
   return new Document({
+    // DOCX 本身不排版、无法在导出时计算页码；由 Word 打开文档时更新 TOC 域。
+    features: { updateFields: true },
     styles: {
       default: {
         document: {

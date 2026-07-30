@@ -1,8 +1,9 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { marked } from "marked";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isDesktop } from "./services/runtime";
 import { saveImageToWorkspace } from "./workspace";
+import type { FindMatch } from "./findReplace";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -71,21 +72,56 @@ function rewriteLocalImages(html: string, filePath?: string, workspaceRoot?: str
   });
 }
 
+export function highlightPreviewHtml(html: string, query: string, caseSensitive = false): string {
+  if (!query || typeof document === "undefined") return html;
+  const root = document.createElement("div");
+  root.innerHTML = html;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+  const needle = caseSensitive ? query : query.toLocaleLowerCase();
+  for (const node of nodes) {
+    if (node.parentElement?.closest("script,style")) continue;
+    const source = node.data;
+    const searchable = caseSensitive ? source : source.toLocaleLowerCase();
+    let cursor = 0;
+    let index = searchable.indexOf(needle);
+    if (index < 0) continue;
+    const fragment = document.createDocumentFragment();
+    while (index >= 0) {
+      fragment.append(source.slice(cursor, index));
+      const mark = document.createElement("mark");
+      mark.className = "md-search-match";
+      mark.textContent = source.slice(index, index + query.length);
+      fragment.append(mark);
+      cursor = index + query.length;
+      index = searchable.indexOf(needle, cursor);
+    }
+    fragment.append(source.slice(cursor));
+    node.replaceWith(fragment);
+  }
+  return root.innerHTML;
+}
+
 export function MarkdownPreview({
   markdown,
   filePath,
   workspaceRoot,
   onLinkClick,
+  searchQuery = "",
+  searchCaseSensitive = false,
 }: {
   markdown: string;
   filePath?: string;
   workspaceRoot?: string;
   onLinkClick?: (href: string) => void;
+  searchQuery?: string;
+  searchCaseSensitive?: boolean;
 }) {
   const html = useMemo(() => {
     const raw = marked.parse(markdown || "") as string;
-    return rewriteLocalImages(raw, filePath, workspaceRoot);
-  }, [markdown, filePath, workspaceRoot]);
+    return highlightPreviewHtml(rewriteLocalImages(raw, filePath, workspaceRoot), searchQuery, searchCaseSensitive);
+  }, [markdown, filePath, workspaceRoot, searchQuery, searchCaseSensitive]);
   return <div
     className="md-preview"
     onClick={e => {
@@ -105,6 +141,8 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   onImageInserted?: (markdownImage: string) => void;
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   placeholder?: string;
+  highlights?: FindMatch[];
+  activeHighlight?: number;
 }>(function MarkdownSourceEditor({
   value,
   onChange,
@@ -112,8 +150,11 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   onImageInserted,
   onSelectionChange,
   placeholder,
+  highlights = [],
+  activeHighlight = 0,
 }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
   const composingRef = useRef(false);
   const [draft, setDraft] = useState(value);
 
@@ -185,8 +226,22 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     }
   };
 
+  const highlighted = useMemo(() => {
+    if (!highlights.length) return null;
+    const parts: ReactNode[] = [];
+    let cursor = 0;
+    highlights.forEach((match, index) => {
+      parts.push(<span key={`text-${index}`}>{draft.slice(cursor, match.start)}</span>);
+      parts.push(<mark key={`match-${index}`} className={index === activeHighlight ? "active" : ""}>{draft.slice(match.start, match.end)}</mark>);
+      cursor = match.end;
+    });
+    parts.push(<span key="tail">{draft.slice(cursor)}</span>);
+    return parts;
+  }, [draft, highlights, activeHighlight]);
+
   return (
     <div className="md-source-editor">
+      {highlighted && <div className="md-source-highlight" aria-hidden="true"><div ref={highlightRef}>{highlighted}</div></div>}
       <textarea
         ref={taRef}
         className="md-source"
@@ -211,6 +266,9 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
           end: event.currentTarget.selectionEnd ?? 0,
         })}
         onPaste={(e) => void handlePaste(e)}
+        onScroll={event => {
+          if (highlightRef.current) highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
+        }}
       />
     </div>
   );

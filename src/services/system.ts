@@ -72,3 +72,8 @@ export async function openWorkspacePowerShell(cwd: string, program?: string): Pr
   if (!isDesktop()) throw new Error("请在 Tauri 桌面端打开 PowerShell");
   await invoke("open_workspace_powershell", { cwd, program });
 }
+
+export async function openWorkspaceDirectory(root: string): Promise<void> {
+  if (!isDesktop()) throw new Error("请在 Tauri 桌面端打开工作区目录");
+  await invoke("open_workspace_directory", { root });
+}

@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowDownToLine, ArrowUpFromLine, Check, CloudDownload, GitBranch, GitCommitHorizontal, History, ListTree, LoaderCircle, Minus, Plus, RefreshCw, Settings2, Sparkles, Trash2 } from "lucide-react";
-import { commitGitChanges, discardGitFile, fetchGitRepository, getGitCommitDiff, getGitDiff, getGitLog, getGitStagedSummary, getGitStatus, initGitRepository, pullGitRepository, pushGitRepository, setGitRemote, stageAllGitFiles, stageGitFile, unstageAllGitFiles, unstageGitFile, type GitCommitSummary, type GitFileStatus, type GitRepositoryStatus } from "../../services/git";
+import { ArchiveRestore, ArrowDownToLine, ArrowUpFromLine, Check, CloudDownload, GitBranch, GitCommitHorizontal, History, ListTree, LoaderCircle, Minus, Plus, RefreshCw, Settings2, Sparkles, Trash2 } from "lucide-react";
+import { commitGitChanges, createGitBranch, discardGitFile, fetchGitRepository, getGitBranches, getGitCommitDiff, getGitDiff, getGitLog, getGitStagedSummary, getGitStatus, initGitRepository, popGitStash, pullGitRepository, pushGitRepository, setGitRemote, stageAllGitFiles, stageGitFile, stashGitChanges, switchGitBranch, unstageAllGitFiles, unstageGitFile, type GitBranchInfo, type GitCommitSummary, type GitFileStatus, type GitRepositoryStatus } from "../../services/git";
 import type { Project } from "../../types";
 import { generateCommitMessage } from "./commitMessage";
 
 export type GitDiffSelection = { kind: "working"; path: string; staged: boolean } | { kind: "commit"; commit: string; title: string };
 
-const emptyStatus: GitRepositoryStatus = { isRepository: false, branch: "", upstream: null, ahead: 0, behind: 0, remoteUrl: null, files: [] };
+const emptyStatus: GitRepositoryStatus = { isRepository: false, branch: "", upstream: null, ahead: 0, behind: 0, stashCount: 0, remoteUrl: null, files: [] };
 
 function statusLabel(code: string) {
   return ({ M: "M", A: "A", D: "D", R: "R", C: "C", U: "U", "?": "U" } as Record<string, string>)[code] ?? code;
+}
+
+export function getGitStatusCounts(files: GitFileStatus[]) {
+  return files.reduce((counts, file) => {
+    const untracked = file.indexStatus === "?" || file.worktreeStatus === "?";
+    if (untracked) counts.untracked += 1;
+    else {
+      if (file.indexStatus !== ".") counts.staged += 1;
+      if (file.worktreeStatus !== ".") counts.unstaged += 1;
+    }
+    return counts;
+  }, { staged: 0, unstaged: 0, untracked: 0 });
 }
 
 function ChangeList({ title, files, staged, selected, onSelect, onToggle, onBulkAction, bulkActionLabel, onDiscard, pendingDiscard }: {
@@ -49,7 +61,10 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
   const [error, setError] = useState("");
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [remoteUrl, setRemoteUrl] = useState("");
-  const [operation, setOperation] = useState<"pull" | "push" | "remote" | null>(null);
+  const [operation, setOperation] = useState<"fetch" | "pull" | "push" | "remote" | "branch" | "stash" | null>(null);
+  const [branchOpen, setBranchOpen] = useState(false);
+  const [branches, setBranches] = useState<GitBranchInfo[]>([]);
+  const [newBranch, setNewBranch] = useState("");
   const [view, setView] = useState<"changes" | "history">("changes");
   const [history, setHistory] = useState<GitCommitSummary[]>([]);
   const [pendingDiscard, setPendingDiscard] = useState<string | null>(null);
@@ -73,8 +88,9 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
   useEffect(() => {
     if (view !== "history" || !status.isRepository) return;
     void getGitLog(root).then(setHistory).catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
-  }, [root, status.isRepository, view]);
-  const staged = useMemo(() => status.files.filter(file => file.indexStatus !== "."), [status.files]);
+  }, [root, status.branch, status.isRepository, view]);
+  const counts = useMemo(() => getGitStatusCounts(status.files), [status.files]);
+  const staged = useMemo(() => status.files.filter(file => file.indexStatus !== "." && file.indexStatus !== "?"), [status.files]);
   const changed = useMemo(() => status.files.filter(file => file.worktreeStatus !== "."), [status.files]);
 
   const toggle = async (file: GitFileStatus, isStaged: boolean) => {
@@ -103,6 +119,37 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
     } catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); }
     finally { setOperation(null); }
   };
+  const fetchRemote = async () => {
+    setOperation("fetch");
+    try { await fetchGitRepository(root); await refresh(); notify("已获取远程更新"); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setOperation(null); }
+  };
+  const openBranches = async () => {
+    setBranchOpen(true); setOperation("branch");
+    try { setBranches(await getGitBranches(root)); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setOperation(null); }
+  };
+  const switchBranch = async (branch: GitBranchInfo) => {
+    if (branch.current) { setBranchOpen(false); return; }
+    setOperation("branch");
+    try { await switchGitBranch(root, branch); setBranchOpen(false); onSelect(null); await refresh(); notify(`已切换到 ${branch.name}`); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setOperation(null); }
+  };
+  const createBranch = async () => {
+    setOperation("branch");
+    try { await createGitBranch(root, newBranch); setNewBranch(""); setBranchOpen(false); onSelect(null); await refresh(); notify("分支已创建并切换"); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setOperation(null); }
+  };
+  const runStash = async (pop: boolean) => {
+    setOperation("stash");
+    try { if (pop) await popGitStash(root); else await stashGitChanges(root); onSelect(null); await refresh(); notify(pop ? "已恢复最近的 stash" : "更改已保存到 stash"); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setOperation(null); }
+  };
   const saveRemote = async () => {
     setOperation("remote");
     try { await setGitRemote(root, remoteUrl); setRemoteOpen(false); await refresh(); notify("origin 远程仓库已保存"); }
@@ -128,14 +175,26 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
 
   return <div className="git-sidebar">
     <div className="git-repo-summary">
-      <GitBranch size={14} /><strong>{status.branch || "HEAD"}</strong>
-      {(status.ahead > 0 || status.behind > 0) && <small>↑{status.ahead} ↓{status.behind}</small>}
+      <button className="git-branch-trigger" type="button" title="切换或新建分支" disabled={operation !== null} onClick={() => void openBranches()}><GitBranch size={14} /><strong>{status.branch || "HEAD"}</strong></button>
       <button type="button" disabled={!status.remoteUrl || operation !== null} title="拉取（仅快进）" onClick={() => void runRemoteOperation("pull")}><ArrowDownToLine size={14} /></button>
       <button type="button" disabled={!status.remoteUrl || operation !== null} title="推送" onClick={() => void runRemoteOperation("push")}><ArrowUpFromLine size={14} /></button>
-      <button type="button" disabled={!status.remoteUrl || operation !== null} title="获取远程更新" onClick={async () => { try { await fetchGitRepository(root); await refresh(); notify("已获取远程更新"); } catch (reason) { notify(reason instanceof Error ? reason.message : String(reason)); } }}><CloudDownload size={14} /></button>
+      <button type="button" disabled={!status.remoteUrl || operation !== null} title="获取远程更新" onClick={() => void fetchRemote()}>{operation === "fetch" ? <LoaderCircle className="spinning" size={14} /> : <CloudDownload size={14} />}</button>
+      <button type="button" disabled={operation !== null || (!status.files.length && status.stashCount === 0)} title={status.files.length ? "保存全部更改到 stash" : `恢复最近的 stash（共 ${status.stashCount} 个）`} onClick={() => void runStash(!status.files.length)}><ArchiveRestore size={14} />{status.stashCount > 0 && <i>{status.stashCount}</i>}</button>
       <button type="button" title="设置远程仓库" onClick={() => { setRemoteUrl(status.remoteUrl ?? ""); setRemoteOpen(true); }}><Settings2 size={14} /></button>
       <button type="button" title="刷新 Git 状态" onClick={() => void refresh()}>{loading ? <LoaderCircle className="spinning" size={14} /> : <RefreshCw size={14} />}</button>
     </div>
+    <section className="git-status-summary" aria-label="Git 状态摘要">
+      <div className="git-status-base"><span>基线</span><CloudDownload size={12} /><code title={status.upstream ?? "未设置上游分支"}>{status.upstream ?? "未设置上游"}</code></div>
+      <div className="git-status-metrics">
+        {[
+          { label: "领先", value: status.ahead, tone: "ahead" },
+          { label: "落后", value: status.behind, tone: "behind" },
+          { label: "已暂存", value: counts.staged, tone: "staged" },
+          { label: "未暂存", value: counts.unstaged, tone: "unstaged" },
+          { label: "未跟踪", value: counts.untracked, tone: "untracked" },
+        ].map(item => <div className={`git-status-metric ${item.value > 0 ? item.tone : "empty"}`} key={item.label}><b>{item.value}</b><span>{item.label}</span></div>)}
+      </div>
+    </section>
     <div className="git-view-tabs"><button className={view === "changes" ? "active" : ""} onClick={() => setView("changes")}><ListTree size={13} />更改</button><button className={view === "history" ? "active" : ""} onClick={() => setView("history")}><History size={13} />历史</button></div>
     {view === "changes" ? <><div className="git-commit-box">
       <textarea value={message} onChange={event => setMessage(event.target.value)} placeholder="提交说明" rows={2} />
@@ -161,6 +220,17 @@ export function GitSidebar({ root, project, selected, onSelect, notify }: { root
         <label><span>仓库地址</span><input autoFocus value={remoteUrl} onChange={event => setRemoteUrl(event.target.value)} placeholder="https://host/owner/repository.git" /></label>
         <p>认证由系统 Git 凭据管理器处理，请勿在地址中填写密码。</p>
         <footer><button type="button" onClick={() => setRemoteOpen(false)}>取消</button><button className="primary" type="button" disabled={!remoteUrl.trim() || operation !== null} onClick={() => void saveRemote()}>{operation === "remote" ? "保存中…" : "保存 origin"}</button></footer>
+      </section>
+    </div>, document.body)}
+    {branchOpen && createPortal(<div className="git-remote-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && operation !== "branch") setBranchOpen(false); }}>
+      <section className="git-remote-dialog git-branch-dialog" role="dialog" aria-modal="true" aria-labelledby="git-branch-title">
+        <header><GitBranch size={17} /><div><b id="git-branch-title">分支</b><span>切换本地或远程分支</span></div></header>
+        <div className="git-branch-list">
+          {branches.map(branch => <button type="button" className={branch.current ? "current" : ""} disabled={operation === "branch"} key={`${branch.kind}:${branch.name}`} onClick={() => void switchBranch(branch)}><span>{branch.name}</span><small>{branch.kind === "remote" ? "远程" : branch.current ? "当前" : "本地"}</small>{branch.current && <Check size={13} />}</button>)}
+          {!branches.length && <span className="git-branch-empty">没有可用分支</span>}
+        </div>
+        <form className="git-branch-create" onSubmit={event => { event.preventDefault(); if (newBranch.trim()) void createBranch(); }}><input value={newBranch} onChange={event => setNewBranch(event.target.value)} placeholder="新分支名称" /><button className="primary" type="submit" disabled={!newBranch.trim() || operation === "branch"}><Plus size={13} />新建</button></form>
+        <footer><button type="button" disabled={operation === "branch"} onClick={() => setBranchOpen(false)}>关闭</button></footer>
       </section>
     </div>, document.body)}
   </div>;

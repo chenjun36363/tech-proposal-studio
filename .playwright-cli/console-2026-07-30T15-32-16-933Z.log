@@ -1,0 +1,4 @@
+[  602094ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
+[  602108ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://127.0.0.1:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
+[  626242ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
+[  626257ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://127.0.0.1:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201

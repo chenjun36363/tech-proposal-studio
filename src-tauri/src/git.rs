@@ -21,8 +21,17 @@ pub(crate) struct GitRepositoryStatus {
     upstream: Option<String>,
     ahead: u32,
     behind: u32,
+    stash_count: u32,
     remote_url: Option<String>,
     files: Vec<GitFileStatus>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitBranchInfo {
+    name: String,
+    kind: String,
+    current: bool,
 }
 
 #[derive(Serialize)]
@@ -99,6 +108,7 @@ pub(crate) async fn git_status(root: String) -> Result<GitRepositoryStatus, Stri
                 upstream: None,
                 ahead: 0,
                 behind: 0,
+                stash_count: 0,
                 remote_url: None,
                 files: vec![],
             });
@@ -109,6 +119,7 @@ pub(crate) async fn git_status(root: String) -> Result<GitRepositoryStatus, Stri
                 "status",
                 "--porcelain=v2",
                 "--branch",
+                "--show-stash",
                 "-z",
                 "--untracked-files=all",
             ],
@@ -116,6 +127,7 @@ pub(crate) async fn git_status(root: String) -> Result<GitRepositoryStatus, Stri
         let mut branch = String::new();
         let mut upstream = None;
         let (mut ahead, mut behind) = (0, 0);
+        let mut stash_count = 0;
         let mut files = Vec::new();
         let remote_url = run_git(&root, &["remote", "get-url", "origin"])
             .ok()
@@ -138,6 +150,8 @@ pub(crate) async fn git_status(root: String) -> Result<GitRepositoryStatus, Stri
                         behind = value.parse().unwrap_or(0);
                     }
                 }
+            } else if let Some(value) = line.strip_prefix("# stash ") {
+                stash_count = value.trim().parse().unwrap_or(0);
             } else if line.starts_with("1 ") || line.starts_with("2 ") {
                 let parts: Vec<&str> = line
                     .splitn(if line.starts_with("2 ") { 10 } else { 9 }, ' ')
@@ -167,12 +181,133 @@ pub(crate) async fn git_status(root: String) -> Result<GitRepositoryStatus, Stri
             upstream,
             ahead,
             behind,
+            stash_count,
             remote_url,
             files,
         })
     })
     .await
     .map_err(|error| format!("读取 Git 状态失败：{error}"))?
+}
+
+fn validate_branch_name(branch: &str) -> Result<&str, String> {
+    let value = branch.trim();
+    if value.is_empty()
+        || value.len() > 255
+        || value.contains(['\r', '\n', '\0'])
+        || value.starts_with('-')
+    {
+        return Err("请输入有效的 Git 分支名称".into());
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub(crate) async fn git_branches(root: String) -> Result<Vec<GitBranchInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = run_git(
+            &root,
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)%00%(refname)%00%(HEAD)",
+                "refs/heads",
+                "refs/remotes",
+            ],
+        )?;
+        let mut branches = output
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split('\0');
+                let short = fields.next()?.trim();
+                let full = fields.next()?.trim();
+                let current = fields.next().unwrap_or_default().trim() == "*";
+                if short.is_empty() || short.ends_with("/HEAD") {
+                    return None;
+                }
+                Some(GitBranchInfo {
+                    name: short.to_string(),
+                    kind: if full.starts_with("refs/remotes/") {
+                        "remote".into()
+                    } else {
+                        "local".into()
+                    },
+                    current,
+                })
+            })
+            .collect::<Vec<_>>();
+        branches.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        Ok(branches)
+    })
+    .await
+    .map_err(|error| format!("读取 Git 分支失败：{error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_switch_branch(
+    root: String,
+    branch: String,
+    kind: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let branch = validate_branch_name(&branch)?;
+        if kind == "remote" {
+            let local = branch
+                .split_once('/')
+                .map(|(_, value)| value)
+                .unwrap_or(branch);
+            validate_branch_name(local)?;
+            if run_git(
+                &root,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{local}"),
+                ],
+            )
+            .is_ok()
+            {
+                run_git(&root, &["switch", local])?;
+            } else {
+                run_git(&root, &["switch", "--track", "-c", local, branch])?;
+            }
+        } else {
+            run_git(&root, &["switch", branch])?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn git_create_branch(root: String, branch: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let branch = validate_branch_name(&branch)?;
+        run_git(&root, &["switch", "-c", branch]).map(|_| ())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn git_stash_push(root: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_git(&root, &["stash", "push", "--include-untracked"]).map(|_| ())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn git_stash_pop(root: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || run_git(&root, &["stash", "pop"]).map(|_| ()))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 fn validate_remote_url(remote_url: &str) -> Result<&str, String> {

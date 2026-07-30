@@ -21,11 +21,12 @@ mod process;
 mod agent_conversations;
 mod connections;
 mod git;
+mod privileged;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
 
 use terminal::{terminal_close, terminal_open, terminal_resize, terminal_write, TerminalState};
-use git::{git_commit, git_commit_diff, git_diff, git_discard, git_fetch, git_init, git_log, git_pull, git_push, git_set_remote, git_stage, git_stage_all, git_staged_summary, git_status, git_unstage, git_unstage_all};
+use git::{git_branches, git_commit, git_commit_diff, git_create_branch, git_diff, git_discard, git_fetch, git_init, git_log, git_pull, git_push, git_set_remote, git_stage, git_stage_all, git_staged_summary, git_stash_pop, git_stash_push, git_status, git_switch_branch, git_unstage, git_unstage_all};
 
 
 pub(crate) use model::ModelConfig;
@@ -35,6 +36,15 @@ use credentials::store_secret;
 use export::{save_binary_file, save_docx_export, save_markdown, sanitize_filename};
 use search::search_web;
 use system::open_external_url;
+
+#[tauri::command]
+fn open_workspace_directory(root: String) -> Result<(), String> {
+    let path = PathBuf::from(root.trim());
+    if !path.is_dir() {
+        return Err("工作区目录不存在".into());
+    }
+    open::that(&path).map_err(|error| format!("无法在文件浏览器中打开工作区: {error}"))
+}
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct StreamEvent {
@@ -527,12 +537,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(TerminalState::default())
         .manage(ModelProxyState::default())
+        .manage(privileged::PrivilegedProcessState::default())
         .setup(|app| {
             init_db(&app.handle()).map_err(std::io::Error::other)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             git_status,
+            git_branches,
+            git_switch_branch,
+            git_create_branch,
+            git_stash_push,
+            git_stash_pop,
             git_init,
             git_stage,
             git_unstage,
@@ -568,6 +584,7 @@ pub fn run() {
             terminal_resize,
             terminal_close,
             open_workspace_powershell,
+            open_workspace_directory,
             default_workspace_root,
             ensure_workspace,
             pick_directory,
@@ -593,6 +610,9 @@ pub fn run() {
             delete_file,
             write_library_markdown,
             save_image_to_workspace
+            ,privileged::privileged_file_operation
+            ,privileged::privileged_run_powershell
+            ,privileged::privileged_cancel_powershell
             ,connections::load_workspace_connections
             ,connections::save_workspace_connections
             ,ccswitch::list_ccswitch_providers

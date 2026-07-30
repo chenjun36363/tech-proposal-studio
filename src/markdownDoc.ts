@@ -5,6 +5,8 @@ export interface HeadingNode {
   children: HeadingNode[];
 }
 
+export type HeadingNumberingStyle = "chapter-h2" | "chapter-h1";
+
 export function buildHeadingTree(headings: MdHeading[]): HeadingNode[] {
   const root: HeadingNode[] = [];
   const stack: HeadingNode[] = [];
@@ -83,6 +85,48 @@ export function parseMarkdownHeadings(markdown: string): MdHeading[] {
 
 export function sectionBody(markdown: string, heading: MdHeading): string {
   return markdown.slice(heading.start, heading.end).replace(/\s+$/, "");
+}
+
+export interface ShiftHeadingSectionResult {
+  markdown: string;
+  headingId: string;
+  changedCount: number;
+}
+
+/** Shift a heading and every descendant by one level, then refresh document numbering. */
+export function shiftHeadingSectionLevels(markdown: string, headingId: string, direction: "promote" | "demote", style: HeadingNumberingStyle = "chapter-h2"): ShiftHeadingSectionResult {
+  const headings = parseMarkdownHeadings(markdown);
+  const heading = headings.find(item => item.id === headingId);
+  if (!heading) throw new Error("目标标题已不存在");
+  const sectionHeadings = headings.filter(item => item.start >= heading.start && item.start < heading.end);
+  if (direction === "promote" && heading.level === 1) throw new Error("H1 已是最高标题级别，不能继续升级");
+  if (direction === "demote") {
+    if (sectionHeadings.some(item => item.level >= 6)) throw new Error("子标题中包含 H6，无法整体降级");
+  }
+
+  const delta = direction === "promote" ? -1 : 1;
+  const affectedLines = new Set(sectionHeadings.map(item => item.line));
+  const lines = markdown.split("\n");
+  for (const lineIndex of affectedLines) {
+    lines[lineIndex] = lines[lineIndex].replace(/^(#{1,6})(\s+)/, (_match, hashes: string, spacing: string) => `${"#".repeat(hashes.length + delta)}${spacing}`);
+  }
+  const next = renumberHeadings(lines.join("\n"), style);
+  const shifted = parseMarkdownHeadings(next).find(item => item.line === heading.line);
+  if (!shifted) throw new Error("标题层级调整后无法定位目标章节");
+  return { markdown: next, headingId: shifted.id, changedCount: sectionHeadings.length };
+}
+
+/** Count visible non-whitespace characters while excluding Markdown syntax. */
+export function countMarkdownWords(markdown: string): number {
+  return markdown
+    .replace(/```[\s\S]*?```/g, block => block.replace(/^```[^\n]*\n?|```$/g, ""))
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gm, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[`*_~]/g, "")
+    .replace(/\s/g, "")
+    .length;
 }
 
 export function replaceSection(markdown: string, heading: MdHeading, nextBody: string): string {
@@ -184,13 +228,17 @@ function headingAtOrAfter(markdown: string, offset: number): MdHeading | undefin
 
 /** Apply one reviewed Agent proposal to the latest document with stale-target protection. */
 export function applyAgentDraft(markdown: string, draft: AgentDraft): AppliedAgentDraft {
+  if (draft.operation === "replace_document") {
+    if (markdown !== draft.target.snapshot) throw new Error("文档已发生变化，请重新执行 Agent 任务");
+    return { markdown: draft.after, headingId: parseMarkdownHeadings(draft.after)[0]?.id };
+  }
   if (draft.operation === "replace_selection") {
     const start = draft.target.selectionStart;
     const end = draft.target.selectionEnd;
     if (start === undefined || end === undefined) throw new Error("提案缺少选区范围");
     const replaced = replaceSelection(markdown, start, end, draft.before, draft.after);
     const touchesHeading = /^(?:#{1,6})\s+/m.test(draft.before) || /^(?:#{1,6})\s+/m.test(draft.after);
-    const next = touchesHeading ? renumberHeadings(replaced) : replaced;
+    const next = replaced;
     return {
       markdown: next,
       headingId: headingAtOrBefore(next, start)?.id ?? draft.target.sectionId,
@@ -216,20 +264,20 @@ export function applyAgentDraft(markdown: string, draft: AgentDraft): AppliedAge
     if (position !== "before" && position !== "after") throw new Error("提案缺少章节移动位置");
     const moved = moveSection(markdown, heading, destination, position);
     if (moved === markdown) throw new Error("章节已在目标位置，无需移动");
-    const next = renumberHeadings(moved);
+    const next = moved;
     const sourceName = stripHeadingPrefix(heading.title);
     const movedHeading = parseMarkdownHeadings(next).find(item => item.level === heading.level && stripHeadingPrefix(item.title) === sourceName);
     return { markdown: next, headingId: movedHeading?.id };
   }
   if (draft.operation === "delete_section") {
     if (heading.level <= 1) throw new Error("不能删除文档 H1 标题");
-    const next = renumberHeadings(deleteSection(markdown, heading));
+    const next = deleteSection(markdown, heading);
     return { markdown: next, headingId: headingAtOrAfter(next, heading.start)?.id };
   }
   if (draft.operation === "insert_section") {
     const position = draft.target.position;
     if (position !== "before" && position !== "after") throw new Error("提案缺少章节插入位置");
-    const next = renumberHeadings(insertSection(markdown, heading, position, draft.after));
+    const next = insertSection(markdown, heading, position, draft.after);
     const insertedTitle = parseMarkdownHeadings(draft.after)[0];
     const inserted = insertedTitle
       ? parseMarkdownHeadings(next).find(item => item.level === insertedTitle.level && stripHeadingPrefix(item.title) === stripHeadingPrefix(insertedTitle.title))
@@ -266,8 +314,20 @@ export function stripHeadingPrefix(title: string): string {
     .trim();
 }
 
-export function formatHeadingPrefix(level: number, counters: number[]): string {
+function chineseChapterNumber(value: number): string {
+  const digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+  if (value < 10) return digits[value];
+  if (value < 20) return `十${value % 10 ? digits[value % 10] : ""}`;
+  if (value < 100) return `${digits[Math.floor(value / 10)]}十${value % 10 ? digits[value % 10] : ""}`;
+  return String(value);
+}
+
+export function formatHeadingPrefix(level: number, counters: number[], style: HeadingNumberingStyle = "chapter-h2"): string {
   const safe = Math.min(Math.max(level, 1), 6);
+  if (style === "chapter-h1") {
+    if (safe === 1) return `第${chineseChapterNumber(counters[0])}章`;
+    return counters.slice(0, safe).join(".");
+  }
   if (safe === 1) return "";
   if (safe === 2) return `第${counters[0]}章`;
   return counters.slice(0, safe - 1).join(".");
@@ -280,11 +340,12 @@ function headingLine(level: number, title: string): string {
 }
 
 /** Re-apply fixed numbering: H1 document title (skipped), H2 第N章, H3 1.1, H4 1.1.1, … */
-export function renumberHeadings(markdown: string): string {
+export function renumberHeadings(markdown: string, style: HeadingNumberingStyle = "chapter-h2"): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const counters = [0, 0, 0, 0, 0, 0];
   let inCode = false;
 
+  let documentTitleSeen = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
     if (raw.trim().startsWith("```")) {
@@ -295,12 +356,16 @@ export function renumberHeadings(markdown: string): string {
     const m = raw.match(HEADING_RE);
     if (!m) continue;
     const level = Math.min(m[1].length, 6);
-    if (level === 1) continue;
+    if (level === 1 && (style === "chapter-h2" || !documentTitleSeen)) {
+      documentTitleSeen = true;
+      continue;
+    }
     const plain = stripHeadingPrefix(m[2].trim()) || "未命名";
-    counters[level - 2] += 1;
-    for (let j = level - 1; j < 6; j++) counters[j] = 0;
+    const counterIndex = style === "chapter-h1" ? level - 1 : level - 2;
+    counters[counterIndex] += 1;
+    for (let j = counterIndex + 1; j < 6; j++) counters[j] = 0;
     if (counters[0] === 0) counters[0] = 1;
-    const prefix = formatHeadingPrefix(level, counters);
+    const prefix = formatHeadingPrefix(level, counters, style);
     lines[i] = headingLine(level, `${prefix} ${plain}`);
   }
   return lines.join("\n");
@@ -314,6 +379,13 @@ export interface HeadingAlignmentResult {
   titleCreated: boolean;
 }
 
+export function detectHeadingNumberingStyle(markdown: string): HeadingNumberingStyle {
+  const h1s = parseMarkdownHeadings(markdown).filter(heading => heading.level === 1);
+  return h1s.slice(1).some(heading => /^第\s*[一二三四五六七八九十百零〇两]+\s*章/u.test(heading.title.replace(/^(?:\*{1,3}|_{1,3}|~~)/, "")))
+    ? "chapter-h1"
+    : "chapter-h2";
+}
+
 function isTitleCandidate(value: string): boolean {
   const text = value.trim();
   if (!text || text.length > 120) return false;
@@ -323,8 +395,9 @@ function isTitleCandidate(value: string): boolean {
 }
 
 /** Ensure one document title, demote chapter-like H1s, then apply fixed numbering. */
-export function alignHeadingsToRules(markdown: string, fallbackTitle = "未命名技术方案"): HeadingAlignmentResult {
+export function alignHeadingsToRules(markdown: string, fallbackTitle = "未命名技术方案", style: HeadingNumberingStyle = "chapter-h2"): HeadingAlignmentResult {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const sourceStyle = detectHeadingNumberingStyle(markdown);
   let inCode = false;
   const headings: { line: number; level: number; title: string }[] = [];
   let demotedCount = 0;
@@ -353,10 +426,19 @@ export function alignHeadingsToRules(markdown: string, fallbackTitle = "未命�
   }
   titlePreserved = titleLine !== null;
 
-  for (const heading of h1s) {
-    if (heading.line === titleLine) continue;
-    lines[heading.line] = headingLine(2, heading.title);
-    demotedCount += 1;
+  if (sourceStyle !== style) {
+    const delta = style === "chapter-h1" ? -1 : 1;
+    for (const heading of headings) {
+      if (heading.line === titleLine) continue;
+      lines[heading.line] = headingLine(Math.min(6, Math.max(1, heading.level + delta)), heading.title);
+      if (delta > 0) demotedCount += 1;
+    }
+  } else if (style === "chapter-h2") {
+    for (const heading of h1s) {
+      if (heading.line === titleLine) continue;
+      lines[heading.line] = headingLine(2, heading.title);
+      demotedCount += 1;
+    }
   }
 
   if (titleLine === null) {
@@ -371,7 +453,7 @@ export function alignHeadingsToRules(markdown: string, fallbackTitle = "未命�
   }
 
   return {
-    markdown: renumberHeadings(lines.join("\n")),
+    markdown: renumberHeadings(lines.join("\n"), style),
     headingCount: headings.length + (titleCreated ? 1 : 0),
     demotedCount,
     titlePreserved,
@@ -401,6 +483,7 @@ export function applyHeadingLevel(
   selectionStart: number,
   selectionEnd: number,
   level: number,
+  style: HeadingNumberingStyle = "chapter-h2",
 ): { markdown: string; selectionStart: number; selectionEnd: number } {
   const text = markdown.replace(/\r\n/g, "\n");
   const range = expandToLineRange(text, selectionStart, selectionEnd);
@@ -423,7 +506,7 @@ export function applyHeadingLevel(
 
   const middle = converted.join("\n") + (endsWithNewline ? "\n" : "");
   const merged = before + middle + after;
-  const numbered = renumberHeadings(merged);
+  const numbered = renumberHeadings(merged, style);
   return {
     markdown: numbered,
     selectionStart: range.start,

@@ -26,8 +26,28 @@
 .agent-review-columns article > header i { width:6px; height:6px; background:hsl(var(--destructive) / .72); border-radius:50%; }
 .agent-review-columns article.revised > header i { background:hsl(var(--success)); }
 .agent-review-columns article > header span { color:hsl(var(--muted-foreground)); font:9px ui-monospace,Consolas,monospace; }
-.agent-review-columns pre { width:100%; min-width:0; max-width:100%; min-height:0; margin:0; padding:20px 22px 60px; overflow:auto; scrollbar-gutter:stable both-edges; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; color:hsl(var(--foreground) / .88); background:hsl(var(--background)); font:12px/1.8 ui-monospace,Consolas,monospace; }
-.agent-review-columns article.original pre { color:hsl(var(--muted-foreground)); background:hsl(var(--muted) / .13); }
+.agent-review-scroll { width:100%; min-width:0; min-height:0; overflow:auto; padding:16px 0 60px; scrollbar-gutter:stable both-edges; background:hsl(var(--background)); }
+.agent-review-columns article.original .agent-review-scroll { background:hsl(var(--muted) / .13); }
+.agent-review-scroll pre { min-width:0; margin:0; padding:4px 22px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; color:hsl(var(--foreground) / .88); font:12px/1.8 ui-monospace,Consolas,monospace; }
+.agent-review-columns article.original pre { color:hsl(var(--muted-foreground)); }
+.agent-review-diff { min-width:100%; width:max-content; font:12px/22px ui-monospace,Consolas,monospace; }
+.agent-review-diff-line { min-height:22px; display:grid; grid-template-columns:48px minmax(0,1fr); }
+.agent-review-diff-line .line-number { position:sticky; left:0; z-index:1; padding:0 10px 0 4px; border-right:1px solid hsl(var(--border) / .65); background:hsl(var(--background)); color:hsl(var(--muted-foreground) / .7); text-align:right; user-select:none; }
+.original .agent-review-diff-line .line-number { background:hsl(var(--muted)); }
+.agent-review-diff-line code { min-width:0; display:block; padding:0 16px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; color:hsl(var(--foreground) / .88); font:inherit; }
+.agent-review-diff-line.delete,.agent-review-diff-line.delete .line-number { background:hsl(2 72% 94%); }
+.agent-review-diff-line.add,.agent-review-diff-line.add .line-number { background:hsl(145 52% 92%); }
+.agent-review-diff-line.placeholder code { color:transparent; background:hsl(var(--muted) / .12); }
+.agent-review-diff-line mark { padding:1px 0; color:inherit; background:hsl(2 72% 78%); border-radius:2px; }
+.revised .agent-review-diff-line mark { background:hsl(145 55% 72%); }
+.agent-review-empty { padding:20px 22px; color:hsl(var(--muted-foreground)); font:12px/1.8 ui-monospace,Consolas,monospace; }
+.agent-review-empty-note { position:absolute; z-index:2; margin:7px 16px 0 64px; padding:2px 7px; border:1px solid hsl(var(--border)); background:hsl(var(--background) / .92); color:hsl(var(--muted-foreground)); border-radius:4px; font:10px/18px ui-monospace,Consolas,monospace; pointer-events:none; }
+.agent-review-toolbar .deleted-stat,.agent-review-toolbar .added-stat,.agent-review-toolbar .move-note,.agent-review-toolbar .unchanged-note { font:600 9px/1.2 ui-monospace,Consolas,monospace; }
+.agent-review-toolbar .deleted-stat { color:hsl(var(--destructive)); }.agent-review-toolbar .added-stat { color:hsl(var(--success)); }
+.agent-review-toolbar .move-note,.agent-review-toolbar .unchanged-note { color:hsl(var(--foreground) / .75); }
+.dark .agent-review-diff-line.delete,.dark .agent-review-diff-line.delete .line-number { background:hsl(2 32% 18%); }
+.dark .agent-review-diff-line.add,.dark .agent-review-diff-line.add .line-number { background:hsl(145 28% 17%); }
+.dark .agent-review-diff-line mark { background:hsl(2 48% 35%); }.dark .revised .agent-review-diff-line mark { background:hsl(145 42% 30%); }
 .agent-review-modal > footer { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 20px; border-top:1px solid hsl(var(--border)); background:hsl(var(--background)); }
 .agent-review-modal > footer > span { color:hsl(var(--muted-foreground)); font-size:10px; }
 .agent-review-modal > footer > div { display:flex; gap:8px; }

@@ -1,29 +1,34 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Trash2, Undo2, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 import { searchWeb } from "./services/search";
 import { isDesktop } from "./services/runtime";
-import { saveMarkdown } from "./services/system";
+import { privilegedFileOperation } from "./services/privileged";
+import { openWorkspaceDirectory, saveMarkdown } from "./services/system";
 import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./findReplace";
 import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./markdownEditor";
 import {
-  applyHeadingLevel,
   alignHeadingsToRules,
   applyAgentDraft as applyAgentDraftToMarkdown,
   buildHeadingTree,
+  countMarkdownWords,
   defaultProposalMarkdown,
+  detectHeadingNumberingStyle,
   deleteSection,
   fileNameFromTitle,
   parseMarkdownHeadings,
   renumberHeadings,
   replaceSection,
   sectionBody,
+  shiftHeadingSectionLevels,
   stripHeadingPrefix,
   titleFromMarkdown,
+  type HeadingNumberingStyle,
 } from "./markdownDoc";
 import type { AgentDraft, AgentEditorSelection } from "./agent/protocol";
+import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "./agent/proposalTools";
 import {
   applyTemplate,
   defaultTemplateMeta,
@@ -61,6 +66,7 @@ import { SourcePreviewModal } from "./components/SourcePreviewModal";
 import { MemorySettingsPanel } from "./components/MemorySettingsPanel";
 import { ConversationHistorySettings } from "./components/ConversationHistorySettings";
 import { ModelSettingsSection } from "./features/settings/ModelSettingsSection";
+import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useProposalFileActions } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
@@ -137,6 +143,8 @@ export default function App() {
   const { project, setProject, updateProject, setMarkdown, undo, redo, resetHistory } = useProposalDocumentController(
     () => withWorkspace(loadProject(), loadWorkspaceConfig()),
   );
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [rightTab, setRightTab] = useState<InspectorTab>("commands");
   const [rightOpen, setRightOpen] = useState(true);
   const [theme, setTheme] = useState<Theme>(getAppliedTheme);
@@ -155,6 +163,7 @@ export default function App() {
   const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("section");
   const [viewMode, setViewMode] = useState<"split" | "edit" | "preview">("split");
+  const [headingNumberingStyle, setHeadingNumberingStyle] = useState<HeadingNumberingStyle>(() => detectHeadingNumberingStyle(project.markdown ?? ""));
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
@@ -184,6 +193,7 @@ export default function App() {
   const headingTree = useMemo(() => buildHeadingTree(headings), [headings]);
   const selectedHeading = headings.find(h => h.id === selectedHeadingId) ?? headings[0] ?? null;
   const activeBody = selectedHeading && editorMode === "section" ? sectionBody(markdown, selectedHeading) : markdown;
+  const activeWordCount = useMemo(() => countMarkdownWords(activeBody), [activeBody]);
   const activeBlock = useMemo(
     () => syntheticBlock(project, activeBody, selectedHeading?.id, selectedHeading?.title, selectedHeading?.level),
     [project, activeBody, selectedHeading],
@@ -219,6 +229,7 @@ export default function App() {
   }, [headings, selectedHeadingId]);
 
   useEffect(() => setAgentSelection(undefined), [project.filePath, selectedHeadingId, editorMode]);
+  useEffect(() => setHeadingNumberingStyle(detectHeadingNumberingStyle(project.markdown ?? "")), [project.filePath]);
 
   const { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace } = useWorkspaceSession({
     project, desktop, setProject, notify,
@@ -237,6 +248,78 @@ export default function App() {
     project, desktop, setProject, resetHistory, selectedHeadingId, setSelectedHeadingId, setEditorMode,
     refreshWorkspaceDocs: () => refreshWorkspaceDocs(), notify,
   });
+  const agentWorkspaceRuntime = useMemo<AgentWorkspaceRuntime | undefined>(() => {
+    if (!desktop || !workspace?.root) return undefined;
+    const separator = workspace.root.includes("\\") ? "\\" : "/";
+    const normalizePath = (value: string) => value.replace(/\//g, "\\").toLocaleLowerCase();
+    const requireWorkspaceDocument = (path: string) => {
+      const found = workspaceDocs.find(item => normalizePath(item.path) === normalizePath(path));
+      if (!found) throw new Error("只能通过工作区文档工具操作目录中已列出的 Markdown 文件");
+      return found.path;
+    };
+    const bind = (path: string, nextMarkdown: string) => {
+      const name = titleFromMarkdown(nextMarkdown, path.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || "未命名");
+      projectRef.current = { ...projectRef.current, name, markdown: nextMarkdown, filePath: path || undefined, updatedAt: new Date().toISOString() };
+      resetHistory();
+      setProject(projectRef.current);
+      setSelectedHeadingId(parseMarkdownHeadings(nextMarkdown)[0]?.id ?? null);
+      setEditorMode("section");
+      return { markdown: nextMarkdown, filePath: path };
+    };
+    return {
+      listDocuments: async () => workspaceDocs.map(({ title, path, size }) => ({ title, path, size })),
+      createBlank: async name => {
+        const title = name.replace(/\.(md|markdown)$/i, "").trim();
+        if (!title) throw new Error("文档名称不能为空");
+        const fileName = fileNameFromTitle(title);
+        const path = `${workspace.root.replace(/[\\/]+$/, "")}${separator}${fileName}`;
+        if (workspaceDocs.some(item => normalizePath(item.path) === normalizePath(path))) throw new Error(`文件已存在：${fileName}`);
+        const nextMarkdown = `# ${title}\n`;
+        await writeTextFile(path, nextMarkdown);
+        const state = bind(path, nextMarkdown);
+        await refreshWorkspaceDocs();
+        return state;
+      },
+      open: async path => {
+        const resolved = requireWorkspaceDocument(path);
+        return bind(resolved, await readTextFile(resolved));
+      },
+      save: async (nextMarkdown, path) => {
+        if (!path) throw new Error("当前文档尚未关联磁盘文件");
+        const saved = await writeTextFile(path, nextMarkdown);
+        projectRef.current = { ...projectRef.current, markdown: nextMarkdown, filePath: saved, name: titleFromMarkdown(nextMarkdown, projectRef.current.name), updatedAt: new Date().toISOString() };
+        setProject(projectRef.current);
+        await refreshWorkspaceDocs();
+        return { markdown: nextMarkdown, filePath: saved };
+      },
+      reload: async path => {
+        if (!path) throw new Error("当前文档尚未关联磁盘文件");
+        return bind(path, await readTextFile(path));
+      },
+      rename: async (name, path) => {
+        if (!path) throw new Error("当前文档尚未关联磁盘文件");
+        const oldPath = requireWorkspaceDocument(path);
+        const dir = oldPath.slice(0, Math.max(oldPath.lastIndexOf("\\"), oldPath.lastIndexOf("/")));
+        const nextPath = `${dir}${oldPath.includes("\\") ? "\\" : "/"}${fileNameFromTitle(name)}`;
+        if (workspaceDocs.some(item => normalizePath(item.path) === normalizePath(nextPath) && normalizePath(item.path) !== normalizePath(oldPath))) throw new Error("目标文件名已存在");
+        await renameFile(oldPath, nextPath);
+        projectRef.current = { ...projectRef.current, filePath: nextPath, name, updatedAt: new Date().toISOString() };
+        setProject(projectRef.current);
+        await refreshWorkspaceDocs();
+        return { markdown: project.markdown, filePath: nextPath };
+      },
+      delete: async (path, mode, currentPath) => {
+        const resolved = requireWorkspaceDocument(path);
+        if (mode === "trash") await privilegedFileOperation({ operation: "delete", path: resolved, deleteMode: "trash" });
+        else await deleteFile(resolved);
+        await refreshWorkspaceDocs();
+        if (currentPath && normalizePath(currentPath) === normalizePath(resolved)) {
+          return bind("", "# 未命名文档\n");
+        }
+        return null;
+      },
+    };
+  }, [desktop, workspace?.root, workspaceDocs, project.markdown, refreshWorkspaceDocs, resetHistory, setProject]);
   const {
     transferringPath: knowledgeTransferPath,
     transfer: transferWorkspaceDocToKnowledge,
@@ -294,6 +377,8 @@ export default function App() {
     return nodes.flatMap(node => {
       const hasCh = node.children.length > 0;
       const collapsed = collapsedHeadings.has(node.heading.id);
+      const subtreeHasH6 = (current: typeof node): boolean => current.heading.level >= 6 || current.children.some(subtreeHasH6);
+      const canDemote = !subtreeHasH6(node);
       const item = (
         <div key={node.heading.id} className={`toc-item-wrap level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""}`}>
           <button
@@ -307,12 +392,11 @@ export default function App() {
             <span>H{node.heading.level}</span>
             <InlineMarkdown className="toc-title" children={node.heading.title} />
           </button>
-          {node.heading.level >= 2 && <button
-            type="button"
-            className="toc-delete-btn"
-            title={`删除「${node.heading.title}」`}
-            onClick={() => void deleteHeadingSection(node)}
-          ><Trash2 size={11} /></button>}
+          <div className="toc-node-actions">
+            <button type="button" disabled={node.heading.level === 1} title={node.heading.level === 1 ? "H1 已是最高标题级别" : `升级「${node.heading.title}」及其子标题`} onClick={() => shiftHeadingTree(node, "promote")}><IndentDecrease size={12} /></button>
+            <button type="button" disabled={!canDemote} title={subtreeHasH6(node) ? "子标题中包含 H6，无法整体降级" : `降级「${node.heading.title}」及其子标题`} onClick={() => shiftHeadingTree(node, "demote")}><IndentIncrease size={12} /></button>
+            {node.heading.level >= 2 && <button type="button" className="delete" title={`删除「${node.heading.title}」`} onClick={() => void deleteHeadingSection(node)}><Trash2 size={11} /></button>}
+          </div>
         </div>
       );
       const children = collapsed ? [] : renderHeadingNodes(node.children);
@@ -320,36 +404,16 @@ export default function App() {
     });
   };
 
-  const applyHeadingToSelection = (level: number) => {
-    if (viewMode === "preview") {
-      notify("请切换到源码或分栏后设置标题");
-      return;
-    }
-    const sel = sourceEditorRef.current?.getSelection() ?? { start: 0, end: 0 };
-    if (editorMode === "section" && selectedHeading) {
-      const result = applyHeadingLevel(activeBody, sel.start, sel.end, level);
-      const nextFull = renumberHeadings(replaceSection(markdown, selectedHeading, result.markdown));
-      setMarkdown(nextFull);
-      requestAnimationFrame(() => sourceEditorRef.current?.setSelection(result.selectionStart, result.selectionEnd));
-      notify(`已设为 H${level} 并重新编号`);
-      return;
-    }
-    const result = applyHeadingLevel(markdown, sel.start, sel.end, level);
-    setMarkdown(result.markdown);
-    requestAnimationFrame(() => sourceEditorRef.current?.setSelection(result.selectionStart, result.selectionEnd));
-    notify(`已设为 H${level} 并重新编号`);
-  };
-
   const renumberAllHeadings = () => {
     const fallbackTitle = project.filePath?.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || project.name;
-    const result = alignHeadingsToRules(markdown, fallbackTitle);
+    const result = alignHeadingsToRules(markdown, fallbackTitle, headingNumberingStyle);
     const next = result.markdown;
     if (next === markdown) {
       notify("标题编号已是最新");
       return;
     }
     setMarkdown(next);
-    notify(result.titleCreated ? "已生成全文标题并重新编号" : "已按固定样式重新编号全部标题");
+    notify(result.titleCreated ? "已生成全文标题并重新编号" : "已按所选格式重新编号全部标题");
   };
 
   /* ---------- Template ---------- */
@@ -494,6 +558,32 @@ export default function App() {
     notify(`已替换 ${count} 处${editorMode === "section" ? "（当前章节）" : "（全文）"}`);
   };
 
+  const shiftHeadingTree = (headingNode: import("./markdownDoc").HeadingNode, direction: "promote" | "demote") => {
+    try {
+      const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, headingNumberingStyle);
+      setMarkdown(result.markdown);
+      setSelectedHeadingId(result.headingId);
+      setEditorMode("section");
+      notify(`已${direction === "promote" ? "升级" : "降级"} ${result.changedCount} 个标题并重新编号`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "标题层级调整失败");
+    }
+  };
+
+  const showAgentDocumentSearch = ({ query, caseSensitive, scope, headingId }: AgentSearchHighlight) => {
+    setFindQuery(query);
+    setFindCaseSensitive(caseSensitive);
+    setFindIndex(0);
+    setFindOpen(true);
+    setViewMode("split");
+    if (scope === "section" && headingId && headings.some(heading => heading.id === headingId)) {
+      setSelectedHeadingId(headingId);
+      setEditorMode("section");
+    } else {
+      setEditorMode("full");
+    }
+  };
+
   useEffect(() => {
     if (!findOpen) return;
     if (!findHits.length) {
@@ -576,9 +666,10 @@ export default function App() {
     : undefined;
 
   const applyAgentEditDraft = (draft: AgentDraft) => {
-    const applied = applyAgentDraftToMarkdown(markdown, draft);
+    const applied = applyAgentDraftToMarkdown(projectRef.current.markdown, draft);
     const nextHeadings = parseMarkdownHeadings(applied.markdown);
     const nextHeading = applied.headingId ? nextHeadings.find(item => item.id === applied.headingId) : undefined;
+    projectRef.current = { ...projectRef.current, markdown: applied.markdown, name: titleFromMarkdown(applied.markdown, projectRef.current.name), updatedAt: new Date().toISOString() };
     setMarkdown(applied.markdown);
     if (nextHeading) setSelectedHeadingId(nextHeading.id);
     if (applied.selectionStart !== undefined && applied.selectionEnd !== undefined) {
@@ -758,9 +849,18 @@ export default function App() {
                 {workspaceDocsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
                 <span>工作区文档</span>
               </button>
-              <IconButton title="刷新文件列表" onClick={() => void refreshWorkspaceDocs()}>
-                <RefreshCw size={14} />
-              </IconButton>
+              <div className="panel-heading-actions">
+                <IconButton
+                  title="在文件浏览器中打开工作区"
+                  disabled={!workspace?.root}
+                  onClick={() => workspace?.root && void openWorkspaceDirectory(workspace.root).catch(error => notify(String(error)))}
+                >
+                  <FolderOpen size={14} />
+                </IconButton>
+                <IconButton title="刷新文件列表" onClick={() => void refreshWorkspaceDocs()}>
+                  <RefreshCw size={14} />
+                </IconButton>
+              </div>
             </div>
             {!workspaceDocsCollapsed && <div className="workspace-docs-list">
               {!workspaceDocs.length && <p className="muted toc-empty">根目录下暂无 .md</p>}
@@ -815,42 +915,38 @@ export default function App() {
               onChange={e => editorMode === "full" && updateProject(p => ({ ...p, name: e.target.value }), false)}
             />
           </div>
-          <div className="view-toggle">
-            <button className={!gitDiffActive && viewMode === "edit" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("edit"); }}>源码</button>
-            <button className={!gitDiffActive && viewMode === "split" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("split"); }}>分栏</button>
-            <button className={!gitDiffActive && viewMode === "preview" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("preview"); }}>预览</button>
-            {gitDiff && <button className={gitDiffActive ? "active" : ""} type="button" title="返回最近查看的 Git 差异" onClick={() => setGitDiffActive(true)}><GitCompare size={13} />Diff</button>}
+          <div className="editor-title-actions">
+            {!gitDiffActive && <span className="editor-word-count" aria-live="polite">{editorMode === "full" ? "全文" : "本章"} {activeWordCount.toLocaleString()} 字</span>}
+            <div className="view-toggle">
+              <button className={!gitDiffActive && viewMode === "edit" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("edit"); }}>源码</button>
+              <button className={!gitDiffActive && viewMode === "split" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("split"); }}>分栏</button>
+              <button className={!gitDiffActive && viewMode === "preview" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("preview"); }}>预览</button>
+              {gitDiff && <button className={gitDiffActive ? "active" : ""} type="button" title="返回最近查看的 Git 差异" onClick={() => setGitDiffActive(true)}><GitCompare size={13} />Diff</button>}
+            </div>
           </div>
         </div>
-        {!gitDiffActive && <div className="heading-toolbar" title="选中多行可批量设置标题；编号样式：H2 第N章 / H3 1.1 / H4 1.1.1 …（H1 为文档总标题）">
+        {!gitDiffActive && <div className="heading-toolbar" title="按选定格式整理全文标题层级和编号">
           <div className="heading-toolbar-row">
-            <span className="heading-toolbar-label">设置标题</span>
-            <div className="heading-level-group">
-            {[1, 2, 3, 4, 5, 6].map(level => (
-              <button
-                key={level}
-                type="button"
-                className="heading-level-btn"
-                onClick={() => applyHeadingToSelection(level)}
-                title={level === 1 ? "H1 文档总标题" : `H${level} → ${level === 2 ? "第N章" : Array.from({ length: level - 1 }, (_, i) => i + 1).join(".")}`}
-              >
-                H{level}
-              </button>
-            ))}
-            </div>
-            <button type="button" className="heading-renumber-btn" onClick={renumberAllHeadings}>重编号</button>
-            <span className="format-divider" />
-            <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("*", "*")} title="斜体 (Ctrl+I)"><Italic size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("~~", "~~")} title="删除线"><Strikethrough size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("`", "`")} title="行内代码"><Code2 size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("==", "==")} title="标黄高亮"><Highlighter size={14} /></button>
+            <label className="heading-style-select" title="选择重编号时使用的标题层级和章号格式">
+              <span>格式</span>
+              <select value={headingNumberingStyle} onChange={event => setHeadingNumberingStyle(event.target.value as HeadingNumberingStyle)}>
+                <option value="chapter-h2">H2 第1章 / H3 1.1</option>
+                <option value="chapter-h1">H1 第一章 / H2 1.1</option>
+              </select>
+            </label>
+            <button type="button" className="heading-renumber-btn" onClick={renumberAllHeadings}>设置标题</button>
           </div>
           <div className="heading-toolbar-row">
             <div className="toolbar-history">
               <IconButton title="撤销 (Ctrl+Z)" onClick={undo}><Undo2 size={16} /></IconButton>
               <IconButton title="重做 (Ctrl+Y / Ctrl+Shift+Z)" onClick={redo}><Redo2 size={16} /></IconButton>
             </div>
+            <span className="format-divider" />
+            <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("*", "*")} title="斜体 (Ctrl+I)"><Italic size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("~~", "~~")} title="删除线"><Strikethrough size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("`", "`")} title="行内代码"><Code2 size={14} /></button>
+            <button type="button" className="format-btn" onClick={() => wrapSelection("==", "==")} title="标黄高亮"><Highlighter size={14} /></button>
             <span className="heading-toolbar-spacer" />
             <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(false)} title="查找 (Ctrl+F)">
               <Search size={14} /> 查找
@@ -919,6 +1015,8 @@ export default function App() {
                 workspaceRoot={workspace?.root}
                 onSelectionChange={captureAgentSelection}
                 placeholder={editorMode === "full" ? "编辑完整 Markdown…" : "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片"}
+                highlights={findOpen ? findHits : []}
+                activeHighlight={findIndex}
               />
             </div>
           )}
@@ -928,6 +1026,8 @@ export default function App() {
                 markdown={activeBody}
                 filePath={project.filePath}
                 workspaceRoot={workspace?.root}
+                searchQuery={findOpen ? findQuery : ""}
+                searchCaseSensitive={findCaseSensitive}
               />
             </div>
           )}
@@ -945,6 +1045,8 @@ export default function App() {
           agentSelection={validAgentSelection}
           clearAgentSelection={() => setAgentSelection(undefined)}
           applyAgentDraft={applyAgentEditDraft}
+          agentWorkspaceRuntime={agentWorkspaceRuntime}
+          onAgentDocumentSearch={showAgentDocumentSearch}
           notify={notify}
           openSettings={() => setSettingsOpen(true)}
           openSourcePreview={sourcePreview.open}
@@ -1048,7 +1150,7 @@ export default function App() {
 }
 
 function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project) => void | Promise<void> }) {
-  const [section, setSection] = useState<"model" | "search" | "agent" | "history" | "memory" | "parser" | "workspace">("model");
+  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "history" | "memory" | "parser" | "workspace">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
     if (!next.mineru) next.mineru = createProject().mineru;
@@ -1061,6 +1163,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     model: { title: "模型服务", description: "配置模型接口、访问凭据和默认模型。", icon: <Globe2 size={15} /> },
     search: { title: "联网搜索", description: "配置搜索提供方、接口地址和上游搜索引擎。", icon: <Search size={15} /> },
     agent: { title: "Agent", description: "控制多轮执行、上下文、记忆与工具使用策略。", icon: <Settings size={15} /> },
+    tools: { title: "工具", description: "管理注册给 AI 的工具及其可用状态。", icon: <Wrench size={15} /> },
     history: { title: "历史会话", description: "查看并清理当前项目保存的 Agent 对话记录。", icon: <MessageSquareText size={15} /> },
     memory: { title: "记忆", description: "查看、审核和维护当前工作区的长期记忆。", icon: <Brain size={15} /> },
     parser: { title: "文档解析", description: "配置 Word 和 PDF 转换所使用的 MinerU 服务。", icon: <FilePlus2 size={15} /> },
@@ -1155,6 +1258,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
           <label className="wide">附加指令<textarea className="agent-instructions" maxLength={4000} value={draft.agent.customInstructions} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, customInstructions: e.target.value } })} placeholder="例如：优先使用本项目术语，风险项采用表格呈现。" /></label>
         </div>
       </div>}
+      {section === "tools" && <ToolSettingsSection draft={draft} setDraft={setDraft} />}
       {section === "history" && <ConversationHistorySettings project={project} />}
       {section === "memory" && <div className="settings-section-content memory-section-content">
         <MemorySettingsPanel project={draft} />

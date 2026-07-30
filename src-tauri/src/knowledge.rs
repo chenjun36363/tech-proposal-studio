@@ -40,6 +40,7 @@ pub struct KnowledgeDocument {
     error: Option<String>,
     section_count: i64,
     chunk_count: i64,
+    char_count: i64,
     updated_at: String,
     structure_status: String,
 }
@@ -55,6 +56,7 @@ pub struct KnowledgeSection {
     level: i64,
     position: i64,
     chunk_count: i64,
+    char_count: i64,
     heading_source: String,
     original_line: Option<i64>,
     confidence: f64,

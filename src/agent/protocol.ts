@@ -1,10 +1,15 @@
-export type AgentRunStatus = "idle" | "running" | "waiting_approval" | "completed" | "round_limit_reached" | "failed" | "cancelled";
+export type AgentRunStatus = "idle" | "running" | "waiting_approval" | "waiting_user" | "completed" | "round_limit_reached" | "failed" | "cancelled";
+
+export type AgentUserQuestionChoice = "A" | "B" | "C" | "D";
+export interface AgentUserQuestionOption { choice: Exclude<AgentUserQuestionChoice, "D">; title: string; overview: string; }
+export interface AgentUserQuestion { question: string; options: [AgentUserQuestionOption, AgentUserQuestionOption, AgentUserQuestionOption]; }
+export interface AgentUserQuestionAnswer { choice: AgentUserQuestionChoice; answer: string; }
 
 export interface TodoItem { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string; }
 
 export interface AgentToolCall { id: string; name: string; arguments: Record<string, unknown>; }
 export interface AgentToolResult { content: string; data?: unknown; isError: boolean; }
-export type AgentEditOperation = "replace_section" | "replace_selection" | "insert_section" | "delete_section" | "move_section";
+export type AgentEditOperation = "replace_section" | "replace_selection" | "replace_document" | "insert_section" | "delete_section" | "move_section";
 export interface AgentDraftTarget {
   sectionId?: string;
   sectionTitle?: string;

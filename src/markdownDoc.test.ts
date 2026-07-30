@@ -3,6 +3,8 @@ import {
   alignHeadingsToRules,
   applyAgentDraft,
   applyHeadingLevel,
+  countMarkdownWords,
+  detectHeadingNumberingStyle,
   deleteSection,
   formatHeadingPrefix,
   insertSection,
@@ -12,8 +14,16 @@ import {
   replaceSection,
   replaceSelection,
   sectionBody,
+  shiftHeadingSectionLevels,
   stripHeadingPrefix,
 } from "./markdownDoc";
+
+describe("Markdown word count", () => {
+  it("counts visible text without syntax or whitespace", () => {
+    expect(countMarkdownWords("# 标题\n\n**正文** [链接](https://example.com)\n\n- 列表"))
+      .toBe("标题正文链接列表".length);
+  });
+});
 
 describe("heading numbering", () => {
   it("demotes numbered H1 chapters while preserving an optional document title", () => {
@@ -89,6 +99,54 @@ describe("heading numbering", () => {
     expect(markdown).toContain("## 第1章 背景与目标");
     expect(markdown).toContain("## 第2章 范围与约束");
     expect(markdown).toContain("正文");
+  });
+
+  it("supports H1 Chinese chapter headings and decimal subsections", () => {
+    const current = "# 甘肃方案\n\n## 第1章 背景\n\n### 1.1 政策\n\n#### 1.1.1 国家要求\n\n## 第2章 目标";
+    const converted = alignHeadingsToRules(current, "甘肃方案", "chapter-h1").markdown;
+
+    expect(converted).toBe("# 甘肃方案\n\n# 第一章 背景\n\n## 1.1 政策\n\n### 1.1.1 国家要求\n\n# 第二章 目标");
+    expect(detectHeadingNumberingStyle(converted)).toBe("chapter-h1");
+  });
+
+  it("converts H1 Chinese chapters back to the current H2 format", () => {
+    const h1Chapters = "# 甘肃方案\n\n# 第一章 背景\n\n## 1.1 政策\n\n### 1.1.1 国家要求\n\n# 第二章 目标";
+    const converted = alignHeadingsToRules(h1Chapters, "甘肃方案", "chapter-h2").markdown;
+
+    expect(converted).toBe("# 甘肃方案\n\n## 第1章 背景\n\n### 1.1 政策\n\n#### 1.1.1 国家要求\n\n## 第2章 目标");
+  });
+
+  it("promotes a heading and all descendants, then renumbers the document", () => {
+    const md = "# 方案\n\n## 第1章 概述\n\n### 1.1 范围\n\n#### 1.1.1 细节\n\n## 第2章 其他";
+    const target = parseMarkdownHeadings(md)[2];
+    const result = shiftHeadingSectionLevels(md, target.id, "promote");
+    expect(result.changedCount).toBe(2);
+    expect(result.markdown).toContain("## 第2章 范围");
+    expect(result.markdown).toContain("### 2.1 细节");
+    expect(parseMarkdownHeadings(result.markdown).find(item => item.id === result.headingId)?.level).toBe(2);
+  });
+
+  it("demotes a heading and all descendants, then renumbers the document", () => {
+    const md = "# 方案\n\n## 概述\n\n## 其他\n\n### 范围";
+    const target = parseMarkdownHeadings(md)[2];
+    const result = shiftHeadingSectionLevels(md, target.id, "demote");
+    expect(result.changedCount).toBe(2);
+    expect(result.markdown).toContain("### 1.1 其他");
+    expect(result.markdown).toContain("#### 1.1.1 范围");
+  });
+
+  it("protects the H1 and H6 boundaries when shifting a subtree", () => {
+    const md = "# 方案\n\n## 概述\n\n###### 细节";
+    const [title, chapter] = parseMarkdownHeadings(md);
+    expect(() => shiftHeadingSectionLevels(md, title.id, "promote")).toThrow("H1 已是最高标题级别");
+    expect(() => shiftHeadingSectionLevels(md, chapter.id, "demote")).toThrow("包含 H6");
+  });
+
+  it("supports promoting H2 and demoting H1", () => {
+    const md = "# 方案\n\n## 概述\n\n### 范围";
+    const [title, chapter] = parseMarkdownHeadings(md);
+    expect(parseMarkdownHeadings(shiftHeadingSectionLevels(md, chapter.id, "promote").markdown)[1].level).toBe(1);
+    expect(parseMarkdownHeadings(shiftHeadingSectionLevels(md, title.id, "demote").markdown)[0].level).toBe(2);
   });
 
   it("does not duplicate numbering inside emphasized imported headings", () => {
@@ -252,7 +310,7 @@ describe("agent edit proposal application", () => {
     })).toThrow("不能删除文档 H1");
   });
 
-  it("moves a reviewed chapter with descendants and renumbers headings", () => {
+  it("moves a reviewed chapter with descendants without rewriting mixed heading numbers", () => {
     const headings = parseMarkdownHeadings(markdown);
     const source = headings[1];
     const destination = headings[3];
@@ -273,8 +331,9 @@ describe("agent edit proposal application", () => {
 
     expect(moved.indexOf("架构正文")).toBeLessThan(moved.indexOf("旧内容"));
     expect(moved.indexOf("子内容")).toBeGreaterThan(moved.indexOf("旧内容"));
-    expect(moved).toContain("## 第2章 背景");
-    expect(moved).toContain("### 2.1 子章节");
+    expect(moved).toContain("## 第一章 背景");
+    expect(moved).toContain("### 1.1 子章节");
+    expect(moved).toContain("## 第二章 架构");
   });
 
   it("validates both chapter snapshots before moving", () => {

@@ -14,6 +14,7 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { AgentConversationPanel } from "../../components/AgentConversationPanel";
+import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "../../agent/proposalTools";
 import type { AgentDraft, AgentEditorSelection } from "../../agent/protocol";
 import { IconButton } from "../../components/IconButton";
 import {
@@ -96,6 +97,8 @@ export function InspectorPanel({
   agentSelection,
   clearAgentSelection,
   applyAgentDraft,
+  agentWorkspaceRuntime,
+  onAgentDocumentSearch,
   notify,
   openSettings,
   openSourcePreview,
@@ -109,6 +112,8 @@ export function InspectorPanel({
   agentSelection?: AgentEditorSelection;
   clearAgentSelection: () => void;
   applyAgentDraft: (draft: AgentDraft) => void;
+  agentWorkspaceRuntime?: AgentWorkspaceRuntime;
+  onAgentDocumentSearch?: (search: AgentSearchHighlight) => void;
   notify: (message: string) => void;
   openSettings: () => void;
   openSourcePreview: (source: SourceRecord) => Promise<void>;
@@ -346,7 +351,7 @@ export function InspectorPanel({
       </div>
     </div>
     {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
-    {tab === "commands" && <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} notify={notify} />}
+    {tab === "commands" && <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} workspaceRuntime={agentWorkspaceRuntime} onDocumentSearch={onAgentDocumentSearch} notify={notify} />}
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}
     {tab === "sources" && <div className="inspector-content sources-panel knowledge-panel">
       {!desktop

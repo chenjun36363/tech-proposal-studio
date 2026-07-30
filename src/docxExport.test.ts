@@ -23,6 +23,16 @@ describe("Word export", () => {
     expect(Array.from(bytes.slice(0, 2))).toEqual([0x50, 0x4b]);
   });
 
+  it("configures Word to populate the table of contents on first open", async () => {
+    const project = createProject();
+    project.name = "目录测试";
+    project.markdown = "# 目录测试\n\n## 第一章\n\n### 1.1 子章\n\n正文\n";
+
+    const doc = await buildDocx(project);
+    const settingsXml = JSON.stringify((doc as unknown as { Settings: unknown }).Settings);
+    expect(settingsXml).toContain("updateFields");
+  });
+
   it("reads PNG dimensions from IHDR", () => {
     expect(readImageSize(PNG_1x1, "png")).toEqual({ width: 1, height: 1 });
   });

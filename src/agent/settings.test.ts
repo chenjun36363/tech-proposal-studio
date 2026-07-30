@@ -10,6 +10,12 @@ describe("agent settings", () => {
     expect(settings.recentMessages).toBe(4);
     expect(settings.temperature).toBe(0);
     expect(settings.knowledgeToolsEnabled).toBe(true);
+    expect(settings.disabledTools).toEqual([]);
+  });
+
+  it("preserves disabled tool names without duplicates", () => {
+    expect(normalizeAgentSettings({ disabledTools: ["web_search", "web_search", "run_powershell"] }).disabledTools)
+      .toEqual(["web_search", "run_powershell"]);
   });
 
   it("uses the default web search limit for existing settings", () => {

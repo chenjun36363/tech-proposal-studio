@@ -10,6 +10,7 @@ import {
   removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, searchKnowledge, setKnowledgeSectionQuality,
 } from "../../knowledge";
 import { openExternalUrl } from "../../services/system";
+import { countMarkdownWords } from "../../markdownDoc";
 import type {
   DocumentBlock, HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision,
   KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult,
@@ -192,7 +193,8 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     if (!project.workspace) return notify("请先配置工作目录");
     setBusy(true);
     try {
-      const workspacePath = await importMarkdownToWorkspace(item.path, project.workspace.root);
+      const sourcePath = resolveWorkspaceLocation(project.workspace.root, item.path);
+      const workspacePath = await importMarkdownToWorkspace(sourcePath, project.workspace.root);
       await deleteKnowledgeFile(project.workspace, item.path, item.documentId);
       await Promise.all([reload(), refreshWorkspaceDocs(project.workspace)]);
       notify(`已转回工作区：${workspacePath.split(/[\\/]/).pop()}`);
@@ -265,7 +267,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
       {searchQuery.trim() ? <section className="knowledge-search-results">
         <div className="knowledge-manager-heading"><span>搜索结果</span><b>{searchResults.length}</b></div>
         <div className="knowledge-manager-scroll">
-          {searchResults.map(result => <button className="knowledge-search-result" key={result.chunk.id} onClick={() => previewSearchResult(result)}><div><b>{result.chunk.documentTitle}</b><span>{result.chunk.headingPath}</span></div><p>{result.excerpt}</p><Eye size={14} /></button>)}
+          {searchResults.map(result => <button className="knowledge-search-result" key={result.chunk.id} onClick={() => previewSearchResult(result)}><div><b>{result.chunk.documentTitle}</b><span>{result.chunk.headingPath}</span><small>{countMarkdownWords(result.chunk.content).toLocaleString()} 字</small></div><p>{result.excerpt}</p><Eye size={14} /></button>)}
           {!searching && !searchResults.length && <div className="knowledge-manager-empty"><Search size={20} /><span>没有找到匹配的知识内容</span></div>}
         </div>
       </section> : <div className="knowledge-manager-body">
@@ -275,10 +277,10 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
         </div></section>
         <section className="knowledge-manager-column indexed"><div className="knowledge-manager-heading"><span>已就绪</span><b>{readyDocuments.length}</b></div><div className="knowledge-manager-scroll">
           {groups.map(group => <div className="knowledge-manager-group" key={group.id}><div className="knowledge-section-heading"><div>{group.id === "local" ? <FolderSearch size={14} /> : <Globe2 size={14} />}<b>{group.label}</b><span>{group.documents.length}</span></div></div>
-            {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片</span><code title={document.location}>{document.location}</code></div><em className="knowledge-status ready">已就绪</em></div>
+            {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片 · 全文 {document.charCount.toLocaleString()} 字</span><code title={document.location}>{document.location}</code></div><em className="knowledge-status ready">已就绪</em></div>
               {document.error && <p className="knowledge-error">{document.error}</p>}
               <div className="source-item-actions knowledge-actions"><button onClick={() => void previewDocument(document)}><Eye size={12} />预览全文</button>{document.sourceUrl && <button onClick={() => void openExternalUrl(document.sourceUrl!)}><ExternalLink size={12} />原网页</button>}{document.sourceType === "markdown" && <button disabled={busy} onClick={() => void analyze(document.location)}>重新识别</button>}{document.sourceType === "markdown" && <button disabled={busy} onClick={() => void restore(document)}>恢复原文</button>}<button disabled={busy} onClick={() => void removeIndexed(document)}>移出</button><button className="danger" disabled={busy} onClick={() => void deleteIndexed(document)}><Trash2 size={12} />删除</button></div>
-              {expanded.has(document.id) && <div className="knowledge-tree">{(sections[document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em className={`knowledge-quality-badge ${section.quality}`}>{section.quality === "good" ? "优质" : section.quality === "bad" ? "劣质" : "普通"}</em><div className="knowledge-manager-quality" role="group" aria-label={`${section.title}片段状态`}><IconButton title="标记为优质" active={section.quality === "good"} disabled={busy} onClick={() => void markSectionQuality(section, "good")}><ThumbsUp size={12} /></IconButton><IconButton title="标记为普通" active={section.quality === "normal"} disabled={busy} onClick={() => void markSectionQuality(section, "normal")}><Minus size={12} /></IconButton><IconButton title="标记为劣质" active={section.quality === "bad"} disabled={busy} onClick={() => void markSectionQuality(section, "bad")}><ThumbsDown size={12} /></IconButton></div><IconButton title="预览知识片段" onClick={() => void previewSection(document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}
+              {expanded.has(document.id) && <div className="knowledge-tree">{(sections[document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em className="knowledge-section-char-count">{section.charCount.toLocaleString()} 字</em><em className={`knowledge-quality-badge ${section.quality}`}>{section.quality === "good" ? "优质" : section.quality === "bad" ? "劣质" : "普通"}</em><div className="knowledge-manager-quality" role="group" aria-label={`${section.title}片段状态`}><IconButton title="标记为优质" active={section.quality === "good"} disabled={busy} onClick={() => void markSectionQuality(section, "good")}><ThumbsUp size={12} /></IconButton><IconButton title="标记为普通" active={section.quality === "normal"} disabled={busy} onClick={() => void markSectionQuality(section, "normal")}><Minus size={12} /></IconButton><IconButton title="标记为劣质" active={section.quality === "bad"} disabled={busy} onClick={() => void markSectionQuality(section, "bad")}><ThumbsDown size={12} /></IconButton></div><IconButton title="预览知识片段" onClick={() => void previewSection(document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}
             </article>)}
           </div>)}
           {!readyDocuments.length && <div className="knowledge-manager-empty"><BookOpen size={20} /><span>暂无已就绪文档</span></div>}

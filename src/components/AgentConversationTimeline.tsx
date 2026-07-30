@@ -47,6 +47,7 @@ const TOOL_LABELS: Record<string, string> = {
   read_memory: "读取项目记忆",
   remember_project_fact: "保存项目记忆",
   write_todo: "更新执行计划",
+  ask_user: "向用户提问",
   propose_section_update: "提交章节修改",
 };
 

@@ -127,6 +127,7 @@
   }
   .knowledge-search-result b { font-size: 12px; }
   .knowledge-search-result span { font-size: 10px; color: hsl(var(--primary)); }
+  .knowledge-search-result small { font-size: 9px; color: hsl(var(--muted-foreground)); }
   .knowledge-search-result p {
     margin: 0;
     display: -webkit-box;
@@ -252,8 +253,9 @@
     text-align: right;
   }
   .knowledge-manager-section {
-    grid-template-columns: 25px minmax(0, 1fr) 56px 36px 78px 28px 22px;
+    grid-template-columns: 25px minmax(0, 1fr) 56px 52px 36px 78px 28px 22px;
   }
+  .knowledge-manager-section > .knowledge-section-char-count { white-space: nowrap; }
   .knowledge-manager-section > .knowledge-quality-badge {
     margin: 0;
     justify-self: center;

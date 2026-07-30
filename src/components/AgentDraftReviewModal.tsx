@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Columns2, GripVertical, RotateCcw, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { AgentDraft } from "../agent/protocol";
+import { MarkdownDiffPane } from "./MarkdownDiffPane";
+import { buildTextDiff } from "./textDiff";
 
 function reviewCopy(draft: AgentDraft) {
   if (draft.operation === "move_section") return { title: "章节移动审核", summary: `将「${draft.target.sectionTitle ?? "源章节"}」移动到「${draft.target.destinationSectionTitle ?? "目标章节"}」${draft.target.position === "before" ? "之前" : "之后"}`, before: "待移动章节", after: "目标位置章节", emptyBefore: "（源章节为空）", emptyAfter: "（目标章节为空）", footer: "接受后将移动章节及其全部子章节并重新编号", accept: "接受并移动" };
@@ -19,13 +21,15 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
 }) {
   const copy = reviewCopy(draft);
   const revisedContent = draft.operation === "move_section" ? draft.target.destinationSnapshot ?? "" : draft.after;
+  const isMove = draft.operation === "move_section";
+  const diff = useMemo(() => buildTextDiff(draft.before, revisedContent), [draft.before, revisedContent]);
   const [syncScroll, setSyncScroll] = useState(true);
   const [split, setSplit] = useState(50);
   const [stacked, setStacked] = useState(false);
   const syncing = useRef(false);
   const columnsRef = useRef<HTMLDivElement>(null);
-  const originalRef = useRef<HTMLPreElement>(null);
-  const revisedRef = useRef<HTMLPreElement>(null);
+  const originalRef = useRef<HTMLDivElement>(null);
+  const revisedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
@@ -63,7 +67,7 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
     setSplit(current => event.key === "Home" ? 50 : Math.min(80, Math.max(20, current + (increase ? 2 : -2))));
   };
 
-  const synchronize = (source: HTMLPreElement, target: HTMLPreElement | null) => {
+  const synchronize = (source: HTMLDivElement, target: HTMLDivElement | null) => {
     if (!syncScroll || syncing.current || !target) return;
     syncing.current = true;
     const sourceRange = Math.max(1, source.scrollHeight - source.clientHeight);
@@ -79,7 +83,7 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
         <button type="button" title="关闭审核" onClick={close}><X size={18} /></button>
       </header>
       <div className="agent-review-toolbar">
-        <span><Columns2 size={14} />{copy.summary}</span>
+        <span><Columns2 size={14} />{copy.summary}{isMove ? <b className="move-note">正文未修改，仅调整位置</b> : diff.unchanged ? <b className="unchanged-note">无文本变化</b> : <><b className="deleted-stat">-{diff.deletedLines} 行</b><b className="added-stat">+{diff.addedLines} 行</b></>}</span>
         <div className="agent-review-tools">
           <button type="button" title="恢复均分" aria-label="恢复均分" onClick={() => setSplit(50)}><RotateCcw size={13} /></button>
           <label><input type="checkbox" checked={syncScroll} onChange={event => setSyncScroll(event.target.checked)} />同步滚动</label>
@@ -88,7 +92,7 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
       <div ref={columnsRef} className="agent-review-columns" style={{ "--review-split": `${split}%` } as React.CSSProperties}>
         <article className="original">
           <header><div><i />{copy.before}</div><span>{draft.before.length.toLocaleString()} 字</span></header>
-          <pre ref={originalRef} onScroll={event => synchronize(event.currentTarget, revisedRef.current)}>{draft.before || copy.emptyBefore}</pre>
+          <div className="agent-review-scroll" ref={originalRef} onScroll={event => synchronize(event.currentTarget, revisedRef.current)}>{isMove ? <pre>{draft.before || copy.emptyBefore}</pre> : diff.rows.length ? <MarkdownDiffPane diff={diff} side="original" /> : <div className="agent-review-empty">{copy.emptyBefore}</div>}</div>
         </article>
         <div
           className="agent-review-resizer"
@@ -106,7 +110,7 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
         ><GripVertical size={14} /></div>
         <article className="revised">
           <header><div><i />{copy.after}</div><span>{revisedContent.length.toLocaleString()} 字</span></header>
-          <pre ref={revisedRef} onScroll={event => synchronize(event.currentTarget, originalRef.current)}>{revisedContent || copy.emptyAfter}</pre>
+          <div className="agent-review-scroll" ref={revisedRef} onScroll={event => synchronize(event.currentTarget, originalRef.current)}>{isMove ? <pre>{revisedContent || copy.emptyAfter}</pre> : diff.rows.length ? <>{!revisedContent && <div className="agent-review-empty-note">{copy.emptyAfter}</div>}<MarkdownDiffPane diff={diff} side="revised" /></> : <div className="agent-review-empty">{copy.emptyAfter}</div>}</div>
         </article>
       </div>
       <footer>

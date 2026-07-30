@@ -131,6 +131,7 @@ export interface KnowledgeDocument {
   error?: string;
   sectionCount: number;
   chunkCount: number;
+  charCount: number;
   updatedAt: string;
   structureStatus: "indexed" | "confirmed" | "review_recommended";
 }
@@ -143,6 +144,7 @@ export interface KnowledgeSection {
   level: number;
   position: number;
   chunkCount: number;
+  charCount: number;
   headingSource: "markdown" | "toc" | "numbering" | "model" | "user";
   originalLine?: number;
   confidence: number;
