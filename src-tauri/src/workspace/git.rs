@@ -79,7 +79,15 @@ fn checked_relative_path(path: &str) -> Result<&str, String> {
 
 fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
     let root = checked_root(root)?;
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
         .args(["-c", "core.quotepath=false"])
         .args(args)
         .current_dir(root)

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Plus, RefreshCw, Trash2, Pencil, Globe2, Download, X } from "lucide-react";
-import type { LlmProvider, LlmProtocol, ModelOption, Project, SelectedModel } from "../../types";
+import type { LlmProvider, LlmProtocol, ModelOption, Project, SelectedModel } from "../../core/types";
 import { listModels } from "../../services/model";
 import { LLM_PROTOCOL_LABELS, PROVIDER_PRESETS, createDefaultProvider } from "../../services/llm/defaults";
 import { deriveModelSnapshot, encodeModelValue, parseModelValue, repairSelectionForProviders, resolvedFromLegacy } from "../../services/llm/resolve";
-import type { ResolvedModelConfig } from "../../types";
+import type { ResolvedModelConfig } from "../../core/types";
 import { ModelSelect } from "../../components/ModelSelect";
-import { ccSwitchItemKey, isCcSwitchItemImportable, isCcSwitchItemImported, listCcSwitchProviders, mergeCcSwitchProviders, type CcSwitchProviderItem } from "../../ccswitchImport";
+import { ccSwitchItemKey, isCcSwitchItemImportable, isCcSwitchItemImported, listCcSwitchProviders, mergeCcSwitchProviders, type CcSwitchProviderItem } from "./ccswitchImport";
 import { isDesktop } from "../../services/runtime";
 
 function CcSwitchImportModal({ items, providers, databasePath, close, apply }: {

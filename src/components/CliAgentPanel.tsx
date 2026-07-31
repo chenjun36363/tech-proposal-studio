@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronDown, LoaderCircle, Play, TerminalSquare, X } from "lucide-react";
-import { agentTools, buildAgentCommand, defaultAgentPrompt, withAgentContext, type AgentToolId } from "../agents";
+import { agentTools, buildAgentCommand, defaultAgentPrompt, withAgentContext, type AgentToolId } from "../agent/presets";
 import { isDesktop } from "../services/runtime";
 import { openWorkspacePowerShell, runCommandStream } from "../services/system";
-import type { DocumentBlock, Project } from "../types";
+import type { DocumentBlock, Project } from "../core/types";
 import { ContextReferences } from "./ContextReferences";
 
 export function CliAgentPanel({ project, block, context, contextLabels, toolId, onToolChange, updateBlock, notify }: {

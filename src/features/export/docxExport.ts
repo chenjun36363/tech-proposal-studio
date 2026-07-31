@@ -17,11 +17,11 @@ import {
   type FileChild,
   type IImageOptions,
 } from "docx";
-import type { Project } from "./types";
-import { exportMarkdown } from "./storage";
-import { isDesktop } from "./services/runtime";
+import type { Project } from "../../core/types";
+import { exportMarkdown } from "../workspace/storage";
+import { isDesktop } from "../../services/runtime";
 import { invoke } from "@tauri-apps/api/core";
-import { readBinaryFile } from "./workspace";
+import { readBinaryFile } from "../workspace/workspace";
 
 const HEADING_LEVELS = [
   HeadingLevel.HEADING_1,
@@ -32,23 +32,11 @@ const HEADING_LEVELS = [
   HeadingLevel.HEADING_6,
 ] as const;
 
-/** 黑体 — headings (eastAsia + ascii fallback) */
-const HEADING_FONT = { eastAsia: "黑体", ascii: "SimHei", hAnsi: "SimHei" };
 /** 宋体 — body */
 const BODY_FONT = { eastAsia: "宋体", ascii: "SimSun", hAnsi: "SimSun" };
 const CODE_FONT = "Consolas";
 
-// Word half-points: 2号 = 22pt → 44; 小四 = 12pt → 24
-const SIZE_H1 = 44;
-const SIZE_H2 = 32;
-const SIZE_H3 = 28;
-const SIZE_H4 = 24;
-const SIZE_H5 = 24;
-const SIZE_H6 = 21;
-const SIZE_BODY = 24;
 const SIZE_CODE = 18;
-
-const HEADING_SIZES = [SIZE_H1, SIZE_H2, SIZE_H3, SIZE_H4, SIZE_H5, SIZE_H6] as const;
 
 const MAX_IMAGE_WIDTH_PX = 520;
 

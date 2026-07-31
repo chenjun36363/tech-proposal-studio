@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { titleFromMarkdown } from "../markdownDoc";
-import { saveProject } from "../storage";
-import type { Project } from "../types";
+import { titleFromMarkdown } from "../features/editor/markdownDoc";
+import { saveProject } from "../features/workspace/storage";
+import type { Project } from "../core/types";
 
 export type ProjectUpdater = (project: Project) => Project;
 

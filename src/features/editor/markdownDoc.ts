@@ -1,4 +1,4 @@
-import type { AgentDraft } from "./agent/protocol";
+import type { AgentDraft } from "../../agent/protocol";
 
 export interface HeadingNode {
   heading: MdHeading;

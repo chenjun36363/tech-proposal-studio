@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { LlmProvider, LlmProtocol } from "./types";
+import type { LlmProvider, LlmProtocol } from "../../core/types";
 
 export interface CcSwitchProviderItem { sourceId: string; appType: string; name: string; baseUrl: string; apiKey: string; protocol: LlmProtocol; models: string[] }
 export interface CcSwitchProvidersResponse { databasePath: string | null; checkedPaths: string[]; providers: CcSwitchProviderItem[] }

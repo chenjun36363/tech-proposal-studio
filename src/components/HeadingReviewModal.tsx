@@ -1,5 +1,5 @@
 import { BookOpen, X } from "lucide-react";
-import type { HeadingCandidate, HeadingDetectionResult, KnowledgeProgress } from "../types";
+import type { HeadingCandidate, HeadingDetectionResult, KnowledgeProgress } from "../core/types";
 import { IconButton } from "./IconButton";
 
 export function HeadingReviewModal({ result, candidates, setCandidates, busy, progress, busySeconds, close, confirm }: {

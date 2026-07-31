@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
-import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
-import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
-import { exportMarkdown, loadProject, saveProject } from "./storage";
-import { searchWeb } from "./services/search";
+import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
+import { createProject, defaultWorkspaceFromRoot } from "./core/data";
+import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
 import { isDesktop } from "./services/runtime";
 import { privilegedFileOperation } from "./services/privileged";
 import { openWorkspaceDirectory, saveMarkdown } from "./services/system";
-import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./findReplace";
-import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./markdownEditor";
+import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./features/editor/findReplace";
+import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./features/editor/MarkdownEditor";
 import {
   alignHeadingsToRules,
   applyAgentDraft as applyAgentDraftToMarkdown,
@@ -19,47 +18,34 @@ import {
   deleteSection,
   fileNameFromTitle,
   parseMarkdownHeadings,
-  renumberHeadings,
   replaceSection,
   sectionBody,
   shiftHeadingSectionLevels,
-  stripHeadingPrefix,
   titleFromMarkdown,
   type HeadingNumberingStyle,
-} from "./markdownDoc";
+} from "./features/editor/markdownDoc";
 import type { AgentDraft, AgentEditorSelection } from "./agent/protocol";
 import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "./agent/proposalTools";
 import {
   applyTemplate,
   defaultTemplateMeta,
-  deleteTemplate,
-  extractTemplateSkeleton,
   listTemplates,
   saveTemplate,
   type ProposalTemplate,
-} from "./templates";
+} from "./features/editor/templates";
 import {
-  ensureWorkspace,
-  getDefaultWorkspaceRoot,
-  importMarkdownToWorkspace,
   listLibraryFiles,
-  listWorkspaceMarkdown,
   loadWorkspaceConfig,
   mergeLibrarySources,
   pickDirectory,
-  pickDocumentFile,
-  pickMarkdownFile,
   readTextFile,
-  saveWorkspaceConfig,
   renameFile,
   withWorkspace,
   writeLibraryMarkdown,
   writeTextFile,
   deleteFile,
-} from "./workspace";
-import { AgentConversationPanel } from "./components/AgentConversationPanel";
+} from "./features/workspace/workspace";
 import { normalizeAgentSettings } from "./agent/settings";
-import { HeadingReviewModal } from "./components/HeadingReviewModal";
 import { IconButton } from "./components/IconButton";
 import { InlineMarkdown } from "./components/InlineMarkdown";
 import { SourcePreviewModal } from "./components/SourcePreviewModal";
@@ -74,42 +60,23 @@ import { useProposalFileActions } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
 import { useSourcePreview } from "./hooks/useSourcePreview";
 import { useEnvironmentTools } from "./hooks/useEnvironmentTools";
-import { importWordOrPdfToWorkspace } from "./documentImport";
 import { KnowledgeManagerModal } from "./features/knowledge/KnowledgeManagerModal";
 import { useKnowledgeTransfer } from "./features/knowledge/useKnowledgeTransfer";
 import { InspectorPanel, type InspectorTab } from "./features/inspector/InspectorPanel";
 import { WebSearchModal } from "./features/search/WebSearchModal";
 import { EnvironmentModal } from "./features/environment/EnvironmentModal";
 import { WordExportModal } from "./components/WordExportModal";
+import { SourceImportModal } from "./features/workspace/SourceImportModal";
 import { GitDiffView, GitSidebar, type GitDiffSelection } from "./features/git/GitWorkspace";
 import {
+  applyConnections,
+  loadWorkspaceConnections,
+  sameWorkspaceRoot,
   saveProjectConnections,
-} from "./connections";
-import type { AiDraft, DocumentBlock, Project, SearchResult, SessionEvent, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths } from "./types";
-import { matchesSource, sourceMatchExcerpt } from "./sourceSearch";
-import {
-  analyzeKnowledgeMarkdown,
-  applyKnowledgeHeadings,
-  deleteKnowledgeFile,
-  getKnowledgeChunk,
-  getKnowledgeSectionScope,
-  importKnowledgeWeb,
-  listKnowledgeBackups,
-  listKnowledge,
-  listKnowledgeSectionChunks,
-  listKnowledgeSections,
-  moveWorkspaceMarkdownToKnowledge,
-  onKnowledgeProgress,
-  removeKnowledgeDocument,
-  restoreKnowledgeBackup,
-  scanKnowledge,
-  searchKnowledge,
-  setKnowledgeChunkQuality,
-  setKnowledgeSectionQuality,
-} from "./knowledge";
+} from "./features/workspace/connections";
+import type { DocumentBlock, Project, WorkspaceMarkdownFile, WorkspacePaths } from "./core/types";
 
 const appIcon = new URL("../src-tauri/icons/128x128.png", import.meta.url).href;
-import type { HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope } from "./types";
 
 type EditorMode = "section" | "full";
 const RIGHT_PANEL_MIN = 280;
@@ -140,7 +107,6 @@ function syntheticBlock(project: Project, content: string, headingId?: string, h
     metadata: headingId ? { headingTitle: headingTitle ?? "", headingLevel: String(headingLevel ?? "") } : undefined,
   };
 }
-
 export default function App() {
   const { project, setProject, updateProject, setMarkdown, undo, redo, resetHistory } = useProposalDocumentController(
     () => withWorkspace(loadProject(), loadWorkspaceConfig()),
@@ -160,7 +126,6 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
   const [fileMenu, setFileMenu] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [wordExportOpen, setWordExportOpen] = useState(false);
   const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("section");
@@ -462,7 +427,7 @@ export default function App() {
     }
   };
 
-  const deleteHeadingSection = async (headingNode: import("./markdownDoc").HeadingNode) => {
+  const deleteHeadingSection = async (headingNode: import("./features/editor/markdownDoc").HeadingNode) => {
     const h = headingNode.heading;
     if (h.level <= 1) return notify("不能删除文档标题");
     if (!window.confirm(`确定删除「${h.title}」及其全部内容？`)) return;
@@ -560,7 +525,7 @@ export default function App() {
     notify(`已替换 ${count} 处${editorMode === "section" ? "（当前章节）" : "（全文）"}`);
   };
 
-  const shiftHeadingTree = (headingNode: import("./markdownDoc").HeadingNode, direction: "promote" | "demote") => {
+  const shiftHeadingTree = (headingNode: import("./features/editor/markdownDoc").HeadingNode, direction: "promote" | "demote") => {
     try {
       const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, headingNumberingStyle);
       setMarkdown(result.markdown);
@@ -759,8 +724,8 @@ export default function App() {
         <button className="text-button" title="联网搜索" onClick={() => setWebSearchOpen(true)}><Globe2 size={16} />联网搜索</button>
         <button className="text-button" onClick={() => void saveToWorkspace()}><Save size={16} />保存</button>
         <div className="export-menu" ref={exportMenuRef}>
-          <button className="text-button" disabled={exporting} onClick={() => setExportMenu(v => !v)}>
-            <Download size={16} />{exporting ? "导出中…" : "导出"}<ChevronDown size={14} />
+          <button className="text-button" onClick={() => setExportMenu(v => !v)}>
+            <Download size={16} />导出<ChevronDown size={14} />
           </button>
           {exportMenu && <div className="export-dropdown">
             <button onClick={() => void exportAsMarkdown()}>导出 Markdown (.md)</button>
@@ -1073,18 +1038,24 @@ export default function App() {
     {settingsOpen && <SettingsModal
       project={project}
       close={() => setSettingsOpen(false)}
-      save={async next => {
+      save={async (next, context) => {
         try {
-          let workspacePaths = next.workspace;
-          if (next.workspace?.root) {
-            // Draft is source of truth; do not reload connections over it.
-            workspacePaths = await applyWorkspace(next.workspace, { loadConnections: false });
+          let projectToSave = next;
+          const nextRoot = next.workspace?.root;
+          if (nextRoot && !sameWorkspaceRoot(project.workspace?.root, nextRoot)
+            && !sameWorkspaceRoot(context?.connectionsLoadedRoot, nextRoot)) {
+            const connections = await loadWorkspaceConnections(nextRoot);
+            projectToSave = applyConnections(next, connections);
           }
-          const root = workspacePaths?.root || next.workspace?.root;
+          let workspacePaths = projectToSave.workspace;
+          if (projectToSave.workspace?.root) {
+            workspacePaths = await applyWorkspace(projectToSave.workspace, { loadConnections: false });
+          }
+          const root = workspacePaths?.root || projectToSave.workspace?.root;
           const saved = await saveProjectConnections({
-            ...next,
-            agent: normalizeAgentSettings(next.agent),
-            workspace: workspacePaths ?? next.workspace,
+            ...projectToSave,
+            agent: normalizeAgentSettings(projectToSave.agent),
+            workspace: workspacePaths ?? projectToSave.workspace,
           }, root);
           saveProject(saved);
           setProject(saved);
@@ -1122,7 +1093,7 @@ export default function App() {
         </div>
       </div>
     </div>}
-    {sourceOpen && <SourceModal
+    {sourceOpen && <SourceImportModal
       historyDir={workspace?.historyDir || ""}
       close={() => setSourceOpen(false)}
       add={async (source, content) => {
@@ -1150,8 +1121,7 @@ export default function App() {
     {toast && <div className="toast"><Check size={16} />{toast}</div>}
   </div>;
 }
-
-function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project) => void | Promise<void> }) {
+function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project, context?: { connectionsLoadedRoot?: string }) => void | Promise<void> }) {
   const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "workspace" | "about">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
@@ -1159,6 +1129,8 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     next.agent = normalizeAgentSettings(next.agent);
     return next;
   });
+  const [connectionsLoadedRoot, setConnectionsLoadedRoot] = useState(project.workspace?.root ?? "");
+  const [workspaceLoadMessage, setWorkspaceLoadMessage] = useState("");
   const desktop = isDesktop();
   const workspace = draft.workspace ?? { root: "", historyDir: "" };
   const sectionDetails = {
@@ -1175,22 +1147,41 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
   } as const;
 
   const setWorkspace = (partial: Partial<WorkspacePaths>) => {
-    const nextRoot = partial.root ?? workspace.root;
-    const defaults = nextRoot ? defaultWorkspaceFromRoot(nextRoot) : { root: "", historyDir: "" };
-    setDraft({
-      ...draft,
-      workspace: {
-        root: nextRoot,
-        historyDir: partial.historyDir ?? (partial.root ? defaults.historyDir : workspace.historyDir),
-      },
+    setDraft(current => {
+      const currentWorkspace = current.workspace ?? { root: "", historyDir: "" };
+      const nextRoot = partial.root ?? currentWorkspace.root;
+      const defaults = nextRoot ? defaultWorkspaceFromRoot(nextRoot) : { root: "", historyDir: "" };
+      return {
+        ...current,
+        workspace: {
+          root: nextRoot,
+          historyDir: partial.historyDir ?? (partial.root !== undefined ? defaults.historyDir : currentWorkspace.historyDir),
+        },
+      };
     });
+    if (partial.root !== undefined && !sameWorkspaceRoot(partial.root, connectionsLoadedRoot)) {
+      setConnectionsLoadedRoot("");
+      setWorkspaceLoadMessage("");
+    }
   };
 
   const browse = async (kind: "root" | "history") => {
     const title = kind === "root" ? "选择工作目录" : "选择知识库目录";
     const path = await pickDirectory(title);
     if (!path) return;
-    if (kind === "root") setWorkspace({ root: path });
+    if (kind === "root") {
+      setWorkspaceLoadMessage("正在加载工作区配置...");
+      try {
+        const connections = await loadWorkspaceConnections(path);
+        const paths = defaultWorkspaceFromRoot(path);
+        setDraft(current => applyConnections({ ...current, workspace: paths }, connections));
+        setConnectionsLoadedRoot(path);
+        setWorkspaceLoadMessage(connections ? "已加载该工作区的模型、搜索和 MinerU 配置。" : "该工作区暂无连接配置，将沿用当前设置。");
+      } catch (error) {
+        setConnectionsLoadedRoot("");
+        setWorkspaceLoadMessage(error instanceof Error ? error.message : "加载工作区配置失败");
+      }
+    }
     if (kind === "history") setWorkspace({ historyDir: path });
   };
 
@@ -1307,39 +1298,14 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
           </div>
         </label>
         {!desktop && <p className="muted">浏览器模式无法选择真实磁盘目录；请使用桌面端。</p>}
+        {workspaceLoadMessage && <p className="muted">{workspaceLoadMessage}</p>}
       </div>}
       {section === "about" && <AppUpdateSettings />}
       </div>
       </section>
       </div>
-      <div className="modal-actions"><button onClick={close}>取消</button><button className="primary" onClick={() => void save(draft)}>保存设置</button></div>
+      <div className="modal-actions"><button onClick={close}>取消</button><button className="primary" onClick={() => void save(draft, { connectionsLoadedRoot })}>保存设置</button></div>
     </div>
   </div>;
 }
 
-function SourceModal({ close, add, historyDir }: { close: () => void; add: (s: SourceRecord, content?: string) => void | Promise<void>; historyDir: string }) {
-  const [name, setName] = useState("");
-  const [content, setContent] = useState("");
-  return <div className="modal-backdrop" onMouseDown={close}>
-    <div className="modal small" onMouseDown={e => e.stopPropagation()}>
-      <div className="modal-title"><div><FilePlus2 size={19} /><span>导入 Markdown</span></div><IconButton title="关闭" onClick={close}><X size={18} /></IconButton></div>
-      {historyDir && <p className="muted path-line">将写入：{historyDir}</p>}
-      <div className="form-grid">
-        <label className="wide">资料名称<input value={name} onChange={e => setName(e.target.value)} placeholder="例如：支付平台历史方案" /></label>
-        <label className="wide">Markdown 内容<textarea value={content} onChange={e => setContent(e.target.value)} placeholder={"# 标题\n\n粘贴或输入资料内容…"} /></label>
-      </div>
-      <div className="modal-actions">
-        <button onClick={close}>取消</button>
-        <button className="primary" onClick={() => void add({
-          id: makeId(),
-          kind: "local",
-          title: name || "未命名资料",
-          location: historyDir || "local",
-          excerpt: content.slice(0, 280),
-          fingerprint: makeId(),
-          accessedAt: new Date().toISOString(),
-        }, content)}>导入</button>
-      </div>
-    </div>
-  </div>;
-}

@@ -1,13 +1,48 @@
+# Dependencies
 node_modules/
+
+# Frontend build and test output
 dist/
-src-tauri/target/
+output/
+coverage/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
-.DS_Store
-Thumbs.db
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/tauri.version.generated.conf.json
+
+# Local environment and secrets
 *.local
 .env
 .env.*
-output/
-src-tauri/tauri.version.generated.conf.json
+!.env.example
+.claude/settings.local.json
+
+# Local agent and browser-tool state
+.workbuddy/
+.playwright-cli/
+.playwright-mcp/
+.tmp/
+
+# Workspace runtime data when a workspace is created inside the repository
+workspace/.gouan/
+**/.gouan/*.db
+**/.gouan/*.db-shm
+**/.gouan/*.db-wal
+**/.gouan/agent-conversations.json
+
+# Logs and process artifacts
+*.log
+*.pid
+*.stdout
+*.stderr
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

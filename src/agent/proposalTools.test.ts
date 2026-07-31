@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createProject } from "../data";
+import { createProject } from "../core/data";
 import { searchWeb } from "../services/search";
-import { fetchKnowledgeWebPage } from "../knowledge";
-import type { DocumentBlock } from "../types";
+import { fetchKnowledgeWebPage } from "../features/knowledge/knowledge";
+import type { DocumentBlock } from "../core/types";
 import { buildEditorSelectionPrompt, createProposalToolRegistry, normalizeMemoryToolArgs } from "./proposalTools";
 
 vi.mock("../services/search", () => ({ searchWeb: vi.fn() }));
-vi.mock("../knowledge", async importOriginal => {
-  const original = await importOriginal<typeof import("../knowledge")>();
+vi.mock("../features/knowledge/knowledge", async importOriginal => {
+  const original = await importOriginal<typeof import("../features/knowledge/knowledge")>();
   return { ...original, fetchKnowledgeWebPage: vi.fn() };
 });
 

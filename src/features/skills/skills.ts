@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { isDesktop } from "./services/runtime";
+import { isDesktop } from "../../services/runtime";
 
 export type SkillScope = "builtin" | "global" | "workspace";
 export interface SkillReference { name: string; scope: SkillScope; baseDir: string; skillFile: string; }

@@ -3,7 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { decodeLocalImagePath, highlightPreviewHtml, MarkdownSourceEditor } from "./markdownEditor";
+import { decodeLocalImagePath, highlightPreviewHtml, MarkdownSourceEditor } from "./MarkdownEditor";
 
 describe("local Markdown image paths", () => {
   it("decodes paths encoded by marked before filesystem resolution", () => {

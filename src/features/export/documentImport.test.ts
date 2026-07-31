@@ -6,8 +6,8 @@ import {
   prepareImportedMarkdown,
   resolveMineruConfig,
 } from "./documentImport";
-import { connectionsFromProject, saveWorkspaceConnections } from "./connections";
-import { createProject } from "./data";
+import { connectionsFromProject, saveWorkspaceConnections } from "../workspace/connections";
+import { createProject } from "../../core/data";
 
 describe("documentImport helpers", () => {
   it("accepts pdf/doc/docx only", () => {

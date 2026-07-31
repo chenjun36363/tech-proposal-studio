@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Copy, FileText, RefreshCw, X } from "lucide-react";
-import type { Project } from "../types";
+import type { Project } from "../core/types";
 import {
   checkDocxImages,
   DEFAULT_DOCX_EXPORT_SETTINGS,
   downloadDocx,
   type DocxExportSettings,
   type DocxImageCheckResult,
-} from "../docxExport";
+} from "../features/export/docxExport";
 import { IconButton } from "./IconButton";
 
 const cloneDefaults = (): DocxExportSettings => ({

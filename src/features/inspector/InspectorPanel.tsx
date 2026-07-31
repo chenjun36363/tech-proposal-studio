@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   Bot,
@@ -10,6 +10,7 @@ import {
   Minus,
   Search,
   Sparkles,
+  TerminalSquare,
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
@@ -22,7 +23,7 @@ import {
   getKnowledgeSectionScope,
   searchKnowledge,
   setKnowledgeChunkQuality,
-} from "../../knowledge";
+} from "../knowledge/knowledge";
 import { isDesktop } from "../../services/runtime";
 import type {
   DocumentBlock,
@@ -33,12 +34,16 @@ import type {
   KnowledgeSectionScope,
   Project,
   SourceRecord,
-} from "../../types";
-import { readTextFile } from "../../workspace";
+} from "../../core/types";
+import { readTextFile } from "../workspace/workspace";
 import { AiRewritePanel } from "./AiRewritePanel";
 import { ContextPanel } from "./ContextPanel";
 
-export type InspectorTab = "ai" | "commands" | "context" | "sources";
+const PowerShellTerminal = lazy(() => import("../terminal/PowerShellTerminal").then(module => ({
+  default: module.PowerShellTerminal,
+})));
+
+export type InspectorTab = "ai" | "commands" | "context" | "sources" | "terminal";
 type ProjectUpdater = (updater: (project: Project) => Project, remember?: boolean) => void;
 type BlockUpdater = (updater: (block: DocumentBlock) => DocumentBlock) => void;
 type KnowledgeResultView = KnowledgeSearchResult & {
@@ -129,6 +134,7 @@ export function InspectorPanel({
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<KnowledgeResultView[]>([]);
   const [knowledgeChunks, setKnowledgeChunks] = useState<Record<string, KnowledgeChunk>>({});
+  const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
   const desktop = isDesktop();
   const contextSources = useMemo(
     () => project.sources.filter(source => block.sourceRefs.includes(source.id)),
@@ -161,6 +167,10 @@ export function InspectorPanel({
     () => contextSources.map(source => source.heading ? `${source.title} / ${source.heading}` : source.title),
     [contextSources],
   );
+
+  useEffect(() => {
+    if (tab === "terminal") setTerminalVisited(true);
+  }, [tab]);
 
   useEffect(() => {
     if (!desktop || !["ai", "context", "commands"].includes(tab)) return;
@@ -341,13 +351,14 @@ export function InspectorPanel({
     }
   };
 
-  return <aside className="right-panel">
+  return <aside className={`right-panel ${tab === "terminal" ? "terminal-mode" : ""}`}>
     <div className="inspector-top">
       <div className="tabs">
         <button className={tab === "commands" ? "active" : ""} onClick={() => setTab("commands")}><Bot size={15} />Agent</button>
         <button className={tab === "ai" ? "active" : ""} onClick={() => setTab("ai")}><Sparkles size={15} />AI</button>
         <button className={tab === "context" ? "active" : ""} onClick={() => setTab("context")}><Layers3 size={15} />上下文</button>
         <button className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}><BookOpen size={15} />知识库</button>
+        <button className={tab === "terminal" ? "active" : ""} onClick={() => setTab("terminal")}><TerminalSquare size={15} />终端</button>
       </div>
     </div>
     {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
@@ -403,5 +414,17 @@ export function InspectorPanel({
           {!searching && !results.length && <div className="knowledge-search-empty"><BookOpen size={25} /><b>{query.trim() ? "没有匹配结果" : "输入关键词检索知识库"}</b><span>{query.trim() ? "尝试更短的关键词或章节名称" : "检索标题、章节和正文"}</span></div>}
         </>}
     </div>}
+    <div
+      className={`inspector-terminal ${tab === "terminal" ? "is-visible" : "is-hidden"}`}
+      aria-hidden={tab !== "terminal"}
+    >
+      <div className="inspector-terminal-meta">
+        <span>工作区终端</span>
+        <em title={project.workspace?.root ?? ""}>{project.workspace?.root ?? "尚未选择工作区"}</em>
+      </div>
+      {terminalVisited && <Suspense fallback={<p className="muted">正在加载终端…</p>}>
+        <PowerShellTerminal active={tab === "terminal"} cwd={project.workspace?.root ?? "."} />
+      </Suspense>}
+    </div>
   </aside>;
 }

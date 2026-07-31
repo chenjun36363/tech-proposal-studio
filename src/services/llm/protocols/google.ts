@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentToolDefinition } from "../../../agent/protocol";
-import type { ResolvedModelConfig } from "../../../types";
+import type { ResolvedModelConfig } from "../../../core/types";
 import {
   asRecord,
   baseUrl,

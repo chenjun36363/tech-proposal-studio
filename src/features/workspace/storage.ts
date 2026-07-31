@@ -1,7 +1,7 @@
-import type { DocumentBlock, Project } from "./types";
-import { createProject } from "./data";
-import { defaultProposalMarkdown } from "./markdownDoc";
-import { normalizeAgentSettings } from "./agent/settings";
+import type { DocumentBlock, Project } from "../../core/types";
+import { createProject } from "../../core/data";
+import { defaultProposalMarkdown } from "../editor/markdownDoc";
+import { normalizeAgentSettings } from "../../agent/settings";
 const KEY = "tech-proposal-studio.project.v1";
 const LEGACY_KEY = "schematic-writer.project.v1";
 function ensureCommands(project: Project): Project {

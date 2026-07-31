@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { normalizeModelList } from "../modelCatalog";
-import type { AiDraft, DocumentBlock, ModelOption, OpenAICompatibleConfig, ResolvedModelConfig } from "../types";
+import { normalizeModelList } from "../features/settings/modelCatalog";
+import type { AiDraft, DocumentBlock, ModelOption, OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { isDesktop } from "./runtime";
 import { protocolAdapter, type CanonicalChatRequest, type WireHttpRequest } from "./llm";
 import { resolvedFromLegacy } from "./llm/resolve";

@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isDesktop } from "../services/runtime";
 import type { AgentMessage } from "./protocol";
-import { persistentAgentMessages, safeTurnSplitIndex, summarizeAgentMessage } from "./messageUtils";
+import { persistentAgentMessages, safeTurnSplitIndex } from "./messageUtils";
+import { buildAgentCheckpoint } from "./contextCompaction";
 
 const KEY = "tech-proposal-studio.agent-conversations.v1";
 const TAURI_CHANGE_EVENT = "agent-conversations:changed";
@@ -209,11 +210,10 @@ export function compactAgentConversation(conversation: AgentConversation, recent
   if (conversation.messages.length <= keep) return conversation;
   const splitAt = safeTurnSplitIndex(conversation.messages, conversation.messages.length - keep);
   if (splitAt <= 0) return conversation;
-  const compacted = conversation.messages.slice(0, splitAt).filter(message => !message.transient).map(summarizeAgentMessage).join("\n");
-  const previous = conversation.summary ? `${conversation.summary}\n` : "";
+  const compacted = buildAgentCheckpoint(conversation.messages.slice(0, splitAt), conversation.summary, 8000);
   return {
     ...conversation,
-    summary: `${previous}${compacted}`.slice(-8000),
+    summary: compacted,
     messages: conversation.messages.slice(splitAt),
   };
 }

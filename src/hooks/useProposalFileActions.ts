@@ -1,10 +1,10 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { applyConnections, loadWorkspaceConnections } from "../connections";
-import { makeId } from "../data";
-import { importWordOrPdfToWorkspace } from "../documentImport";
-import { defaultProposalMarkdown, fileNameFromTitle, parseMarkdownHeadings, titleFromMarkdown } from "../markdownDoc";
-import { exportMarkdown } from "../storage";
-import type { Project } from "../types";
+import { applyConnections, loadWorkspaceConnections } from "../features/workspace/connections";
+import { makeId } from "../core/data";
+import { importWordOrPdfToWorkspace } from "../features/export/documentImport";
+import { defaultProposalMarkdown, fileNameFromTitle, parseMarkdownHeadings, titleFromMarkdown } from "../features/editor/markdownDoc";
+import { exportMarkdown } from "../features/workspace/storage";
+import type { Project } from "../core/types";
 import {
   importMarkdownToWorkspace,
   pickDocumentFile,
@@ -13,7 +13,7 @@ import {
   renameFile,
   withWorkspace,
   writeTextFile,
-} from "../workspace";
+} from "../features/workspace/workspace";
 
 interface ProposalFileActionsOptions {
   project: Project;

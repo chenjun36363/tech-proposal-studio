@@ -1,4 +1,20 @@
 @layer components {
+  .right-panel .inspector-top .tabs {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .right-panel .inspector-top .tabs button {
+    min-width: 0;
+    justify-content: center;
+    gap: 3px;
+    padding-inline: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
   .context-manager {
     padding-top: 14px;
   }

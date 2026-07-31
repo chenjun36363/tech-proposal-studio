@@ -1,6 +1,6 @@
-import type { LibraryFile, Project, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths } from "./types";
-import { makeId, normalizeWorkspacePaths } from "./data";
-import { isDesktop } from "./services/runtime";
+import type { LibraryFile, Project, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths } from "../../core/types";
+import { makeId, normalizeWorkspacePaths } from "../../core/data";
+import { isDesktop } from "../../services/runtime";
 import { invoke } from "@tauri-apps/api/core";
 
 const WORKSPACE_KEY = "tech-proposal-studio.workspace.v1";
@@ -64,7 +64,7 @@ export interface MinerUConvertResult {
 export async function convertDocumentWithMineru(
   sourcePath: string,
   workspaceRoot: string,
-  config: import("./types").MinerUConfig,
+  config: import("../../core/types").MinerUConfig,
 ): Promise<MinerUConvertResult> {
   if (!isDesktop()) throw new Error("Word/PDF 导入仅在桌面端可用");
   return invoke<MinerUConvertResult>("convert_document_with_mineru", {

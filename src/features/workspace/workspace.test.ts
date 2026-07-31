@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Project } from "./types";
-import { defaultWorkspaceFromRoot, normalizeWorkspacePaths } from "./data";
+import type { Project } from "../../core/types";
+import { defaultWorkspaceFromRoot, normalizeWorkspacePaths } from "../../core/data";
 import { mergeLibrarySources, uniqueImportedMarkdownName } from "./workspace";
 
 describe("workspace Markdown import", () => {

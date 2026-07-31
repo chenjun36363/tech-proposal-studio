@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { ExternalLink, Globe2, Search, X } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
-import { makeId } from "../../data";
-import { importKnowledgeWeb } from "../../knowledge";
+import { makeId } from "../../core/data";
+import { importKnowledgeWeb } from "../knowledge/knowledge";
 import { searchWeb } from "../../services/search";
 import { openExternalUrl } from "../../services/system";
-import type { Project, SearchResult } from "../../types";
+import type { Project, SearchResult } from "../../core/types";
 
 type QuickLink = { id: string; title: string; url: string };
 

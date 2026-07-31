@@ -18,6 +18,42 @@
 2. P4 全文优化：在安全编辑工具之上增加全文规划、逐章生成和一致性复核。
 3. P1/P2 能力基础设施：随后补强会话可靠性和工作区实时同步，确保长任务和外部编辑安全。
 
+## P7 源码结构治理
+
+目标：在不改变产品行为、不阻塞 P1-P4 功能开发的前提下，逐步收敛前端入口、全局样式和运行时边界。每批迁移保持可独立合并，禁止将纯结构调整与功能行为修改混在同一提交中。
+
+### 执行约束
+
+- [x] 建立重构前基线：38 个测试文件、231 项测试通过，`pnpm build` 通过；基线文件规模为 `App.tsx` 1331 行、`index.css` 4868 行、`docxExport.ts` 828 行、Rust `lib.rs` 641 行。
+- [x] 按功能完成物理目录分区：`src/` 根目录只保留应用入口，`src-tauri/src/` 根目录只保留 crate 入口；业务分别归入 `core/features/agent/services` 与 `agent/workspace/integrations/platform/knowledge`。
+- [ ] 固定依赖方向为 `app -> features -> domain/shared/services`；领域纯函数不得依赖 React、Tauri 或具体存储实现。
+- [ ] 一个迁移批次只处理一个明确边界；完成后运行 `pnpm test` 和 `pnpm build`。
+- [ ] 新增代码不得继续堆入 `App.tsx` 或 `index.css`；共享代码必须存在至少两个真实消费者。
+
+### P7.1 样式边界
+
+- [ ] 将 Git、设置、技能、编辑器和应用壳样式从 `index.css` 迁入对应 feature/component 样式文件。
+- [ ] `index.css` 最终只保留设计变量、全局重置、字体、通用控件和应用基础布局。
+- [ ] 合并重复选择器和文件末尾的历史覆盖层，迁移期间保持现有视觉与响应式行为不变。
+- [ ] 为关键桌面与窄屏视口补充截图检查，确认面板、弹窗和编辑区无重叠或溢出。
+
+### P7.2 应用入口与编辑工作区
+
+- [x] 恢复 `PowerShellTerminal` 到右侧 inspector 的终端页签接线；切换 inspector 页签保持 PTY，会在折叠右侧面板时卸载并关闭。
+- [x] 将 Markdown 资料导入弹窗迁入 `features/workspace`，由应用入口只负责打开状态和导入结果协调。
+- [ ] 将设置弹窗、资料导入弹窗、顶部工具栏和菜单从 `App.tsx` 抽到所属 feature/app 模块。
+- [ ] 将左右面板尺寸、拖拽和全局快捷键分别收敛到应用级 hooks。
+- [ ] 提取编辑工作区、文档目录、工作区文件列表、查找替换栏和视图切换组件。
+- [ ] 将章节选择、编辑范围、预览模式、查找替换、折叠章节和 Agent 选区快照收敛到编辑会话控制器。
+- [ ] `App.tsx` 最终只保留项目会话装配、顶层布局和跨功能协调，目标控制在 500 行左右。
+
+### P7.3 服务、导出与 Rust 边界
+
+- [ ] 配合 P1 将 Agent 会话存储拆为统一接口、Browser adapter 和 SQLite adapter，React 组件不得直接访问持久化细节。
+- [ ] 配合 P2 将工作区监听、磁盘基线和冲突处理收敛到 workspace service/controller。
+- [ ] 将 DOCX 导出拆为 Markdown 解析、样式、图片解析、文档构建和保存适配模块，并补齐表格、图片和异常路径测试。
+- [ ] 将状态初始化和领域装配下沉到对应 Rust 模块；`lib.rs` 只保留插件、state 和显式命令注册。
+
 ## P6 Agent Skills 与技能市场
 
 目标：以 Agent Skills 渐进披露协议扩展 Agent 能力，所有实际执行继续通过应用受控工具与会话权限完成。
@@ -42,7 +78,7 @@
 - [ ] 为自定义模板补齐保存、读取、应用、删除和异常数据测试。
 - [ ] 验证浏览器与桌面端的模板存储边界：浏览器使用 localStorage，桌面使用 `<workspace.root>/.gouan/templates/`。
 - [ ] 完成 Agent 会话从 legacy localStorage / JSON 迁移到工作区 SQLite 后的兼容、并发刷新和错误处理测试。
-- [ ] 增加忽略规则并清理不应提交的运行数据，例如 `workspace/.gouan/*.db` 和 Agent 会话实例文件。
+- [x] 增加忽略规则并清理不应提交的运行数据，包括工具日志/快照、临时脚本、本机 Agent 状态、`workspace/.gouan/*.db` 和 Agent 会话实例文件。
 - [x] 2026-07-29 完成前端全量测试（33 个文件、177 项测试）和生产构建。
 - [x] 2026-07-29 完成 Agent 会话 Rust 定向测试（2 项通过）。
 
@@ -129,7 +165,7 @@
 
 ### Markdown 操作
 
-- [x] 在 `src/markdownDoc.ts` 提供插入章节、删除章节、替换选区和统一应用提案的纯函数。
+- [x] 在 `src/features/editor/markdownDoc.ts` 提供插入章节、删除章节、替换选区和统一应用提案的纯函数。
 - [x] 插入章节支持指定章节的 `before` / `after` 位置，并保持 Markdown 间隔正确。
 - [x] 删除章节包含其正文和全部子章节，禁止通过 Agent 删除文档 H1。
 - [x] 插入或删除后按现有规则重新编号标题。

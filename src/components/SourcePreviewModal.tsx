@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { ExternalLink, Maximize2, Minimize2, X } from "lucide-react";
-import { MarkdownPreview } from "../markdownEditor";
+import { MarkdownPreview } from "../features/editor/MarkdownEditor";
 import { openExternalUrl } from "../services/system";
-import type { SourceRecord } from "../types";
+import type { SourceRecord } from "../core/types";
 import { IconButton } from "./IconButton";
 
 export function SourcePreviewModal({ source, markdown, loading, error, workspaceRoot, close, notify }: {

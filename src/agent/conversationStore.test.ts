@@ -40,6 +40,7 @@ describe("agent conversation storage", () => {
     conversation.messages = Array.from({ length: 30 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, content: `message-${index}` }));
     const compacted = compactAgentConversation(conversation);
     expect(compacted.messages).toHaveLength(20);
+    expect(compacted.summary).toContain("自动上下文压缩检查点");
     expect(compacted.summary).toContain("message-0");
     expect(compacted.summary).not.toContain("message-29");
   });

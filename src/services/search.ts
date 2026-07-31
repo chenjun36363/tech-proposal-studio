@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SearchConfig, SearchResult } from "../types";
+import type { SearchConfig, SearchResult } from "../core/types";
 import { isDesktop } from "./runtime";
 
 interface SearchAdapter {

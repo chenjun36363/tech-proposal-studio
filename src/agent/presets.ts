@@ -1,5 +1,5 @@
-import type { CommandPreset, DocumentBlock, Project } from "./types";
-import { makeId } from "./data";
+import type { CommandPreset, DocumentBlock, Project } from "../core/types";
+import { makeId } from "../core/data";
 
 export type AgentToolId = "claude" | "codex" | "opencode" | "codebuddy";
 

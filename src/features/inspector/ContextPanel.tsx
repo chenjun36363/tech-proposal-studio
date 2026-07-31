@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Copy, FolderSearch, Globe2, Layers3, Pencil, Trash2 } from "lucide-react";
-import { makeId } from "../../data";
-import type { DocumentBlock, SourceRecord } from "../../types";
+import { makeId } from "../../core/data";
+import type { DocumentBlock, SourceRecord } from "../../core/types";
 
 export function ContextPanel({ contextSources, context, updateBlock, updateSourceContext, openSourcePreview, sourceContent, notify }: {
   contextSources: SourceRecord[];

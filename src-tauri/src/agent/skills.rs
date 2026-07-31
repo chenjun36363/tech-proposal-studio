@@ -458,11 +458,11 @@ fn discover_root(scope: SkillScope, root: &Path) -> Vec<SkillSummary> {
 
 fn seed_builtins(root: &Path) -> Result<(), String> {
     for (name, content) in [
-        ("docx", include_str!("../skills/docx/SKILL.md")),
-        ("excel", include_str!("../skills/excel/SKILL.md")),
+        ("docx", include_str!("../../skills/docx/SKILL.md")),
+        ("excel", include_str!("../../skills/excel/SKILL.md")),
         (
             "agent-browser",
-            include_str!("../skills/agent-browser/SKILL.md"),
+            include_str!("../../skills/agent-browser/SKILL.md"),
         ),
     ] {
         let dir = root.join(name);

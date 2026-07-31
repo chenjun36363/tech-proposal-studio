@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext } from "./agents";
-import { createProject } from "./data";
-import type { DocumentBlock } from "./types";
+import { agentTools, buildAgentCommand, buildAgentInstallCommand, defaultAgentPrompt, withAgentContext } from "./presets";
+import { createProject } from "../core/data";
+import type { DocumentBlock } from "../core/types";
 
 describe("agent install commands", () => {
   it.each([

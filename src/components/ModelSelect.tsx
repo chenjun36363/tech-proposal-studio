@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
-import type { LlmProvider, ModelOption, SelectedModel } from "../types";
+import type { LlmProvider, ModelOption, SelectedModel } from "../core/types";
 import { fuzzyScore } from "../utils/fuzzy";
 
 interface ModelEntry {

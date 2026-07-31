@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "../../agent/protocol";
-import type { LlmProtocol, ResolvedModelConfig } from "../../types";
+import type { LlmProtocol, ResolvedModelConfig } from "../../core/types";
 
 export type HttpMethod = "GET" | "POST";
 

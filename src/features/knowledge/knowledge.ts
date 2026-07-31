@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope, OpenAICompatibleConfig, WorkspacePaths } from "./types";
-import { isDesktop } from "./services/runtime";
+import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope, OpenAICompatibleConfig, WorkspacePaths } from "../../core/types";
+import { isDesktop } from "../../services/runtime";
 
 function desktopOnly() {
   if (!isDesktop()) throw new Error("知识库仅在桌面端可用");

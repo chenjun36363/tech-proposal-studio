@@ -3,8 +3,8 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { createProject } from "../../data";
-import type { Project } from "../../types";
+import { createProject } from "../../core/data";
+import type { Project } from "../../core/types";
 import { ToolSettingsSection } from "./ToolSettingsSection";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

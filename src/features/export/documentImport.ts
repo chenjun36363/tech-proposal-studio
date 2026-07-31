@@ -1,14 +1,14 @@
-import type { MinerUConfig } from "./types";
-import { createProject } from "./data";
-import { renumberHeadings } from "./markdownDoc";
-import { loadWorkspaceConnections, normalizeMineru } from "./connections";
-import { isDesktop } from "./services/runtime";
+import type { MinerUConfig } from "../../core/types";
+import { createProject } from "../../core/data";
+import { renumberHeadings } from "../editor/markdownDoc";
+import { loadWorkspaceConnections, normalizeMineru } from "../workspace/connections";
+import { isDesktop } from "../../services/runtime";
 import {
   convertDocumentWithMineru,
   listWorkspaceMarkdown,
   uniqueImportedMarkdownName,
   writeTextFile,
-} from "./workspace";
+} from "../workspace/workspace";
 
 const SUPPORTED_EXT = /\.(pdf|docx?)$/i;
 

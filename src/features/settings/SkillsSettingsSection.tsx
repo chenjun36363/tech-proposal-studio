@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Archive, CheckCircle2, Download, Package, Plus, RefreshCw, Search, ShieldCheck, Trash2, XCircle } from "lucide-react";
-import type { Project } from "../../types";
-import { checkSkillUpdates, createSkill, deleteSkill, discoverSkills, getSkillRuntimeStatus, installSkill, packageSkill, searchSkillMarket, updateMarketSkill, validateSkill, type SkillRuntimeStatus, type SkillScope, type SkillSummary } from "../../skills";
+import type { Project } from "../../core/types";
+import { checkSkillUpdates, createSkill, deleteSkill, discoverSkills, getSkillRuntimeStatus, installSkill, packageSkill, searchSkillMarket, updateMarketSkill, validateSkill, type SkillRuntimeStatus, type SkillScope, type SkillSummary } from "../skills/skills";
 import { isDesktop } from "../../services/runtime";
+import "./skills-settings.css";
 
 type Tab = "installed" | "market" | "install" | "create" | "runtime";
 type MarketCard = { slug: string; displayName: string; summary: string; latestVersion?: string | null; ownerHandle?: string | null; downloads?: number; stars?: number; downloadUrl?: string };

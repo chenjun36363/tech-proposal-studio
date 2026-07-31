@@ -91,7 +91,7 @@ export interface Project {
   /** MinerU 文档解析配置（与 connections 同步；apiKey 不写入 project localStorage） */
   mineru: MinerUConfig;
   /** Agent 会话、上下文和工具策略。 */
-  agent: import("./agent/settings").AgentSettings;
+  agent: import("../agent/settings").AgentSettings;
   commands: CommandPreset[];
   workspace?: WorkspacePaths;
   /** 当前打开的工作区 Markdown 绝对路径 */

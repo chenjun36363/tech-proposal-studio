@@ -1,4 +1,4 @@
-import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../types";
+import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { agentCompletion } from "../services/model";
 import { resolvedFromLegacy } from "../services/llm/resolve";
 import type { AgentEvent, AgentMessage, AgentModelResponse, AgentToolCall } from "./protocol";

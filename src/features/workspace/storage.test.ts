@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { createProject } from "./data";
+import { createProject } from "../../core/data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
 describe("project persistence", () => {
   beforeEach(() => localStorage.clear());

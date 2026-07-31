@@ -1,8 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { marked } from "marked";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isDesktop } from "./services/runtime";
-import { saveImageToWorkspace } from "./workspace";
+import { isDesktop } from "../../services/runtime";
+import { saveImageToWorkspace } from "../workspace/workspace";
 import type { FindMatch } from "./findReplace";
 
 marked.setOptions({ gfm: true, breaks: true });

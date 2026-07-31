@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentCompletion, improveBlockStream } from "./model";
-import type { DocumentBlock, OpenAICompatibleConfig, ResolvedModelConfig } from "../types";
+import type { DocumentBlock, OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 

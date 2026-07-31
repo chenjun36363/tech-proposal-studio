@@ -1,7 +1,7 @@
 import { agentCompletion } from "../../services/model";
 import { resolveActiveModelConfig } from "../../services/llm/resolve";
 import type { AgentModelResponse } from "../../agent/protocol";
-import type { Project } from "../../types";
+import type { Project } from "../../core/types";
 
 export function normalizeCommitMessage(value: string): string {
   return value

@@ -7,7 +7,7 @@ import type { AgentDraft, AgentEditorSelection, AgentEvent, AgentGitApprovalRequ
 import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings } from "../agent/settings";
 import { listProjectMemories } from "../agent/memoryService";
-import type { DocumentBlock, Project, SelectedModel } from "../types";
+import type { DocumentBlock, Project, SelectedModel } from "../core/types";
 import { resolveActiveModelConfig } from "../services/llm/resolve";
 import { ModelSelect } from "./ModelSelect";
 import { AgentConversationTimeline } from "./AgentConversationTimeline";
@@ -16,7 +16,7 @@ import { latestTodosFromMessages } from "../agent/todos";
 import { AgentTodoPlan } from "./AgentTodoPlan";
 import { AGENT_GIT_CHANGED, type AgentGitRuntime } from "../agent/gitTools";
 import { commitGitChanges, createGitBranch, fetchGitRepository, getGitBranches, getGitCommitDiff, getGitDiff, getGitLog, getGitStatus, popGitStash, pullGitRepository, pushGitRepository, stageAllGitFiles, stageGitFile, stashGitChanges, switchGitBranch, unstageAllGitFiles, unstageGitFile } from "../services/git";
-import { applySkillSlashSelection, buildSkillsSystemPrompt, discoverSkills, resolveEnabledSkills, skillSlashQuery, type SkillSummary } from "../skills";
+import { applySkillSlashSelection, buildSkillsSystemPrompt, discoverSkills, resolveEnabledSkills, skillSlashQuery, type SkillSummary } from "../features/skills/skills";
 import { registerSkillTools } from "../agent/skillTools";
 import { fuzzyFilter } from "../utils/fuzzy";
 

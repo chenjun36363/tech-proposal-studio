@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
-import type { Project } from "../types";
+import type { Project } from "../core/types";
 import { acceptProjectMemory, deleteProjectMemory, listProjectMemories, rebuildProjectMemory, writeProjectMemory, type MemoryType, type ProjectMemory } from "../agent/memoryService";
 
 const TYPE_LABELS: Record<MemoryType, string> = { decision: "决策", preference: "偏好", constraint: "约束", fact: "事实", reference: "参考" };

@@ -3,20 +3,20 @@ import { BookOpen, Check, ChevronDown, ChevronRight, ExternalLink, Eye, FilePlus
 import { HeadingReviewModal } from "../../components/HeadingReviewModal";
 import { IconButton } from "../../components/IconButton";
 import { SourcePreviewModal } from "../../components/SourcePreviewModal";
-import { importWordOrPdfToWorkspace } from "../../documentImport";
+import { importWordOrPdfToWorkspace } from "../export/documentImport";
 import {
   analyzeKnowledgeMarkdown, applyKnowledgeHeadings, deleteKnowledgeFile, listKnowledgeBackups,
   indexPendingKnowledge, listKnowledge, listKnowledgeSectionChunks, listKnowledgeSections, onKnowledgeProgress,
   removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, searchKnowledge, setKnowledgeSectionQuality,
-} from "../../knowledge";
+} from "./knowledge";
 import { openExternalUrl } from "../../services/system";
-import { countMarkdownWords } from "../../markdownDoc";
+import { countMarkdownWords } from "../editor/markdownDoc";
 import type {
   DocumentBlock, HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision,
   KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult,
   KnowledgeSection, Project, SourceRecord, WorkspacePaths,
-} from "../../types";
-import { deleteFile, importMarkdownToWorkspace, pickDocumentFile, pickMarkdownFile, readTextFile } from "../../workspace";
+} from "../../core/types";
+import { deleteFile, importMarkdownToWorkspace, pickDocumentFile, pickMarkdownFile, readTextFile } from "../workspace/workspace";
 
 type ProjectUpdater = (updater: (project: Project) => Project) => void;
 type BlockUpdater = (updater: (block: DocumentBlock) => DocumentBlock) => void;

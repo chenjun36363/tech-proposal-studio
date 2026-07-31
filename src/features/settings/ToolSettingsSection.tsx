@@ -1,6 +1,6 @@
 import { Check, Power } from "lucide-react";
 import { agentToolCatalog, agentToolGroups, type AgentToolGroupId } from "../../agent/toolCatalog";
-import type { Project } from "../../types";
+import type { Project } from "../../core/types";
 
 const catalogNames = new Set(agentToolCatalog.map(tool => tool.name));
 

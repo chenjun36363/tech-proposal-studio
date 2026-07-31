@@ -1,4 +1,4 @@
-import type { LlmProtocol, LlmProvider, ModelOption, SelectedModel } from "../../types";
+import type { LlmProtocol, LlmProvider, ModelOption, SelectedModel } from "../../core/types";
 import { LEGACY_PROVIDER_ID } from "./resolve";
 
 export const LLM_PROTOCOL_LABELS: Record<LlmProtocol, string> = {

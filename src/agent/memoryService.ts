@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project } from "../types";
+import type { Project } from "../core/types";
 import { isDesktop } from "../services/runtime";
 import { forgetAgentMemory, listAgentMemories, readAgentMemory, searchAgentMemories, upsertAgentMemory, type AgentMemory } from "./memoryStore";
 

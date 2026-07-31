@@ -1,5 +1,3 @@
-import { type Project } from "./types";
-
 export interface ProposalTemplate {
   id: string;
   name: string;
@@ -25,11 +23,9 @@ const MANIFEST_FILE = "index.json";
 export function extractTemplateSkeleton(markdown: string): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
-  const inCode: boolean[] = [];
   let codeDepth = 0;
   const result: string[] = [];
   let inHeadingBlock = false;
-  let lastLevel = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -46,12 +42,10 @@ export function extractTemplateSkeleton(markdown: string): string {
 
     const h = raw.match(HEADING_RE);
     if (h) {
-      const level = h[1].length;
       if (result.length > 0 && inHeadingBlock) {
         result.push("", "在此编写本章内容…", "");
       }
       result.push(raw);
-      lastLevel = level;
       inHeadingBlock = true;
     } else if (inHeadingBlock && trimmed) {
       // skip content between headings

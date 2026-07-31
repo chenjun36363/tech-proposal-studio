@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CommandPreset, CommandResult, Project } from "../types";
+import type { CommandPreset, CommandResult, Project } from "../core/types";
 import { isDesktop } from "./runtime";
 
 function commandPayload(preset: CommandPreset) {

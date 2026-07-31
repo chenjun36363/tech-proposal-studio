@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentToolRegistry } from "./toolRegistry";
 import { registerSkillTools } from "./skillTools";
 
-vi.mock("../skills", async importOriginal => {
-  const original = await importOriginal<typeof import("../skills")>();
+vi.mock("../features/skills/skills", async importOriginal => {
+  const original = await importOriginal<typeof import("../features/skills/skills")>();
   return { ...original, readSkill: vi.fn().mockResolvedValue({ content: "skill body", truncated: false, reference: {} }), readSkillResource: vi.fn().mockResolvedValue({ content: "resource body", truncated: false, reference: {} }), getSkillRuntimeStatus: vi.fn().mockResolvedValue([{ name: "python", available: true }]), runSkillCommand: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "ok", stderr: "", truncated: false, durationMs: 1 }) };
 });
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { isDesktop } from "../services/runtime";
-import type { SourceRecord } from "../types";
-import { readTextFile } from "../workspace";
+import type { SourceRecord } from "../core/types";
+import { readTextFile } from "../features/workspace/workspace";
 
 export function useSourcePreview() {
   const [source, setSource] = useState<SourceRecord | null>(null);

@@ -1,8 +1,8 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { moveWorkspaceMarkdownToKnowledge } from "../../knowledge";
-import { exportMarkdown } from "../../storage";
-import type { Project, WorkspaceMarkdownFile, WorkspacePaths } from "../../types";
-import { writeTextFile } from "../../workspace";
+import { moveWorkspaceMarkdownToKnowledge } from "./knowledge";
+import { exportMarkdown } from "../workspace/storage";
+import type { Project, WorkspaceMarkdownFile, WorkspacePaths } from "../../core/types";
+import { writeTextFile } from "../workspace/workspace";
 
 interface KnowledgeTransferOptions {
   project: Project;

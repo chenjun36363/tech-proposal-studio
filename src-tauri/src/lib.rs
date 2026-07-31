@@ -8,21 +8,37 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 
 mod knowledge;
+#[path = "integrations/mineru.rs"]
 mod mineru;
+#[path = "integrations/model.rs"]
 mod model;
+#[path = "agent/memory.rs"]
 mod memory;
+#[path = "platform/credentials.rs"]
 mod credentials;
+#[path = "platform/export.rs"]
 mod export;
+#[path = "integrations/search.rs"]
 mod search;
+#[path = "platform/system.rs"]
 mod system;
+#[path = "platform/terminal.rs"]
 mod terminal;
+#[path = "integrations/ccswitch.rs"]
 mod ccswitch;
+#[path = "platform/process.rs"]
 mod process;
+#[path = "agent/conversations.rs"]
 mod agent_conversations;
+#[path = "workspace/connections.rs"]
 mod connections;
+#[path = "workspace/git.rs"]
 mod git;
+#[path = "platform/privileged.rs"]
 mod privileged;
+#[path = "agent/skills.rs"]
 mod skills;
+#[path = "integrations/updater.rs"]
 mod updater;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};

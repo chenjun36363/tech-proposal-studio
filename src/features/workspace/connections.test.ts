@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { createProject } from "./data";
+import { createProject } from "../../core/data";
 import {
   applyConnections,
   connectionsFilePath,
@@ -8,6 +8,7 @@ import {
   loadWorkspaceConnections,
   normalizeConnections,
   saveWorkspaceConnections,
+  sameWorkspaceRoot,
 } from "./connections";
 
 describe("workspace connections", () => {
@@ -16,6 +17,11 @@ describe("workspace connections", () => {
   it("builds .gouan/connections.json under workspace root", () => {
     expect(connectionsFilePath("D:\\work\\demo")).toBe("D:\\work\\demo\\.gouan\\connections.json");
     expect(connectionsFilePath("/tmp/ws/")).toBe("/tmp/ws/.gouan/connections.json");
+  });
+
+  it("compares Windows workspace roots without case or separator noise", () => {
+    expect(sameWorkspaceRoot("E:\\Work\\Demo\\", "e:/work/demo")).toBe(true);
+    expect(sameWorkspaceRoot("E:\\Work\\Demo", "E:\\Work\\Other")).toBe(false);
   });
 
   it("migrates v1 single-model payload to providers v2", () => {

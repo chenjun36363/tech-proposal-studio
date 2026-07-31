@@ -1,8 +1,8 @@
 import type { Project } from "./types";
-import { defaultProposalMarkdown } from "./markdownDoc";
-import { defaultAgentSettings } from "./agent/settings";
-import { createDefaultProvider, createDefaultSelection } from "./services/llm/defaults";
-import { deriveModelSnapshot } from "./services/llm/resolve";
+import { defaultProposalMarkdown } from "../features/editor/markdownDoc";
+import { defaultAgentSettings } from "../agent/settings";
+import { createDefaultProvider, createDefaultSelection } from "../services/llm/defaults";
+import { deriveModelSnapshot } from "../services/llm/resolve";
 
 export const makeId = () => crypto.randomUUID();
 

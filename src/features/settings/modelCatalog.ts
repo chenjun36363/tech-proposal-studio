@@ -1,4 +1,4 @@
-import type { ModelOption, OpenAICompatibleConfig } from "./types";
+import type { ModelOption, OpenAICompatibleConfig } from "../../core/types";
 
 type UnknownRecord = Record<string, unknown>;
 

@@ -1,12 +1,12 @@
 import type { AgentDraft, AgentEditorSelection, AgentGitApprovalRequest, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
 import { AgentToolRegistry, objectSchema } from "./toolRegistry";
-import type { DocumentBlock, Project } from "../types";
+import type { DocumentBlock, Project } from "../core/types";
 import { searchWeb } from "../services/search";
-import { applyAgentDraft, parseMarkdownHeadings, sectionBody } from "../markdownDoc";
+import { applyAgentDraft, parseMarkdownHeadings, sectionBody } from "../features/editor/markdownDoc";
 import { isDesktop } from "../services/runtime";
 import { privilegedFileOperation, runPrivilegedPowerShell } from "../services/privileged";
 
-import { fetchKnowledgeWebPage, getKnowledgeSectionScope, searchKnowledge } from "../knowledge";
+import { fetchKnowledgeWebPage, getKnowledgeSectionScope, searchKnowledge } from "../features/knowledge/knowledge";
 import { proposeProjectMemory, readProjectMemory, searchProjectMemories } from "./memoryService";
 import { registerAgentGitTools, type AgentGitRuntime } from "./gitTools";
 const text = (value: unknown, field: string) => {

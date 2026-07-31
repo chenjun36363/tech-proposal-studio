@@ -252,3 +252,155 @@
 .agent-draft-rejected b { color:hsl(var(--foreground) / .82); font-size:9px; font-weight:600; }
 .agent-draft-rejected small { color:hsl(var(--muted-foreground)); font-size:8px; }
 .agent-draft-rejected > button { flex:none; min-height:28px; display:inline-flex; align-items:center; gap:5px; padding:0 8px; font-size:9px; }
+.agent-capability-menu {
+  position: relative;
+}
+
+.agent-capability-menu > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+}
+
+.agent-capability-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-capability-menu > summary small {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.agent-capability-menu[open] > summary {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--muted));
+}
+
+.agent-capability-menu[open] > summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.agent-capability-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 290px;
+  padding: 5px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover));
+  box-shadow: 0 8px 24px hsl(220 20% 10% / 0.16);
+}
+
+.agent-skills-menu .agent-capability-popover {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.agent-capability-popover > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.agent-capability-popover > label:hover {
+  background: hsl(var(--muted));
+}
+
+.agent-capability-popover > label > span {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.agent-capability-popover > label > span > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-capability-popover b {
+  font-size: 11px;
+}
+
+.agent-capability-popover small {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.agent-capability-popover input {
+  flex: 0 0 auto;
+}
+
+.agent-tool-toggles {
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.agent-compact-toggle {
+  position: relative;
+  display: flex;
+  width: 30px;
+  height: 28px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  cursor: pointer;
+}
+
+.agent-compact-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-compact-toggle small {
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+}
+
+.agent-compact-toggle.active {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--muted));
+  color: hsl(var(--primary));
+}
+
+.agent-compact-toggle:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.agent-compact-toggle.agent-full-access.active {
+  border-color: hsl(var(--destructive));
+  background: hsl(var(--destructive) / 0.08);
+  color: hsl(var(--destructive));
+}
+
+.agent-skill-command-approval pre {
+  max-height: 120px;
+  margin: 8px 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,176 @@
+.skills-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skills-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.skills-tabs button {
+  border: 0;
+  padding: 7px 10px;
+  background: transparent;
+}
+
+.skills-tabs button.active {
+  background: hsl(var(--muted));
+  color: hsl(var(--accent-foreground));
+  font-weight: 600;
+}
+
+.skill-message {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid hsl(var(--border));
+}
+
+.skill-message.error,
+.runtime-list > div.missing > svg {
+  color: hsl(var(--destructive));
+}
+
+.skill-message.success,
+.runtime-list > div.available > svg {
+  color: hsl(var(--success));
+}
+
+.skill-summary,
+.skill-market-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skill-summary button {
+  margin-left: auto;
+}
+
+.skill-market-search input {
+  flex: 1;
+}
+
+.skill-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.skill-list article {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid hsl(var(--border));
+}
+
+.skill-list article.enabled {
+  border-color: hsl(var(--primary) / 0.55);
+}
+
+.skill-list article > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.skill-list article > div:first-child > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.skill-list article p {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.skill-list article footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.skill-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.skill-tools code {
+  padding: 2px 4px;
+  background: hsl(var(--muted));
+  font-size: 10px;
+}
+
+.skill-form,
+.runtime-list {
+  display: grid;
+  gap: 10px;
+}
+
+.skill-form {
+  max-width: 620px;
+}
+
+.skill-form label,
+.runtime-list span {
+  display: grid;
+  gap: 5px;
+}
+
+.skill-form label > div {
+  display: flex;
+  gap: 5px;
+}
+
+.skill-form label > div input {
+  flex: 1;
+}
+
+.runtime-list {
+  gap: 7px;
+}
+
+.runtime-list > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid hsl(var(--border));
+}
+
+.runtime-list span {
+  gap: 2px;
+}
+
+.runtime-list small {
+  color: hsl(var(--muted-foreground));
+  word-break: break-all;
+}
+
+.skill-card-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.skill-card-toggle input {
+  margin: 0;
+}

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Clock3, HardDrive, MessageSquareText, Trash2 } from "lucide-react";
 import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, clearAgentConversations, deleteAgentConversation, listAgentConversations, type AgentConversation, type AgentConversationChange } from "../agent/conversationStore";
 import { isDesktop } from "../services/runtime";
-import type { Project } from "../types";
+import type { Project } from "../core/types";
 
 function formatTime(timestamp: number): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(timestamp);

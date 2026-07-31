@@ -1,7 +1,7 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { applyConnections, loadWorkspaceConnections } from "../connections";
-import { defaultWorkspaceFromRoot } from "../data";
-import type { Project, WorkspaceMarkdownFile, WorkspacePaths } from "../types";
+import { applyConnections, loadWorkspaceConnections } from "../features/workspace/connections";
+import { defaultWorkspaceFromRoot } from "../core/data";
+import type { Project, WorkspaceMarkdownFile, WorkspacePaths } from "../core/types";
 import {
   ensureWorkspace,
   getDefaultWorkspaceRoot,
@@ -11,7 +11,7 @@ import {
   mergeLibrarySources,
   saveWorkspaceConfig,
   withWorkspace,
-} from "../workspace";
+} from "../features/workspace/workspace";
 
 interface WorkspaceSessionOptions {
   project: Project;

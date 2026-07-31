@@ -3,8 +3,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { isDesktop } from "./services/runtime";
-import { terminalClose, terminalOpen, terminalResize, terminalWrite } from "./services/system";
+import { isDesktop } from "../../services/runtime";
+import { terminalClose, terminalOpen, terminalResize, terminalWrite } from "../../services/system";
 
 export function PowerShellTerminal({ active, cwd = "." }: { active: boolean; cwd?: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);

@@ -4,7 +4,7 @@ import type {
   OpenAICompatibleConfig,
   ResolvedModelConfig,
   SelectedModel,
-} from "../../types";
+} from "../../core/types";
 
 export const LEGACY_PROVIDER_ID = "legacy-default";
 export const MODEL_VALUE_SEP = "::";

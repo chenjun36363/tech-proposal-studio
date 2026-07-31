@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { buildAgentInstallCommand, type AgentTool, type AgentToolId } from "../agents";
+import { buildAgentInstallCommand, type AgentTool, type AgentToolId } from "../agent/presets";
 import { detectTools, runCommand } from "../services/system";
-import type { CommandPreset, CommandResult } from "../types";
+import type { CommandPreset, CommandResult } from "../core/types";
 
 type CommandOutcome = CommandResult | { error: string };
 

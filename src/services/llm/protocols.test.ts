@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ResolvedModelConfig } from "../../types";
+import type { ResolvedModelConfig } from "../../core/types";
 import type { CanonicalChatRequest } from "./types";
-import { protocolAdapter } from "./index";
+import { protocolAdapter } from "./";
 import {
   deriveModelSnapshot,
   encodeModelValue,

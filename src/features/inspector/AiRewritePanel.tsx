@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Bot, Check, Command, RefreshCw, Sparkles, X } from "lucide-react";
-import type { AgentToolId } from "../../agents";
+import type { AgentToolId } from "../../agent/presets";
 import { CliAgentPanel } from "../../components/CliAgentPanel";
 import { ContextReferences } from "../../components/ContextReferences";
-import { makeId } from "../../data";
+import { makeId } from "../../core/data";
 import { improveBlockStream } from "../../services/model";
-import type { AiDraft, DocumentBlock, Project, SelectedModel, SessionEvent } from "../../types";
+import type { AiDraft, DocumentBlock, Project, SelectedModel, SessionEvent } from "../../core/types";
 import { resolveActiveModelConfig } from "../../services/llm/resolve";
 import { ModelSelect } from "../../components/ModelSelect";
 

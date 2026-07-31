@@ -45,11 +45,11 @@ Frontend is shared. Modules under `src/services/` select Browser/Tauri adapters 
 - **Browser**: `fetch` to OpenAI-compatible `/chat/completions` and search APIs; project state in `localStorage`; Markdown download via Blob; CLI / terminal / workspace disk IO are stubs or no-ops.
 - **Tauri**: `invoke(...)` to Rust commands registered in `src-tauri/src/lib.rs`; model, search, credentials, export, process, terminal, memory, and knowledge implementations live in dedicated Rust modules. SQLite (`workspace.db` under app data) holds command run history.
 
-Prefer extending the service layer / `src/workspace.ts` + matching Tauri command rather than calling APIs only from React.
+Prefer extending the service layer / `src/features/workspace/workspace.ts` + matching Tauri command rather than calling APIs only from React.
 
 ### Domain model
 
-Defined in `src/types.ts`, factory in `src/data.ts`:
+Defined in `src/core/types.ts`, factory in `src/core/data.ts`:
 
 ```
 Project
@@ -61,7 +61,7 @@ Project
   filePath?  (absolute path of the open workspace .md)
 ```
 
-Default body is a Markdown template with H1 + nine `##` chapters (`src/markdownDoc.ts`). Left TOC is derived from Markdown headings.
+Default body is a Markdown template with H1 + nine `##` chapters (`src/features/editor/markdownDoc.ts`). Left TOC is derived from Markdown headings.
 
 ### User workspace (desktop)
 
@@ -92,17 +92,17 @@ Desktop only, hosted in the right panel. Rust uses `portable-pty` (`terminal_ope
 
 ### CLI / agent tools
 
-`run_command`: no shell mode (`allow_shell` rejected); allowlisted programs; on Windows resolve `.exe`/`.cmd`/`.bat` and launch scripts via `cmd.exe /D /S /C` (avoids os error 193 on npm shims). Agent presets in `src/agents.ts` use non-interactive flags (`Codex -p`, `codex exec`, `opencode run`). Interactive AI editing is intended via the right-panel PowerShell terminal.
+`run_command`: no shell mode (`allow_shell` rejected); allowlisted programs; on Windows resolve `.exe`/`.cmd`/`.bat` and launch scripts via `cmd.exe /D /S /C` (avoids os error 193 on npm shims). Agent presets in `src/agent/presets.ts` use non-interactive flags (`Codex -p`, `codex exec`, `opencode run`). Interactive AI editing is intended via the right-panel PowerShell terminal.
 
 ### Persistence and secrets
 
-`src/storage.ts`:
+`src/features/workspace/storage.ts`:
 
 - Saves project JSON to localStorage; **always strips `model.apiKey` and `search.apiKey`** before write.
 - Loads current key, then migrates from legacy key if needed.
 - `ensureCommands` migrates missing agent-check presets on older projects.
 
-**Connection config (model + search)** lives in the app-data SQLite `workspace.db`, table `workspace_connections`, keyed by workspace root, via `src/connections.ts` (`loadWorkspaceConnections` / `saveWorkspaceConnections`).
+**Connection config (model + search)** lives in the app-data SQLite `workspace.db`, table `workspace_connections`, keyed by workspace root, via `src/features/workspace/connections.ts` (`loadWorkspaceConnections` / `saveWorkspaceConnections`).
 Loaded on desktop workspace boot and when applying a workspace root; written when the user saves Settings. Legacy `<workspace.root>/.gouan/connections.json` is imported once when no database row exists and is never written again.
 Browser mode (no root) keeps the same JSON shape under localStorage key `tech-proposal-studio.connections.v1`.  
 API keys **are** stored in that SQLite row (user-requested); they still never go into the project cache (`tech-proposal-studio.project.v1`).
@@ -116,7 +116,7 @@ Rust keyring (`store_secret` / `load_secret`): service `com.techproposal.studio`
 
 ### Export
 
-- Toolbar “导出” menu: Markdown (`.md`) via `exportMarkdown` + `saveMarkdown`, and Word (`.docx`) via `src/docxExport.ts` (`buildDocx` / `buildDocxBytes` / `downloadDocx` from current `project.markdown`). Browser packing uses `Packer.toArrayBuffer`/`toBlob` (not `toBuffer` — WebView has no Node buffer). Desktop writes via `save_binary_file` (save dialog) or `save_docx_export` fallback under app `exports/`.
+- Toolbar “导出” menu: Markdown (`.md`) via `exportMarkdown` + `saveMarkdown`, and Word (`.docx`) via `src/features/export/docxExport.ts` (`buildDocx` / `buildDocxBytes` / `downloadDocx` from current `project.markdown`). Browser packing uses `Packer.toArrayBuffer`/`toBlob` (not `toBuffer` — WebView has no Node buffer). Desktop writes via `save_binary_file` (save dialog) or `save_docx_export` fallback under app `exports/`.
 - Word styles: H1 黑体 2号 (22pt) black; other headings 黑体 black; body 宋体 小四 (12pt). Local images (`![…](assets/…)` etc.) embed via `ImageRun`; bytes loaded with `read_binary_file` / `readBinaryFile`, resolved against `workspace.root` (for `assets/`) or open file dir.
 - Workspace save: toolbar “保存” writes the open proposal Markdown under `workspace.root`.
 
@@ -126,7 +126,7 @@ Vitest + jsdom for storage tests (`// @vitest-environment jsdom` in file). Cover
 
 ### Windows desktop dev note
 
-`pnpm tauri dev` needs MSVC (vcvars). Helper: `.\.tmp\run-tauri-dev.bat` loads vsdevcmd then runs tauri. Vite is `strictPort: 1420` — kill listeners on 1420 before restart if `beforeDevCommand` fails.
+`pnpm tauri dev` needs MSVC (vcvars). Helper: `.\scripts\run-tauri-dev.bat` loads vcvars, checks that Vite's strict port 1420 is free, then runs Tauri. If the port check fails, stop the reported existing dev-server PID before restarting.
 
 ## Product constraints
 

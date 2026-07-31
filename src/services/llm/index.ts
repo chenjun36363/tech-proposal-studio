@@ -1,4 +1,4 @@
-import type { LlmProtocol } from "../../types";
+import type { LlmProtocol } from "../../core/types";
 import { anthropicMessagesAdapter } from "./protocols/anthropic";
 import { googleGenerativeAiAdapter } from "./protocols/google";
 import { openaiCompletionsAdapter, openaiResponsesAdapter } from "./protocols/openai";

@@ -1,8 +1,8 @@
 import { Command, Download, X } from "lucide-react";
-import { agentTools } from "../../agents";
+import { agentTools } from "../../agent/presets";
 import { IconButton } from "../../components/IconButton";
 import type { EnvironmentToolsController } from "../../hooks/useEnvironmentTools";
-import type { Project } from "../../types";
+import type { Project } from "../../core/types";
 
 interface EnvironmentModalProps {
   project: Project;

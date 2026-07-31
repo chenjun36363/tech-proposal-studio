@@ -540,6 +540,8 @@ mod tests{
    let root=std::env::temp_dir().join(format!("gouan-knowledge-test-{}",now_string()));let history=root.join("history");fs::create_dir_all(&history).unwrap();let source=history.join("payment.md");let markdown="# 支付架构\n\n接口使用幂等键避免重复扣款。";fs::write(&source,markdown).unwrap();
    let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};let location=source.to_string_lossy().to_string();let first=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();let second=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();assert_eq!(first.id,second.id);
    let hits=knowledge_search(workspace.clone(),"幂等".into(),Some(10),None,None).unwrap();assert_eq!(hits.len(),1);assert!(hits[0].chunk.content.contains("重复扣款"));
+   assert_eq!(knowledge_search(workspace.clone(),"支付 幂等".into(),Some(10),None,None).unwrap().len(),1);
+   let relaxed=knowledge_search(workspace.clone(),"如何保障支付接口幂等和灾备".into(),Some(10),None,None).unwrap();assert_eq!(relaxed.len(),1);assert!(relaxed[0].excerpt.contains("幂等键"));
    assert_eq!(knowledge_search(workspace.clone(),"支付方案".into(),Some(10),None,Some(vec!["documentTitle".into()])).unwrap().len(),1);
    assert!(knowledge_search(workspace.clone(),"支付方案".into(),Some(10),None,Some(vec!["content".into()])).unwrap().is_empty());
    assert_eq!(knowledge_search(workspace.clone(),"支付架构".into(),Some(10),None,Some(vec!["headingPath".into()])).unwrap().len(),1);

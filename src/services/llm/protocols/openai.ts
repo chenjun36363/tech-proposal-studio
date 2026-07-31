@@ -1,13 +1,11 @@
-import type { AgentMessage, AgentModelResponse, AgentToolCall, AgentToolDefinition } from "../../../agent/protocol";
-import type { ResolvedModelConfig } from "../../../types";
+import type { AgentMessage, AgentToolCall, AgentToolDefinition } from "../../../agent/protocol";
+import type { ResolvedModelConfig } from "../../../core/types";
 import {
   asRecord,
   baseUrl,
   mergeHeaders,
   openAiStyleResponse,
-  type CanonicalChatRequest,
   type ProtocolAdapter,
-  type WireHttpRequest,
 } from "../types";
 
 function bearerAuth(config: ResolvedModelConfig): Record<string, string> {

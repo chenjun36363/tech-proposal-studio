@@ -1,5 +1,5 @@
-import type { SkillReference, SkillRuntimeStatus, SkillSummary } from "../skills";
-import { getSkillRuntimeStatus, readSkill, readSkillResource, runSkillCommand } from "../skills";
+import type { SkillReference, SkillRuntimeStatus, SkillSummary } from "../features/skills/skills";
+import { getSkillRuntimeStatus, readSkill, readSkillResource, runSkillCommand } from "../features/skills/skills";
 import { AgentToolRegistry, objectSchema } from "./toolRegistry";
 
 function splitLegacyCommand(value: string): string[] | null {

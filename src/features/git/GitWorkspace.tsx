@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArchiveRestore, ArrowDownToLine, ArrowUpFromLine, Check, CloudDownload, GitBranch, GitCommitHorizontal, History, ListTree, LoaderCircle, Minus, Plus, RefreshCw, Settings2, Sparkles, Trash2 } from "lucide-react";
 import { commitGitChanges, createGitBranch, discardGitFile, fetchGitRepository, getGitBranches, getGitCommitDiff, getGitDiff, getGitLog, getGitStagedSummary, getGitStatus, initGitRepository, popGitStash, pullGitRepository, pushGitRepository, setGitRemote, stageAllGitFiles, stageGitFile, stashGitChanges, switchGitBranch, unstageAllGitFiles, unstageGitFile, type GitBranchInfo, type GitCommitSummary, type GitFileStatus, type GitRepositoryStatus } from "../../services/git";
-import type { Project } from "../../types";
+import type { Project } from "../../core/types";
 import { generateCommitMessage } from "./commitMessage";
 import { AGENT_GIT_CHANGED } from "../../agent/gitTools";
 

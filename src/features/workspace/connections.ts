@@ -8,12 +8,12 @@ import type {
   Project,
   SearchConfig,
   SelectedModel,
-} from "./types";
-import { createProject, makeId } from "./data";
-import { isDesktop } from "./services/runtime";
+} from "../../core/types";
+import { createProject, makeId } from "../../core/data";
+import { isDesktop } from "../../services/runtime";
 import { invoke } from "@tauri-apps/api/core";
-import { isLlmProtocol, deriveModelSnapshot, LEGACY_PROVIDER_ID } from "./services/llm/resolve";
-import { createDefaultProvider, createDefaultSelection } from "./services/llm/defaults";
+import { isLlmProtocol, deriveModelSnapshot, LEGACY_PROVIDER_ID } from "../../services/llm/resolve";
+import { createDefaultProvider, createDefaultSelection } from "../../services/llm/defaults";
 
 const BROWSER_CONNECTIONS_KEY = "tech-proposal-studio.connections.v1";
 
@@ -21,6 +21,15 @@ export function connectionsFilePath(root: string): string {
   const base = root.replace(/[\\/]+$/, "");
   const sep = base.includes("\\") ? "\\" : "/";
   return `${base}${sep}.gouan${sep}connections.json`;
+}
+
+export function sameWorkspaceRoot(left?: string, right?: string): boolean {
+  const normalize = (value?: string) => (value ?? "")
+    .trim()
+    .replace(/[\\/]+$/, "")
+    .replace(/\//g, "\\")
+    .toLowerCase();
+  return normalize(left) === normalize(right);
 }
 
 function defaults(): ConnectionSettings {
@@ -141,7 +150,7 @@ function normalizeCatalog(raw: unknown): ModelOption[] | undefined {
   return result.length ? result : undefined;
 }
 
-export function normalizeProvider(raw: Partial<LlmProvider> | null | undefined, index = 0): LlmProvider {
+export function normalizeProvider(raw: Partial<LlmProvider> | null | undefined): LlmProvider {
   const fallback = createDefaultProvider(makeId());
   const id = typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : fallback.id;
   const protocol = isLlmProtocol(raw?.protocol) ? raw.protocol : "openai-completions";
@@ -218,7 +227,7 @@ export function normalizeConnections(raw: unknown): ConnectionSettings {
   let selectedModel: SelectedModel | null;
 
   if (isV2 && hasProviders) {
-    providers = (obj.providers as unknown[]).map((item, index) => normalizeProvider(item as Partial<LlmProvider>, index));
+    providers = (obj.providers as unknown[]).map(item => normalizeProvider(item as Partial<LlmProvider>));
     if (!providers.length) {
       const migrated = migrateV1Model(obj.model as Partial<OpenAICompatibleConfig> | undefined);
       providers = migrated.providers;
@@ -254,7 +263,7 @@ export function connectionsFromProject(project: Project): ConnectionSettings {
   const providers = (project.providers?.length
     ? project.providers
     : migrateV1Model(project.model).providers
-  ).map((p, i) => normalizeProvider(p, i));
+  ).map(p => normalizeProvider(p));
   const selectedModel = repairSelectedModel(providers, project.selectedModel ?? (
     project.model?.model ? { providerId: providers[0]?.id ?? LEGACY_PROVIDER_ID, model: project.model.model } : null
   ));
@@ -297,12 +306,8 @@ function saveBrowserConnections(conn: ConnectionSettings) {
 
 export async function loadWorkspaceConnections(root?: string): Promise<ConnectionSettings | null> {
   if (root && isDesktop()) {
-    try {
-      const payload = await invoke<unknown | null>("load_workspace_connections", { root });
-      return payload ? normalizeConnections(payload) : null;
-    } catch {
-      // Missing or unreadable desktop configuration falls back to defaults.
-    }
+    const payload = await invoke<unknown | null>("load_workspace_connections", { root });
+    return payload ? normalizeConnections(payload) : null;
   }
   if (!isDesktop()) return loadBrowserConnections();
   return null;

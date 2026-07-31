@@ -30,6 +30,46 @@ fn valid_quality(quality: &str) -> Result<(), String> {
     }
 }
 
+fn search_tokens(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for token in segmented(query).split_whitespace() {
+        let token = token.replace('"', "");
+        if !token.is_empty() && !tokens.contains(&token) {
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
+fn match_expression(columns: &[&str], tokens: &[String], joiner: &str) -> String {
+    tokens
+        .iter()
+        .map(|token| {
+            let alternatives = columns
+                .iter()
+                .map(|column| format!("{column} : (\"{token}\")"))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            format!("({alternatives})")
+        })
+        .collect::<Vec<_>>()
+        .join(joiner)
+}
+
+fn search_excerpt(content: &str, tokens: &[String]) -> String {
+    let chars = content.chars().collect::<Vec<_>>();
+    let match_char = tokens
+        .iter()
+        .filter_map(|token| content.find(token).map(|byte| content[..byte].chars().count()))
+        .min()
+        .unwrap_or(0);
+    let start = match_char.saturating_sub(70);
+    let end = (start + 220).min(chars.len());
+    let prefix = if start > 0 { "…" } else { "" };
+    let suffix = if end < chars.len() { "…" } else { "" };
+    format!("{prefix}{}{suffix}", chars[start..end].iter().collect::<String>().replace('\n', " "))
+}
+
 pub(in crate::knowledge) fn classify_documents(
     workspace: &WorkspacePaths,
     candidates: &[(String, String)],
@@ -166,11 +206,10 @@ pub(in crate::knowledge) fn search(
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-    let token_expression = segmented(trimmed)
-        .split_whitespace()
-        .map(|token| format!("\"{}\"", token.replace('"', "")))
-        .collect::<Vec<_>>()
-        .join(" AND ");
+    let query_tokens = search_tokens(trimmed);
+    if query_tokens.is_empty() {
+        return Ok(Vec::new());
+    }
     let requested = fields.unwrap_or_else(|| {
         vec![
             "documentTitle".into(),
@@ -190,22 +229,19 @@ pub(in crate::knowledge) fn search(
     if columns.is_empty() {
         return Ok(Vec::new());
     }
-    let tokens = columns
-        .iter()
-        .map(|column| format!("{column} : ({token_expression})"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
+    let strict_match = match_expression(&columns, &query_tokens, " AND ");
+    let relaxed_match = match_expression(&columns, &query_tokens, " OR ");
     let qualities = qualities.unwrap_or_else(|| vec!["good".into(), "normal".into()]);
     let include_good = qualities.iter().any(|quality| quality == "good");
     let include_normal = qualities.iter().any(|quality| quality == "normal");
     let include_bad = qualities.iter().any(|quality| quality == "bad");
     let db = knowledge_db(workspace)?;
     let sql = "SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')) ORDER BY CASE c.quality WHEN 'good' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,score,c.position LIMIT ?6";
-    let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(
+    let run = |expression: &str| -> Result<Vec<KnowledgeSearchResult>, String> {
+        let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(
             params![
-                tokens,
+                expression,
                 trimmed,
                 include_good,
                 include_normal,
@@ -214,7 +250,7 @@ pub(in crate::knowledge) fn search(
             ],
             |row| {
                 let chunk = chunk_from_row(row)?;
-                let excerpt = chunk.content.replace('\n', " ").chars().take(220).collect();
+                let excerpt = search_excerpt(&chunk.content, &query_tokens);
                 let matched_section_id = chunk.section_id.clone();
                 let level: i64 = row.get(12)?;
                 let parent_id: Option<String> = row.get(13)?;
@@ -229,9 +265,14 @@ pub(in crate::knowledge) fn search(
                     parent_id,
                 })
             },
-        )
-        .map_err(|e| e.to_string())?;
-    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+        ).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    };
+    let strict = run(&strict_match)?;
+    if !strict.is_empty() || strict_match == relaxed_match {
+        return Ok(strict);
+    }
+    run(&relaxed_match)
 }
 
 pub(in crate::knowledge) fn section_scope(

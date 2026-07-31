@@ -1,4 +1,4 @@
-import type { SourceRecord } from "../types";
+import type { SourceRecord } from "../core/types";
 import type { AgentMessage } from "./protocol";
 import type { AgentConversation } from "./conversationStore";
 import type { ProjectMemory } from "./memoryService";
