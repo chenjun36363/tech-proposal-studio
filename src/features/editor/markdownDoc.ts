@@ -87,6 +87,43 @@ export function sectionBody(markdown: string, heading: MdHeading): string {
   return markdown.slice(heading.start, heading.end).replace(/\s+$/, "");
 }
 
+/**
+ * Locate the same logical heading after a Markdown mutation changed its generated slug ID.
+ * Prefer its exact source position (section edits), then line number (renumbering), and
+ * finally the same occurrence of its unnumbered title (for inserted document titles).
+ */
+export function remapHeadingAfterMarkdownChange(
+  beforeMarkdown: string,
+  afterMarkdown: string,
+  headingId: string,
+): MdHeading | undefined {
+  const beforeHeadings = parseMarkdownHeadings(beforeMarkdown);
+  const previous = beforeHeadings.find(heading => heading.id === headingId);
+  if (!previous) return undefined;
+
+  const afterHeadings = parseMarkdownHeadings(afterMarkdown);
+  const structureCountUnchanged = beforeHeadings.length === afterHeadings.length;
+  const samePosition = afterHeadings.find(heading =>
+    heading.start === previous.start
+    && heading.line === previous.line
+    && (heading.level === previous.level || structureCountUnchanged)
+  );
+  if (samePosition) return samePosition;
+
+  const sameLine = afterHeadings.find(heading =>
+    heading.line === previous.line
+    && (heading.level === previous.level || structureCountUnchanged)
+  );
+  if (sameLine) return sameLine;
+
+  const titleKey = stripHeadingPrefix(previous.title);
+  const occurrence = beforeHeadings
+    .slice(0, beforeHeadings.indexOf(previous) + 1)
+    .filter(heading => stripHeadingPrefix(heading.title) === titleKey)
+    .length - 1;
+  return afterHeadings.filter(heading => stripHeadingPrefix(heading.title) === titleKey)[occurrence];
+}
+
 export interface ShiftHeadingSectionResult {
   markdown: string;
   headingId: string;

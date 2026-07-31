@@ -139,9 +139,13 @@ export function ModelSelect({
         id={id}
         className="model-select"
         disabled
-        value=""
+        value={currentEntry ? "selected" : ""}
       >
-        <option value="">{allEntries.length === 0 ? "暂无可用模型" : "选择模型…"}</option>
+        <option value={currentEntry ? "selected" : ""}>
+          {currentEntry
+            ? `${currentEntry.providerName} / ${currentEntry.model}`
+            : allEntries.length === 0 ? "暂无可用模型" : "选择模型…"}
+        </option>
       </select>
     );
   }

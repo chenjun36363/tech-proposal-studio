@@ -5,6 +5,7 @@ use crate::knowledge::{
     KnowledgeSectionScope, WorkspacePaths,
 };
 use rusqlite::{params, OptionalExtension, Row};
+use std::collections::{HashMap, HashSet};
 
 fn chunk_from_row(row: &Row<'_>) -> rusqlite::Result<KnowledgeChunk> {
     Ok(KnowledgeChunk {
@@ -31,11 +32,26 @@ fn valid_quality(quality: &str) -> Result<(), String> {
 }
 
 fn search_tokens(query: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
+    const STOP_WORDS: &[&str] = &[
+        "请", "请问", "帮", "帮我", "我", "一下", "查", "查询", "检索", "搜索", "找", "查找",
+        "如何", "怎么", "怎样", "什么", "哪些", "哪个", "是否", "能否", "可以", "需要",
+        "保障", "保证", "实现", "采用",
+        "关于", "有关", "相关", "方面", "内容", "资料", "信息", "方案", "说明", "介绍",
+        "的", "了", "和", "与", "或", "及", "以及", "并", "在", "对", "中", "为", "是",
+    ];
+    let mut tokens: Vec<String> = Vec::new();
     for token in segmented(query).split_whitespace() {
-        let token = token.replace('"', "");
-        if !token.is_empty() && !tokens.contains(&token) {
+        let token = token
+            .trim_matches(|character: char| character.is_whitespace() || character.is_ascii_punctuation() || "，。！？；：、（）【】《》“”‘’".contains(character))
+            .replace('"', "");
+        if !token.is_empty()
+            && !STOP_WORDS.contains(&token.as_str())
+            && !tokens.iter().any(|existing| existing.eq_ignore_ascii_case(&token))
+        {
             tokens.push(token);
+            if tokens.len() == 8 {
+                break;
+            }
         }
     }
     tokens
@@ -68,6 +84,37 @@ fn search_excerpt(content: &str, tokens: &[String]) -> String {
     let prefix = if start > 0 { "…" } else { "" };
     let suffix = if end < chars.len() { "…" } else { "" };
     format!("{prefix}{}{suffix}", chars[start..end].iter().collect::<String>().replace('\n', " "))
+}
+
+fn token_match_score(result: &KnowledgeSearchResult, tokens: &[String]) -> f64 {
+    if tokens.is_empty() {
+        return 0.0;
+    }
+    let document = result.chunk.document_title.to_lowercase();
+    let heading = result.chunk.heading_path.to_lowercase();
+    let content = result.chunk.content.to_lowercase();
+    let mut matched = 0usize;
+    let mut field_bonus = 0.0;
+    for token in tokens {
+        let token = token.to_lowercase();
+        let in_document = document.contains(&token);
+        let in_heading = heading.contains(&token);
+        let in_content = content.contains(&token);
+        if in_document || in_heading || in_content {
+            matched += 1;
+        }
+        if in_document {
+            field_bonus += 1.2;
+        }
+        if in_heading {
+            field_bonus += 1.0;
+        }
+        if in_content {
+            field_bonus += 0.2;
+        }
+    }
+    let coverage = matched as f64 / tokens.len() as f64;
+    coverage * 2.0 + field_bonus
 }
 
 pub(in crate::knowledge) fn classify_documents(
@@ -236,8 +283,10 @@ pub(in crate::knowledge) fn search(
     let include_normal = qualities.iter().any(|quality| quality == "normal");
     let include_bad = qualities.iter().any(|quality| quality == "bad");
     let db = knowledge_db(workspace)?;
-    let sql = "SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')) ORDER BY CASE c.quality WHEN 'good' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,score,c.position LIMIT ?6";
-    let run = |expression: &str| -> Result<Vec<KnowledgeSearchResult>, String> {
+    let requested_limit = limit.unwrap_or(30).min(100);
+    let candidate_limit = requested_limit.saturating_mul(4).clamp(20, 100);
+    let sql = "SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END+CASE c.quality WHEN 'good' THEN -0.6 WHEN 'bad' THEN 2.5 ELSE 0.0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')) ORDER BY score,c.position LIMIT ?6";
+    let run = |expression: &str, stage_penalty: f64| -> Result<Vec<KnowledgeSearchResult>, String> {
         let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(
             params![
@@ -246,7 +295,7 @@ pub(in crate::knowledge) fn search(
                 include_good,
                 include_normal,
                 include_bad,
-                limit.unwrap_or(30).min(100) as i64
+                candidate_limit as i64
             ],
             |row| {
                 let chunk = chunk_from_row(row)?;
@@ -254,7 +303,7 @@ pub(in crate::knowledge) fn search(
                 let matched_section_id = chunk.section_id.clone();
                 let level: i64 = row.get(12)?;
                 let parent_id: Option<String> = row.get(13)?;
-                Ok(KnowledgeSearchResult {
+                let mut result = KnowledgeSearchResult {
                     chunk,
                     excerpt,
                     score: row.get(11)?,
@@ -263,16 +312,57 @@ pub(in crate::knowledge) fn search(
                     level,
                     can_move_up: level > 1 && parent_id.is_some(),
                     parent_id,
-                })
+                };
+                result.score += stage_penalty - token_match_score(&result, &query_tokens);
+                Ok(result)
             },
         ).map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     };
-    let strict = run(&strict_match)?;
+
+    let finish = |mut results: Vec<KnowledgeSearchResult>| {
+        results.sort_by(|left, right| {
+            left.score
+                .total_cmp(&right.score)
+                .then_with(|| left.chunk.position.cmp(&right.chunk.position))
+        });
+        results.truncate(requested_limit);
+        results
+    };
+    let strict = run(&strict_match, 0.0)?;
     if !strict.is_empty() || strict_match == relaxed_match {
-        return Ok(strict);
+        return Ok(finish(strict));
     }
-    run(&relaxed_match)
+
+    if (3..=8).contains(&query_tokens.len()) {
+        let mut seen_expressions = HashSet::new();
+        let mut merged = HashMap::<String, KnowledgeSearchResult>::new();
+        for omitted in 0..query_tokens.len() {
+            let subset = query_tokens
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != omitted)
+                .map(|(_, token)| token.clone())
+                .collect::<Vec<_>>();
+            let expression = match_expression(&columns, &subset, " AND ");
+            if !seen_expressions.insert(expression.clone()) {
+                continue;
+            }
+            for result in run(&expression, 0.75)? {
+                match merged.get_mut(&result.chunk.id) {
+                    Some(existing) if result.score < existing.score => *existing = result,
+                    None => {
+                        merged.insert(result.chunk.id.clone(), result);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !merged.is_empty() {
+            return Ok(finish(merged.into_values().collect()));
+        }
+    }
+    Ok(finish(run(&relaxed_match, 2.5)?))
 }
 
 pub(in crate::knowledge) fn section_scope(
@@ -519,4 +609,27 @@ pub(in crate::knowledge) fn replace_document_location(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::search_tokens;
+
+    #[test]
+    fn normalizes_natural_language_search_tokens() {
+        let tokens = search_tokens("请帮我查一下如何保障支付接口幂等和灾备");
+        assert!(tokens.iter().any(|token| token == "支付"));
+        assert!(tokens.iter().any(|token| token == "接口"));
+        assert!(tokens.concat().contains("幂等"));
+        assert!(tokens.concat().contains("灾备"), "{tokens:?}");
+        assert!(!tokens.iter().any(|token| matches!(token.as_str(), "请" | "如何" | "保障" | "和")));
+    }
+
+    #[test]
+    fn deduplicates_and_limits_search_tokens() {
+        let tokens = search_tokens("\"OAuth\" OAuth PKCE token refresh client server callback redirect security protocol standard");
+        assert_eq!(tokens.iter().filter(|token| token.eq_ignore_ascii_case("OAuth")).count(), 1);
+        assert!(tokens.len() <= 8);
+        assert!(tokens.iter().any(|token| token == "PKCE"));
+    }
 }

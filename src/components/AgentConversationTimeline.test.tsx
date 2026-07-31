@@ -26,6 +26,21 @@ describe("AgentConversationTimeline", () => {
     expect(html.indexOf("检索知识库")).toBeLessThan(html.indexOf("已经找到部署约束"));
   });
 
+  it("uses the same Chinese tool labels as the settings catalog", () => {
+    const messages: AgentMessage[] = [
+      { role: "assistant", content: null, tool_calls: [{ id: "memory-read", type: "function", function: { name: "read_memory", arguments: '{"id":"memory-1"}' } }] },
+      { role: "tool", tool_call_id: "memory-read", content: "# 部署约束\n\n系统必须离线部署" },
+      { role: "assistant", content: null, tool_calls: [{ id: "section-read", type: "function", function: { name: "read_proposal_section", arguments: '{"heading_id":"部署"}' } }] },
+      { role: "tool", tool_call_id: "section-read", content: "## 部署\n\n正文" },
+    ];
+
+    const html = renderToStaticMarkup(<AgentConversationTimeline messages={messages} events={[]} running={false} />);
+    expect(html).toContain("读取长期记忆");
+    expect(html).toContain("读取指定章节");
+    expect(html).not.toContain("读取项目记忆");
+    expect(html).not.toContain(">read_proposal_section<");
+  });
+
   it("renders agent Markdown as formatted HTML", () => {
     const messages: AgentMessage[] = [{
       role: "assistant",

@@ -18,6 +18,7 @@ import {
   deleteSection,
   fileNameFromTitle,
   parseMarkdownHeadings,
+  remapHeadingAfterMarkdownChange,
   replaceSection,
   sectionBody,
   shiftHeadingSectionLevels,
@@ -298,7 +299,10 @@ export default function App() {
 
   const setActiveContent = (next: string) => {
     if (selectedHeading && editorMode === "section") {
-      setMarkdown(replaceSection(markdown, selectedHeading, next));
+      const nextMarkdown = replaceSection(markdown, selectedHeading, next);
+      const nextHeading = remapHeadingAfterMarkdownChange(markdown, nextMarkdown, selectedHeading.id);
+      if (nextHeading) setSelectedHeadingId(nextHeading.id);
+      setMarkdown(nextMarkdown);
     } else {
       setMarkdown(next);
     }
@@ -379,7 +383,15 @@ export default function App() {
       notify("标题编号已是最新");
       return;
     }
+    const selection = sourceEditorRef.current?.getSelection();
+    const nextHeading = selectedHeading
+      ? remapHeadingAfterMarkdownChange(markdown, next, selectedHeading.id)
+      : undefined;
     setMarkdown(next);
+    if (nextHeading) setSelectedHeadingId(nextHeading.id);
+    if (selection) {
+      requestAnimationFrame(() => sourceEditorRef.current?.setSelection(selection.start, selection.end));
+    }
     notify(result.titleCreated ? "已生成全文标题并重新编号" : "已按所选格式重新编号全部标题");
   };
 
@@ -892,7 +904,15 @@ export default function App() {
             </div>
           </div>
         </div>
-        {!gitDiffActive && <div className="heading-toolbar" title="按选定格式整理全文标题层级和编号">
+        {!gitDiffActive && <div
+          className="heading-toolbar"
+          title="按选定格式整理全文标题层级和编号"
+          onMouseDown={event => {
+            if (!(event.target instanceof Element) || !event.target.closest("button:not(:disabled)")) return;
+            event.preventDefault();
+            sourceEditorRef.current?.focus();
+          }}
+        >
           <div className="heading-toolbar-row">
             <label className="heading-style-select" title="选择重编号时使用的标题层级和章号格式">
               <span>格式</span>

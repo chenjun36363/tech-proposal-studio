@@ -15,6 +15,7 @@ import xml from "highlight.js/lib/languages/xml";
 import markedKatex from "marked-katex-extension";
 import { markedHighlight } from "marked-highlight";
 import type { AgentEvent, AgentMessage, AgentToolCall } from "../agent/protocol";
+import { agentToolLabel } from "../agent/toolCatalog";
 
 const agentMarked = new Marked({ gfm: true, breaks: true });
 Object.entries({ bash, css, html: xml, javascript, js: javascript, json, markdown, md: markdown, rust, sql, typescript, ts: typescript }).forEach(([name, language]) => hljs.registerLanguage(name, language));
@@ -34,40 +35,6 @@ function enhanceCodeBlocks(html: string) {
     const long = code.split("\n").length > 12;
     return `<div class="agent-code-block${long ? " collapsible" : ""}"><header><span>${language}</span><div><button type="button" data-agent-code-action="copy">复制</button>${long ? '<button type="button" data-agent-code-action="toggle">展开</button>' : ""}</div></header><pre><code class="${className}">${code}</code></pre></div>`;
   });
-}
-
-const TOOL_LABELS: Record<string, string> = {
-  read_current_section: "读取当前章节",
-  get_proposal_outline: "读取方案目录",
-  web_search: "联网搜索",
-  read_web_page: "阅读网页",
-  search_knowledge: "检索知识库",
-  read_knowledge: "阅读知识章节",
-  search_memory: "检索项目记忆",
-  read_memory: "读取项目记忆",
-  remember_project_fact: "保存项目记忆",
-  write_todo: "更新执行计划",
-  ask_user: "向用户提问",
-  propose_section_update: "提交章节修改",
-  git_status: "读取 Git 状态",
-  git_diff: "读取 Git 差异",
-  git_log: "读取 Git 历史",
-  git_show_commit: "读取提交详情",
-  git_list_branches: "读取 Git 分支",
-  git_stage: "暂存 Git 变更",
-  git_unstage: "取消 Git 暂存",
-  git_commit: "创建 Git 提交",
-  git_create_branch: "创建 Git 分支",
-  git_switch_branch: "切换 Git 分支",
-  git_stash_push: "保存 Git stash",
-  git_stash_pop: "应用 Git stash",
-  git_fetch: "获取远程更新",
-  git_pull: "拉取远程更新",
-  git_push: "推送 Git 分支",
-};
-
-function toolLabel(name: string) {
-  return TOOL_LABELS[name] ?? name;
 }
 
 function resultPreview(content: string) {
@@ -235,7 +202,7 @@ function ToolStep({ call, content, data, pending = false, isError = false }: {
     <summary>
       <i>{pending ? <LoaderCircle className="spinning" size={12} /> : isError ? <X size={12} /> : <Check size={12} />}</i>
       <div>
-        <b>{isTodo ? <><ListChecks size={12} />执行计划</> : toolLabel(call.name)}</b>
+        <b>{isTodo ? <><ListChecks size={12} />{agentToolLabel(call.name)}</> : agentToolLabel(call.name)}</b>
         <span>{isTodo && todos.length ? `${completedTodos}/${todos.length} 已完成` : pending ? "正在执行" : resultPreview(content ?? "")}</span>
       </div>
       <ChevronRight size={12} />
@@ -327,4 +294,3 @@ export function AgentConversationTimeline({ messages, events, running }: { messa
     {!hasHistory && !running && null}
   </>;
 }
-

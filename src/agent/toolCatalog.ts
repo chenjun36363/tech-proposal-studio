@@ -78,4 +78,10 @@ export const agentToolCatalog: AgentToolCatalogItem[] = [
   { name: "run_powershell", label: "运行 PowerShell", description: "执行 PowerShell 脚本", group: "system" },
 ];
 
+export const agentToolLabels = new Map(agentToolCatalog.map(tool => [tool.name, tool.label] as const));
+
+export function agentToolLabel(name: string): string {
+  return agentToolLabels.get(name) ?? name;
+}
+
 export const agentToolNames = new Set(agentToolCatalog.map(tool => tool.name));

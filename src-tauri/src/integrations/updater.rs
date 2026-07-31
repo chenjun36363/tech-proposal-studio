@@ -3,7 +3,7 @@ use tauri::{AppHandle, Url};
 use tauri_plugin_updater::UpdaterExt;
 
 const DEFAULT_UPDATE_ENDPOINT: &str =
-    "https://gitea.newxuu.top:1888/chen/tech-proposal-studio/releases/latest/download/latest.json";
+    "https://github.com/chenjun36363/tech-proposal-studio/releases/latest/download/latest.json";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

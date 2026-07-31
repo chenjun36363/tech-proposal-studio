@@ -28,6 +28,57 @@ describe("Markdown editor selection capture", () => {
     act(() => root.unmount());
   });
 
+  it("aligns the highlight mirror when matches appear after the source has scrolled", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const props = { value: "第一行\n第二行 LIMS", onChange: () => undefined };
+    act(() => root.render(createElement(MarkdownSourceEditor, props)));
+    const textarea = host.querySelector("textarea")!;
+    textarea.scrollLeft = 12;
+    textarea.scrollTop = 80;
+
+    act(() => root.render(createElement(MarkdownSourceEditor, {
+      ...props,
+      highlights: [{ start: 8, end: 12 }],
+    })));
+
+    expect(host.querySelector<HTMLElement>(".md-source-highlight > div")?.style.transform)
+      .toBe("translate3d(-12px, -80px, 0)");
+    act(() => root.unmount());
+  });
+
+  it("keeps the caret after typing a second heading marker when the section value shrinks", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onChange = vi.fn();
+    const fullSection = "# 标题\n\n正文\n\n## 下一章\n\n后续";
+
+    act(() => root.render(createElement(MarkdownSourceEditor, { value: fullSection, onChange })));
+    const textarea = host.querySelector("textarea")!;
+    act(() => {
+      textarea.focus();
+      textarea.setSelectionRange(1, 1);
+      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setValue.call(textarea, `#${textarea.value}`);
+      textarea.setSelectionRange(2, 2);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith(`##${fullSection.slice(1)}`);
+
+    act(() => root.render(createElement(MarkdownSourceEditor, { value: "## 标题", onChange })));
+
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(2);
+    expect(textarea.selectionEnd).toBe(2);
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
   it("reports a non-empty selection before focus moves to the Agent input", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const host = document.createElement("div");

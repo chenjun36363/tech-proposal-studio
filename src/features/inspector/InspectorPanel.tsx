@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   Info,
   Layers3,
   Minus,
@@ -228,6 +229,11 @@ export function InspectorPanel({
     });
   };
 
+  const copyText = async (text: string, message: string) => {
+    try { await navigator.clipboard.writeText(text); notify(message); }
+    catch { notify("复制失败，请检查剪贴板权限"); }
+  };
+
   const addKnowledgeScopeToContext = (scope: KnowledgeSectionScope) => {
     const chunk = chunkFromScope(scope);
     const source: SourceRecord = {
@@ -397,8 +403,9 @@ export function InspectorPanel({
             {results.map((result, index) => <article key={result.chunk.id}>
               <div className="knowledge-result-title"><span className="knowledge-result-level">H{result.scope.level}</span><b onClick={() => previewKnowledgeScope(result.scope)}>{result.scope.title}{result.scope.sectionCount > 1 ? `（含 ${result.scope.sectionCount} 个章节）` : ""}</b><span className="knowledge-path-hint" title={`H${result.scope.level} · ${result.scope.headingPath}`} aria-label={`章节路径：H${result.scope.level} · ${result.scope.headingPath}`}><Info size={13} /></span><em className={`knowledge-quality-badge ${result.chunk.quality}`}>{result.chunk.quality === "good" ? "优质" : result.chunk.quality === "bad" ? "劣质" : "普通"}</em></div>
               <p>{result.scope.content.replace(/^#{1,6}\s+.*\n*/, "").replace(/\s+/g, " ").slice(0, 220) || "（该章节暂无正文）"}</p>
+              <div className="knowledge-result-source" title={`来源文档：${result.chunk.documentTitle}`}><BookOpen size={11} aria-hidden="true" /><span>来源：{result.chunk.documentTitle}</span></div>
               <div className="knowledge-result-footer">
-                <div className="source-item-actions"><button onClick={() => previewKnowledgeScope(result.scope)}>预览</button><button className={block.sourceRefs.includes(result.scope.id) ? "context-added" : ""} onClick={() => addKnowledgeScopeToContext(result.scope)}>{block.sourceRefs.includes(result.scope.id) ? <><Check size={12} />已加入上下文</> : <><Layers3 size={12} />加入上下文</>}</button><small className="knowledge-result-char-count">{result.scope.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div>
+                <div className="source-item-actions"><button onClick={() => previewKnowledgeScope(result.scope)}>预览</button><button onClick={() => void copyText(result.scope.content, `已复制“${result.scope.title}”`)}><Copy size={12} />复制</button><button className={block.sourceRefs.includes(result.scope.id) ? "context-added" : ""} onClick={() => addKnowledgeScopeToContext(result.scope)}>{block.sourceRefs.includes(result.scope.id) ? <><Check size={12} />已加入上下文</> : <><Layers3 size={12} />加入上下文</>}</button><small className="knowledge-result-char-count">{result.scope.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div>
                 <div className="knowledge-scope-actions" role="group" aria-label="调整章节范围">
                   <IconButton title="上移到父章节" disabled={!result.scope.canMoveUp} onClick={() => void moveResultUp(index)}><ChevronUp size={13} /></IconButton>
                   <IconButton title="返回上次范围" disabled={!result.scopeHistory.length} onClick={() => moveResultDown(index)}><ChevronDown size={13} /></IconButton>

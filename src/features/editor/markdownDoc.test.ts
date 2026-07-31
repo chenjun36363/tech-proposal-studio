@@ -10,6 +10,7 @@ import {
   insertSection,
   moveSection,
   parseMarkdownHeadings,
+  remapHeadingAfterMarkdownChange,
   renumberHeadings,
   replaceSection,
   replaceSelection,
@@ -22,6 +23,35 @@ describe("Markdown word count", () => {
   it("counts visible text without syntax or whitespace", () => {
     expect(countMarkdownWords("# 标题\n\n**正文** [链接](https://example.com)\n\n- 列表"))
       .toBe("标题正文链接列表".length);
+  });
+});
+
+describe("heading selection remapping", () => {
+  it("keeps the edited non-first section selected when its title changes", () => {
+    const before = "# 方案\n\n## 第1章 背景\n\n正文\n\n## 第2章 架构\n\n架构正文";
+    const selected = parseMarkdownHeadings(before)[2];
+    const after = replaceSection(before, selected, "## 第2章 总体架构\n\n架构正文");
+
+    const remapped = remapHeadingAfterMarkdownChange(before, after, selected.id);
+
+    expect(remapped?.title).toBe("第2章 总体架构");
+    expect(remapped?.start).toBe(selected.start);
+  });
+
+  it("finds the same heading after renumbering changes offsets before it", () => {
+    const before = "# 方案\n\n## 第9章 很长的背景标题\n\n正文\n\n## 第8章 架构\n\n架构正文";
+    const selected = parseMarkdownHeadings(before)[2];
+    const after = renumberHeadings(before);
+
+    expect(remapHeadingAfterMarkdownChange(before, after, selected.id)?.title).toBe("第2章 架构");
+  });
+
+  it("does not confuse an inserted document title with the previously selected chapter", () => {
+    const before = "## 背景\n\n正文\n\n## 架构\n\n架构正文";
+    const selected = parseMarkdownHeadings(before)[0];
+    const after = alignHeadingsToRules(before, "项目方案").markdown;
+
+    expect(remapHeadingAfterMarkdownChange(before, after, selected.id)?.title).toBe("第1章 背景");
   });
 });
 

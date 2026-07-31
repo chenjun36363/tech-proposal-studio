@@ -32,11 +32,19 @@ export function normalizeMemoryToolArgs(args: Record<string, unknown>): { title:
   return { title, content, memoryType };
 }
 
+export function normalizeMemoryReadId(args: Record<string, unknown>): string {
+  const nested = [args.memory, args.item, args.result].find(value => value && typeof value === "object" && !Array.isArray(value)) as Record<string, unknown> | undefined;
+  return text(
+    args.id ?? args.memory_id ?? args.memoryId ?? nested?.id ?? nested?.memory_id ?? nested?.memoryId,
+    "id",
+  );
+}
+
 export const proposalAgentSystemPrompt = `你是“构案”中的软件技术方案 Agent。你的职责是基于当前方案和明确提供的资料，完成可审计的方案写作任务。
 
 工作规则：
 1. 根据任务先读取当前章节、指定章节或用户选区；需要理解结构时调用 get_proposal_outline。
-2. 需要事实依据时，优先使用用户明确加入上下文的资料；仍不足时用 search_knowledge 检索知识库，再用 read_knowledge 阅读相关章节。
+2. 需要事实依据时，优先使用用户明确加入上下文的资料；仍不足时用 search_knowledge 检索知识库。搜索结果已包含可直接引用的正文证据，仅在正文标记为截断或证据不足时再用 read_knowledge 扩读章节。
 3. 规划工具可用时，首轮先用 write_todo 列出完整计划。每次调用都必须提交完整清单；始终仅有一个 in_progress，完成一步后立即更新，再开始下一步。
 4. 正文修改只能通过可用的 propose_* 工具提交，禁止声称已经直接写入文件。
 5. 改写章节使用 propose_section_update，并传入刚由 get_proposal_outline 返回的 heading_id；改写非空选区使用 propose_selection_update；新增、删除或移动章节分别使用 propose_section_insert、propose_section_delete、propose_section_move。
@@ -44,7 +52,7 @@ export const proposalAgentSystemPrompt = `你是“构案”中的软件技术�
 7. 接受插入、删除、移动或标题修改后，章节 ID 可能变化；继续操作前必须重新调用 get_proposal_outline，禁止复用旧 ID。不要声称系统已自动重编号；Agent 修改不会改写用户已有的标题编号格式。
 8. 不编造资料中不存在的事实；缺少关键输入时在最终回复中明确列出待确认项。
 9. 提交修改后，用一句简短总结说明改动依据，不要重复输出整篇正文。
-10. 用户明确加入的资料已直接提供在系统上下文中；其他知识先 search_knowledge，再 read_knowledge。
+10. 用户明确加入的资料已直接提供在系统上下文中。search_knowledge 的 query 使用 2～6 个核心名词或标准号，不要提交完整问题；无结果时最多改写关键词重试一次，禁止重复同一查询。
 11. 联网搜索可用时，仅在本地资料和知识库不足以回答时调用 web_search。需要搜索时直接调用工具，不要在回复文本中询问用户是否同意查询。搜索次数不得超过系统配置的单任务上限，每次任务最多阅读 3 个网页；优先选择政府、标准组织和厂商官方来源，达到足够依据后立即停止检索并完成用户任务，不要遍历全部结果或重复查询。需要依据网页正文时调用 read_web_page，不能只根据搜索摘要下结论。
 12. 只有跨会话仍有价值的事实、偏好或决策，才可调用 remember_project_fact 提出待审核记忆；不得声称记忆已被用户确认。
 13. 缺少会实质改变结果的关键上下文，且无法从当前对话、方案或可用资料中确定时，调用 ask_user。问题必须具体，并分别给出 A 首选推荐、B 更激进、C 更保守的方案概述；不要用普通回复代替工具提问，也不要询问可自行查明的信息。`;
@@ -59,6 +67,44 @@ export interface AgentWorkspaceRuntime {
   reload: (path?: string) => Promise<AgentDocumentState>;
   rename: (name: string, path?: string) => Promise<AgentDocumentState>;
   delete: (path: string, mode: "trash" | "permanent", currentPath?: string) => Promise<AgentDocumentState | null>;
+}
+
+const KNOWLEDGE_ITEM_MAX_CHARS = 2500;
+const KNOWLEDGE_RESULT_MAX_CHARS = 12000;
+
+function knowledgeToolError(code: string, message: string, retryable: boolean, details?: Record<string, unknown>) {
+  const payload = { error: { code, message, retryable, ...details } };
+  return { content: JSON.stringify(payload, null, 2), data: payload, isError: code !== "NO_MATCH" };
+}
+
+function knowledgeSearchContent(results: Awaited<ReturnType<typeof searchKnowledge>>) {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const item of results) {
+    const source = item.chunk.content;
+    let content = source.slice(0, KNOWLEDGE_ITEM_MAX_CHARS);
+    let truncated = source.length > content.length;
+    let row = {
+      sectionId: item.scopeSectionId,
+      document: item.chunk.documentTitle,
+      heading: item.chunk.headingPath,
+      content,
+      score: item.score,
+      quality: item.chunk.quality,
+      truncated,
+    };
+    let serialized = JSON.stringify([...rows, row], null, 2);
+    if (serialized.length > KNOWLEDGE_RESULT_MAX_CHARS) {
+      const overflow = serialized.length - KNOWLEDGE_RESULT_MAX_CHARS;
+      if (content.length <= overflow + 200) break;
+      content = content.slice(0, content.length - overflow - 1);
+      truncated = true;
+      row = { ...row, content, truncated };
+      serialized = JSON.stringify([...rows, row], null, 2);
+      if (serialized.length > KNOWLEDGE_RESULT_MAX_CHARS) break;
+    }
+    rows.push(row);
+  }
+  return { rows, content: JSON.stringify(rows, null, 2) };
 }
 
 export function buildEditorSelectionPrompt(selection: AgentEditorSelection): string {
@@ -292,22 +338,34 @@ export function createProposalToolRegistry(params: {
       },
     })
     .register({
-      definition: { type: "function", function: { name: "search_knowledge", description: "检索桌面工作区知识库。用于查找尚未手动加入上下文的资料。", parameters: objectSchema({ query: { type: "string", description: "检索关键词" }, limit: { type: "integer", minimum: 1, maximum: 10 } }, ["query"]) } },
+      definition: { type: "function", function: { name: "search_knowledge", description: "检索桌面工作区知识库并直接返回命中正文。query 应使用 2～6 个核心名词或标准号；无结果时最多改写一次。", parameters: objectSchema({ query: { type: "string", description: "2～6 个核心检索词，不要提交完整问题" }, limit: { type: "integer", minimum: 1, maximum: 10 } }, ["query"]) } },
       execute: async args => {
-        if (!project.workspace?.root) return { content: "当前项目尚未配置工作区，无法检索知识库。", isError: true };
+        if (!project.workspace?.root) return knowledgeToolError("WORKSPACE_NOT_CONFIGURED", "当前项目尚未配置工作区，无法检索知识库。", false);
         const query = text(args.query, "query");
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(10, Math.floor(args.limit))) : 5;
-        const results = await searchKnowledge(project.workspace, query, ["good", "normal"], undefined, limit);
-        const rows = results.map(item => ({ sectionId: item.scopeSectionId, document: item.chunk.documentTitle, heading: item.chunk.headingPath, excerpt: item.excerpt }));
-        return { content: rows.length ? JSON.stringify(rows, null, 2) : "知识库中没有匹配内容。", data: rows, isError: false };
+        try {
+          const results = await searchKnowledge(project.workspace, query, ["good", "normal"], undefined, limit);
+          if (!results.length) return knowledgeToolError("NO_MATCH", "知识库中没有匹配内容。请改用 2～6 个核心名词改写查询，且最多重试一次。", true, { query });
+          const formatted = knowledgeSearchContent(results);
+          return { content: formatted.content, data: formatted.rows, isError: false };
+        } catch (error) {
+          return knowledgeToolError("DATABASE_ERROR", error instanceof Error ? error.message : String(error), true, { query });
+        }
       },
     })
     .register({
-      definition: { type: "function", function: { name: "read_knowledge", description: "读取 search_knowledge 返回的知识库章节正文。", parameters: objectSchema({ section_id: { type: "string", description: "知识库章节 ID" } }, ["section_id"]) } },
+      definition: { type: "function", function: { name: "read_knowledge", description: "当 search_knowledge 正文被截断或证据不足时，读取其 sectionId 对应的完整章节范围。", parameters: objectSchema({ section_id: { type: "string", description: "search_knowledge 返回的 sectionId" } }, ["section_id"]) } },
       execute: async args => {
-        if (!project.workspace?.root) return { content: "当前项目尚未配置工作区，无法读取知识库。", isError: true };
-        const scope = await getKnowledgeSectionScope(project.workspace, text(args.section_id, "section_id"));
-        return { content: `# ${scope.documentTitle} / ${scope.headingPath}\n\n${scope.content}`, data: { sectionId: scope.id, documentId: scope.documentId }, isError: false };
+        if (!project.workspace?.root) return knowledgeToolError("WORKSPACE_NOT_CONFIGURED", "当前项目尚未配置工作区，无法读取知识库。", false);
+        const sectionId = text(args.section_id, "section_id");
+        try {
+          const scope = await getKnowledgeSectionScope(project.workspace, sectionId);
+          return { content: `# ${scope.documentTitle} / ${scope.headingPath}\n\n${scope.content}`, data: { sectionId: scope.id, documentId: scope.documentId }, isError: false };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const invalid = /不存在|not found|invalid/i.test(message);
+          return knowledgeToolError(invalid ? "INVALID_SECTION_ID" : "DATABASE_ERROR", message, !invalid, { sectionId });
+        }
       },
     })
     .register({
@@ -319,9 +377,9 @@ export function createProposalToolRegistry(params: {
       },
     })
     .register({
-      definition: { type: "function", function: { name: "read_memory", description: "根据记忆 ID 读取一条项目长期记忆的完整内容。", parameters: objectSchema({ id: { type: "string", description: "记忆 ID" } }, ["id"]) } },
+      definition: { type: "function", function: { name: "read_memory", description: "根据记忆 ID 读取一条项目长期记忆的完整内容。必须把 search_memory 或记忆目录返回的 id 原样传入。", parameters: objectSchema({ id: { type: "string", description: "search_memory 或记忆目录返回的记忆 ID" } }, ["id"]) } },
       execute: async args => {
-        const memory = await readProjectMemory(project, text(args.id, "id"));
+        const memory = await readProjectMemory(project, normalizeMemoryReadId(args));
         return { content: `# ${memory.title}\n\n${memory.content}`, data: memory, isError: false };
       },
     })

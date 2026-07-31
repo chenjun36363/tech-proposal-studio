@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { marked } from "marked";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isDesktop } from "../../services/runtime";
@@ -156,11 +156,22 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const composingRef = useRef(false);
+  const pendingInputSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const [draft, setDraft] = useState(value);
 
   useEffect(() => {
     if (!composingRef.current) setDraft(value);
   }, [value]);
+
+  useLayoutEffect(() => {
+    const selection = pendingInputSelectionRef.current;
+    const textarea = taRef.current;
+    if (!selection || !textarea || document.activeElement !== textarea) return;
+    const start = Math.min(selection.start, draft.length);
+    const end = Math.min(selection.end, draft.length);
+    textarea.setSelectionRange(start, end);
+    if (draft === value) pendingInputSelectionRef.current = null;
+  }, [draft, value]);
 
   useImperativeHandle(ref, () => ({
     getSelection: () => {
@@ -239,6 +250,17 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     return parts;
   }, [draft, highlights, activeHighlight]);
 
+  const syncHighlightScroll = () => {
+    const textarea = taRef.current;
+    const highlight = highlightRef.current;
+    if (!textarea || !highlight) return;
+    highlight.style.transform = `translate3d(${-textarea.scrollLeft}px, ${-textarea.scrollTop}px, 0)`;
+  };
+
+  useLayoutEffect(() => {
+    syncHighlightScroll();
+  }, [highlighted]);
+
   return (
     <div className="md-source-editor">
       {highlighted && <div className="md-source-highlight" aria-hidden="true"><div ref={highlightRef}>{highlighted}</div></div>}
@@ -251,6 +273,10 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
         wrap="soft"
         onChange={(e) => {
           const next = e.target.value;
+          pendingInputSelectionRef.current = {
+            start: e.target.selectionStart ?? next.length,
+            end: e.target.selectionEnd ?? next.length,
+          };
           setDraft(next);
           if (!composingRef.current) onChange(next);
         }}
@@ -258,6 +284,10 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
         onCompositionEnd={(e) => {
           composingRef.current = false;
           const next = e.currentTarget.value;
+          pendingInputSelectionRef.current = {
+            start: e.currentTarget.selectionStart ?? next.length,
+            end: e.currentTarget.selectionEnd ?? next.length,
+          };
           setDraft(next);
           onChange(next);
         }}
@@ -266,9 +296,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
           end: event.currentTarget.selectionEnd ?? 0,
         })}
         onPaste={(e) => void handlePaste(e)}
-        onScroll={event => {
-          if (highlightRef.current) highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
-        }}
+        onScroll={syncHighlightScroll}
       />
     </div>
   );

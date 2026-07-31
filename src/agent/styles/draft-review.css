@@ -30,7 +30,8 @@
 .agent-review-columns article.original .agent-review-scroll { background:hsl(var(--muted) / .13); }
 .agent-review-scroll pre { min-width:0; margin:0; padding:4px 22px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; color:hsl(var(--foreground) / .88); font:12px/1.8 ui-monospace,Consolas,monospace; }
 .agent-review-columns article.original pre { color:hsl(var(--muted-foreground)); }
-.agent-review-diff { min-width:100%; width:max-content; font:12px/22px ui-monospace,Consolas,monospace; }
+/* width:max-content 会让容器取"最宽不换行"宽度从而禁用换行，必须去掉；min-width:100% 保证差异行底色铺满容器 */
+.agent-review-diff { min-width:100%; font:12px/22px ui-monospace,Consolas,monospace; }
 .agent-review-diff-line { min-height:22px; display:grid; grid-template-columns:48px minmax(0,1fr); }
 .agent-review-diff-line .line-number { position:sticky; left:0; z-index:1; padding:0 10px 0 4px; border-right:1px solid hsl(var(--border) / .65); background:hsl(var(--background)); color:hsl(var(--muted-foreground) / .7); text-align:right; user-select:none; }
 .original .agent-review-diff-line .line-number { background:hsl(var(--muted)); }

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createProject } from "../core/data";
 import { searchWeb } from "../services/search";
-import { fetchKnowledgeWebPage } from "../features/knowledge/knowledge";
+import { fetchKnowledgeWebPage, getKnowledgeSectionScope, searchKnowledge } from "../features/knowledge/knowledge";
 import type { DocumentBlock } from "../core/types";
-import { buildEditorSelectionPrompt, createProposalToolRegistry, normalizeMemoryToolArgs } from "./proposalTools";
+import { buildEditorSelectionPrompt, createProposalToolRegistry, normalizeMemoryReadId, normalizeMemoryToolArgs } from "./proposalTools";
 
 vi.mock("../services/search", () => ({ searchWeb: vi.fn() }));
 vi.mock("../features/knowledge/knowledge", async importOriginal => {
   const original = await importOriginal<typeof import("../features/knowledge/knowledge")>();
-  return { ...original, fetchKnowledgeWebPage: vi.fn() };
+  return { ...original, fetchKnowledgeWebPage: vi.fn(), getKnowledgeSectionScope: vi.fn(), searchKnowledge: vi.fn() };
 });
 
 const block: DocumentBlock = {
@@ -40,6 +40,17 @@ describe("project memory tool arguments", () => {
 
   it("still rejects calls without memory content", () => {
     expect(() => normalizeMemoryToolArgs({ title: "空记忆" })).toThrow("缺少参数：content");
+  });
+
+  it("accepts common memory id aliases emitted by compatible models", () => {
+    expect(normalizeMemoryReadId({ id: "memory-1" })).toBe("memory-1");
+    expect(normalizeMemoryReadId({ memory_id: "memory-2" })).toBe("memory-2");
+    expect(normalizeMemoryReadId({ memoryId: "memory-3" })).toBe("memory-3");
+    expect(normalizeMemoryReadId({ memory: { id: "memory-4" } })).toBe("memory-4");
+  });
+
+  it("still reports the canonical id when no memory identifier is supplied", () => {
+    expect(() => normalizeMemoryReadId({ title: "部署约束" })).toThrow("缺少参数：id");
   });
 });
 
@@ -134,6 +145,99 @@ describe("proposal agent web search tool", () => {
     expect(second).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("未知工具") }));
     expect(tools.has("web_search")).toBe(false);
     expect(searchWeb).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("proposal agent knowledge tools", () => {
+  beforeEach(() => {
+    vi.mocked(searchKnowledge).mockReset();
+    vi.mocked(getKnowledgeSectionScope).mockReset();
+  });
+
+  function knowledgeRegistry() {
+    const project = createProject();
+    project.workspace = { root: "C:\\workspace", historyDir: "C:\\workspace\\knowledge" };
+    return createProposalToolRegistry({ project, block, reviewDraft: () => true, onTodos: () => undefined });
+  }
+
+  it("returns ranked knowledge正文 directly and caps the model-visible payload", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue(Array.from({ length: 6 }, (_, index) => ({
+      chunk: {
+        id: `chunk-${index}`,
+        documentId: "document-1",
+        sectionId: `section-${index}`,
+        documentTitle: "支付平台设计",
+        headingPath: `架构 > 幂等 ${index}`,
+        content: `证据${index}`.repeat(1800),
+        position: index,
+        startChar: 0,
+        endChar: 5000,
+        status: "ready" as const,
+        quality: index === 0 ? "good" as const : "normal" as const,
+      },
+      excerpt: "幂等证据",
+      score: index + 0.25,
+      matchedSectionId: `section-${index}`,
+      scopeSectionId: `section-${index}`,
+      level: 2,
+      canMoveUp: true,
+      parentId: "parent-1",
+    })));
+
+    const result = await knowledgeRegistry().execute(
+      { id: "knowledge-search", name: "search_knowledge", arguments: { query: "支付 幂等 灾备", limit: 10 } },
+      new AbortController().signal,
+    );
+    const rows = JSON.parse(result.content) as Array<Record<string, unknown>>;
+
+    expect(result.isError).toBe(false);
+    expect(result.content.length).toBeLessThanOrEqual(12000);
+    expect(rows[0]).toEqual(expect.objectContaining({
+      sectionId: "section-0",
+      document: "支付平台设计",
+      heading: "架构 > 幂等 0",
+      score: 0.25,
+      quality: "good",
+      truncated: true,
+    }));
+    expect(rows[0].content).toContain("证据0");
+  });
+
+  it("returns actionable error codes for empty results and unavailable storage", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("database is locked"));
+    const tools = knowledgeRegistry();
+    const empty = await tools.execute({ id: "empty", name: "search_knowledge", arguments: { query: "支付 幂等" } }, new AbortController().signal);
+    const failed = await tools.execute({ id: "failed", name: "search_knowledge", arguments: { query: "支付 灾备" } }, new AbortController().signal);
+    const missing = await registry().execute({ id: "missing", name: "search_knowledge", arguments: { query: "支付" } }, new AbortController().signal);
+
+    expect(empty).toEqual(expect.objectContaining({ isError: false, content: expect.stringContaining("NO_MATCH") }));
+    expect(empty.content).toContain("retryable");
+    expect(failed).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("DATABASE_ERROR") }));
+    expect(missing).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("WORKSPACE_NOT_CONFIGURED") }));
+  });
+
+  it("reads a full section and identifies invalid section ids", async () => {
+    vi.mocked(getKnowledgeSectionScope)
+      .mockResolvedValueOnce({
+        id: "section-1",
+        documentId: "document-1",
+        documentTitle: "支付平台设计",
+        sectionId: "section-1",
+        title: "幂等设计",
+        headingPath: "架构 > 幂等设计",
+        level: 2,
+        content: "完整章节正文",
+        sectionCount: 1,
+        quality: "good",
+        canMoveUp: true,
+      })
+      .mockRejectedValueOnce(new Error("知识章节不存在"));
+    const tools = knowledgeRegistry();
+    const read = await tools.execute({ id: "read", name: "read_knowledge", arguments: { section_id: "section-1" } }, new AbortController().signal);
+    const invalid = await tools.execute({ id: "invalid", name: "read_knowledge", arguments: { section_id: "missing" } }, new AbortController().signal);
+
+    expect(read.content).toBe("# 支付平台设计 / 架构 > 幂等设计\n\n完整章节正文");
+    expect(invalid).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("INVALID_SECTION_ID") }));
   });
 });
 

@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Semantic version tag to publish, for example v0.3.0
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,7 +16,9 @@ permissions:
 jobs:
   windows-release:
     runs-on: windows-latest
+    timeout-minutes: 90
     env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
       GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -29,17 +36,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
       - run: pnpm install --frozen-lockfile
+      - name: Test frontend and domain logic
+        run: pnpm test
+      - name: Validate updater signing configuration
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Repository secret TAURI_SIGNING_PRIVATE_KEY is required."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TECH_PROPOSAL_UPDATER_PUBLIC_KEY)) {
+            throw "Repository variable TAURI_UPDATER_PUBLIC_KEY is required."
+          }
       - name: Prepare version from tag
         shell: pwsh
-        run: node scripts/prepare-release-version.mjs "${{ github.ref_name }}"
+        run: node scripts/prepare-release-version.mjs "$env:RELEASE_TAG"
       - name: Build and publish signed desktop release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: TechProposal Studio ${{ github.ref_name }}
-          releaseBody: "See the assets below to download and install this version."
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: TechProposal Studio ${{ env.RELEASE_TAG }}
+          releaseBody: "Download the NSIS EXE below. Installed desktop clients can update through Settings → About & Updates."
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: true
+          releaseCommitish: ${{ github.sha }}
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          uploadWorkflowArtifacts: true
           args: --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.version.generated.conf.json --target x86_64-pc-windows-msvc
