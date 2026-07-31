@@ -4,7 +4,7 @@ import { makeId } from "../core/data";
 import { importWordOrPdfToWorkspace } from "../features/export/documentImport";
 import { defaultProposalMarkdown, fileNameFromTitle, parseMarkdownHeadings, titleFromMarkdown } from "../features/editor/markdownDoc";
 import { exportMarkdown } from "../features/workspace/storage";
-import type { Project } from "../core/types";
+import type { Project, WorkspaceMarkdownFile } from "../core/types";
 import type { DocumentStatus, TextFileSnapshot } from "../features/workspace/documentSafety";
 import {
   readTextFileSnapshot,
@@ -41,7 +41,7 @@ interface ProposalFileActionsOptions {
   selectedHeadingId: string | null;
   setSelectedHeadingId: Dispatch<SetStateAction<string | null>>;
   setEditorMode: Dispatch<SetStateAction<"section" | "full">>;
-  refreshWorkspaceDocs: () => Promise<void>;
+  refreshWorkspaceDocs: () => Promise<WorkspaceMarkdownFile[]>;
   notify: (message: string) => void;
   safety: DocumentSafetyActions;
   beforeDocumentChange: (reason: UnsafeDocumentAction) => Promise<boolean>;

@@ -47,7 +47,7 @@ import {
   writeLibraryMarkdown,
   deleteFile,
 } from "./features/workspace/workspace";
-import { readTextFileSnapshot, runDocumentChangeGuard, sameDocumentPath, writeTextFileChecked, type TextFileSnapshot } from "./features/workspace/documentSafety";
+import { firstWorkspaceDocumentAfterDelete, readTextFileSnapshot, runDocumentChangeGuard, sameDocumentPath, writeTextFileChecked, type TextFileSnapshot } from "./features/workspace/documentSafety";
 import { normalizeAgentSettings } from "./agent/settings";
 import { IconButton } from "./components/IconButton";
 import { FileUploadPanel } from "./components/FileUploadPanel";
@@ -372,9 +372,21 @@ export default function App() {
         if (isCurrent) await requireAllowed("delete");
         if (mode === "trash") await privilegedFileOperation({ operation: "delete", path: resolved, deleteMode: "trash" });
         else await deleteFile(resolved);
-        await refreshWorkspaceDocs();
+        const remainingDocuments = await refreshWorkspaceDocs();
         if (isCurrent) {
+          await safety.clearHandledDrafts();
           safety.markUnsaved();
+          const nextDocument = firstWorkspaceDocumentAfterDelete(remainingDocuments, resolved);
+          if (nextDocument) {
+            const seed = {
+              ...projectRef.current,
+              id: makeId(),
+              filePath: nextDocument.path,
+              contextSourceRefs: [],
+              updatedAt: new Date().toISOString(),
+            };
+            return bind(await safety.openWithRecovery(nextDocument.path, seed));
+          }
           return bind({ ...createProject(), workspace: projectRef.current.workspace });
         }
         return null;
@@ -555,16 +567,20 @@ export default function App() {
     if (isCurrent && !(await beforeDocumentChange("delete"))) return;
     try {
       await deleteFile(doc.path);
+      const remainingDocuments = await refreshWorkspaceDocs();
       if (isCurrent) {
         await safety.clearHandledDrafts();
         safety.markUnsaved();
-        const blank = createProject();
-        blank.workspace = project.workspace;
-        setProject(blank);
-        resetHistory();
+        const nextDocument = firstWorkspaceDocumentAfterDelete(remainingDocuments, doc.path);
+        const opened = nextDocument ? await openMarkdownPath(nextDocument.path, true) : false;
+        if (!opened) {
+          const blank = createProject();
+          blank.workspace = project.workspace;
+          setProject(blank);
+          resetHistory();
+        }
       }
       setPendingDelete(null);
-      await refreshWorkspaceDocs();
       notify(`已删除：${doc.title}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "删除失败");

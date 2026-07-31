@@ -59,9 +59,11 @@ export function useWorkspaceSession({ project, desktop, setProject, notify }: Wo
     notify(`已加载 ${files.length} 份本地资料`);
   };
 
-  const refreshWorkspaceDocs = async (paths = workspace) => {
-    if (!desktop || !paths?.root) return;
-    setWorkspaceDocs(await listWorkspaceMarkdown(paths.root));
+  const refreshWorkspaceDocs = async (paths = workspace): Promise<WorkspaceMarkdownFile[]> => {
+    if (!desktop || !paths?.root) return [];
+    const documents = await listWorkspaceMarkdown(paths.root);
+    setWorkspaceDocs(documents);
+    return documents;
   };
 
   const applyWorkspace = async (paths: WorkspacePaths, options?: { loadConnections?: boolean }) => {

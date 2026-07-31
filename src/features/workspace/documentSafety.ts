@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isDesktop } from "../../services/runtime";
+import type { WorkspaceMarkdownFile } from "../../core/types";
 
 export interface TextFileSnapshot {
   path: string;
@@ -89,6 +90,13 @@ export function sameDocumentPath(left?: string | null, right?: string | null): b
   if (!left || !right) return !left && !right;
   return left.replace(/\//g, "\\").replace(/[\\]+$/, "").toLocaleLowerCase()
     === right.replace(/\//g, "\\").replace(/[\\]+$/, "").toLocaleLowerCase();
+}
+
+export function firstWorkspaceDocumentAfterDelete(
+  documents: WorkspaceMarkdownFile[],
+  deletedPath: string,
+): WorkspaceMarkdownFile | null {
+  return documents.find(document => !sameDocumentPath(document.path, deletedPath)) ?? null;
 }
 
 export function chooseDraftRecovery(

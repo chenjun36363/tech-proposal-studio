@@ -8,7 +8,7 @@ interface KnowledgeTransferOptions {
   desktop: boolean;
   setProject: Dispatch<SetStateAction<Project>>;
   refreshLibrary: (paths?: WorkspacePaths) => Promise<void>;
-  refreshWorkspaceDocs: (paths?: WorkspacePaths) => Promise<void>;
+  refreshWorkspaceDocs: (paths?: WorkspacePaths) => Promise<WorkspaceMarkdownFile[]>;
   openKnowledgeManager: () => void;
   notify: (message: string) => void;
   beforeDocumentChange: () => Promise<boolean>;

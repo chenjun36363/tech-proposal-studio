@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chooseDraftRecovery, deriveDocumentStatus, runDocumentChangeGuard, sameDocumentPath, type TextFileSnapshot, type WorkspaceDocumentDraft } from "./documentSafety";
+import { chooseDraftRecovery, deriveDocumentStatus, firstWorkspaceDocumentAfterDelete, runDocumentChangeGuard, sameDocumentPath, type TextFileSnapshot, type WorkspaceDocumentDraft } from "./documentSafety";
 
 const snapshot: TextFileSnapshot = { path: "C:\\work\\a.md", content: "disk", sha256: "base", updatedAt: "1" };
 const draft = (overrides: Partial<WorkspaceDocumentDraft> = {}): WorkspaceDocumentDraft => ({
@@ -18,6 +18,15 @@ const draft = (overrides: Partial<WorkspaceDocumentDraft> = {}): WorkspaceDocume
 describe("document draft recovery", () => {
   it("treats equal paths case-insensitively on Windows", () => {
     expect(sameDocumentPath("C:/WORK/a.md", "c:\\work\\a.md")).toBe(true);
+  });
+
+  it("selects the first remaining workspace document after deleting the current one", () => {
+    const documents = [
+      { title: "Deleted", path: "C:\\work\\a.md", excerpt: "", updatedAt: "2", size: 1 },
+      { title: "Next", path: "C:\\work\\b.md", excerpt: "", updatedAt: "1", size: 1 },
+    ];
+    expect(firstWorkspaceDocumentAfterDelete(documents, "c:/WORK/a.md")?.path).toBe("C:\\work\\b.md");
+    expect(firstWorkspaceDocumentAfterDelete([documents[0]], documents[0].path)).toBeNull();
   });
 
   it("deletes identical stale drafts and keeps disk saved", () => {

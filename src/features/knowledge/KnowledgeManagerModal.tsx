@@ -15,7 +15,7 @@ import { countMarkdownWords } from "../editor/markdownDoc";
 import type {
   DocumentBlock, HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision,
   KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult,
-  KnowledgeSection, Project, SourceRecord, WorkspacePaths,
+  KnowledgeSection, Project, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths,
 } from "../../core/types";
 import { deleteFile, importMarkdownToWorkspace, pickDocumentFile, pickMarkdownFile, readTextFile } from "../workspace/workspace";
 
@@ -33,7 +33,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   project: Project;
   updateProject: ProjectUpdater;
   updateBlock: BlockUpdater;
-  refreshWorkspaceDocs: (workspace?: WorkspacePaths) => Promise<void>;
+  refreshWorkspaceDocs: (workspace?: WorkspacePaths) => Promise<WorkspaceMarkdownFile[]>;
   openMarkdownPath: (path: string) => Promise<void | boolean>;
   notify: (message: string) => void;
   close: () => void;
