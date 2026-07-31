@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./data";
 import { exportMarkdown, loadProject, saveProject } from "./storage";
@@ -68,6 +68,7 @@ import { ConversationHistorySettings } from "./components/ConversationHistorySet
 import { ModelSettingsSection } from "./features/settings/ModelSettingsSection";
 import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
 import { SkillsSettingsSection } from "./features/settings/SkillsSettingsSection";
+import { AppUpdateSettings } from "./features/settings/AppUpdateSettings";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useProposalFileActions } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
@@ -1151,7 +1152,7 @@ export default function App() {
 }
 
 function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project) => void | Promise<void> }) {
-  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "workspace">("model");
+  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "workspace" | "about">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
     if (!next.mineru) next.mineru = createProject().mineru;
@@ -1170,6 +1171,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     memory: { title: "记忆", description: "查看、审核和维护当前工作区的长期记忆。", icon: <Brain size={15} /> },
     parser: { title: "文档解析", description: "配置 Word 和 PDF 转换所使用的 MinerU 服务。", icon: <FilePlus2 size={15} /> },
     workspace: { title: "工作区", description: "管理方案正文、知识库和连接配置的本地目录。", icon: <FolderOpen size={15} /> },
+    about: { title: "关于与更新", description: "查看版本并安装经过签名验证的应用更新。", icon: <Info size={15} /> },
   } as const;
 
   const setWorkspace = (partial: Partial<WorkspacePaths>) => {
@@ -1306,6 +1308,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
         </label>
         {!desktop && <p className="muted">浏览器模式无法选择真实磁盘目录；请使用桌面端。</p>}
       </div>}
+      {section === "about" && <AppUpdateSettings />}
       </div>
       </section>
       </div>

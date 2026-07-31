@@ -10,3 +10,4 @@ Thumbs.db
 .env
 .env.*
 output/
+src-tauri/tauri.version.generated.conf.json

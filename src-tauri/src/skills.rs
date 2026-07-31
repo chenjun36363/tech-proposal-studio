@@ -980,10 +980,20 @@ pub async fn skill_check_updates(
     Ok(updates)
 }
 
+fn program_suffixes() -> [&'static str; 4] {
+    if cfg!(windows) {
+        [".exe", ".cmd", ".bat", ""]
+    } else {
+        ["", ".exe", ".cmd", ".bat"]
+    }
+}
+
 fn find_program(name: &str) -> Option<String> {
     let path = child_path_env()?;
     for dir in std::env::split_paths(&path) {
-        for suffix in ["", ".exe", ".cmd", ".bat"] {
+        // npm installs both a Unix shell shim without an extension and a Windows
+        // .cmd shim. CreateProcess cannot launch the extensionless shell script.
+        for suffix in program_suffixes() {
             let candidate = dir.join(format!("{name}{suffix}"));
             if candidate.is_file() {
                 return Some(candidate.to_string_lossy().to_string());
@@ -1057,9 +1067,12 @@ pub async fn skill_run_command(request: SkillCommandRequest) -> Result<SkillComm
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
-        .trim_end_matches(".exe")
-        .trim_end_matches(".cmd")
-        .trim_end_matches(".bat");
+        .to_ascii_lowercase();
+    let program_name = program_name
+        .strip_suffix(".exe")
+        .or_else(|| program_name.strip_suffix(".cmd"))
+        .or_else(|| program_name.strip_suffix(".bat"))
+        .unwrap_or(&program_name);
     if !allowed.contains(program_name) {
         return Err("Skill 命令不在允许列表中".into());
     }
@@ -1178,5 +1191,11 @@ mod tests {
             "\"https://example.com/search?q=a&lang=zh\""
         );
         assert_eq!(crate::process::quote_cmd_arg("two words"), "\"two words\"");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn program_discovery_prefers_windows_npm_shim() {
+        assert_eq!(program_suffixes(), [".exe", ".cmd", ".bat", ""]);
     }
 }

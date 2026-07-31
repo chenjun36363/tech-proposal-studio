@@ -26,3 +26,18 @@
 [ 4419638ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
 [ 4433764ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
 [ 4433779ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
+[ 4829919ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
+[ 4829964ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
+[ 5047237ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
+[ 5047274ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
+[ 5173716ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:1420/@vite/client:963
+[ 5178353ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
+[ 5178380ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
+[ 5200109ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:1420/@vite/client:963
+[ 5202462ms] [ERROR] WebSocket connection to 'ws://localhost:1420/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:1420/@vite/client:1034
+[ 5205827ms] [ERROR] WebSocket connection to 'ws://localhost:1420/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:1420/@vite/client:1034
+[ 5259250ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1420/node_modules/.vite/deps/react-dom_client.js?v=77bfedc0:20102
+[ 5259280ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1420/node_modules/.vite/deps/marked-katex-extension.js?v=77bfedc0:14201
+[ 5469114ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:1420/@vite/client:963
+[ 5471476ms] [ERROR] WebSocket connection to 'ws://localhost:1420/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:1420/@vite/client:1034
+[ 5474833ms] [ERROR] WebSocket connection to 'ws://localhost:1420/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:1420/@vite/client:1034

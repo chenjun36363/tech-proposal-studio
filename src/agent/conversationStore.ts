@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isDesktop } from "../services/runtime";
 import type { AgentMessage } from "./protocol";
-import type { SkillReference } from "../skills";
 import { persistentAgentMessages, safeTurnSplitIndex, summarizeAgentMessage } from "./messageUtils";
 
 const KEY = "tech-proposal-studio.agent-conversations.v1";
@@ -23,7 +22,6 @@ export interface AgentConversation {
   knowledgeSearchEnabled?: boolean;
   fullAccessEnabled?: boolean;
   fullAccessAcknowledged?: boolean;
-  enabledSkills?: SkillReference[];
   createdAt: number;
   updatedAt: number;
   revision?: number;
@@ -32,7 +30,7 @@ export interface AgentConversation {
   lastMessagePreview?: string;
 }
 
-export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged" | "enabledSkills">>;
+export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged">>;
 
 export type AgentConversationChange =
   | { projectId: string; type: "saved"; conversation: AgentConversation }
@@ -119,7 +117,6 @@ async function upsertDesktopConversation(conversation: AgentConversation, worksp
           knowledgeSearchEnabled: latest.knowledgeSearchEnabled,
           fullAccessEnabled: latest.fullAccessEnabled,
           fullAccessAcknowledged: latest.fullAccessAcknowledged,
-          enabledSkills: latest.enabledSkills,
         };
         continue;
       }
@@ -153,7 +150,7 @@ export async function getAgentConversation(conversationId: string, workspaceRoot
 
 export function createAgentConversation(projectId: string, pinnedContextOnly = false): AgentConversation {
   const now = Date.now();
-  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, fullAccessEnabled: false, fullAccessAcknowledged: false, enabledSkills: [], createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
+  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, fullAccessEnabled: false, fullAccessAcknowledged: false, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
 }
 
 export async function saveAgentConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {

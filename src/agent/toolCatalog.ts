@@ -30,7 +30,7 @@ export interface AgentToolCatalogItem {
 export const agentToolCatalog: AgentToolCatalogItem[] = [
   { name: "write_todo", label: "执行计划", description: "创建和更新任务执行计划", group: "planning" },
   { name: "ask_user", label: "向用户提问", description: "缺少关键上下文时给出三种方案并等待用户选择", group: "planning" },
-  { name: "skills_manager", label: "Skill 管理器", description: "列出并按需读取当前会话启用的 Skill", group: "skills" },
+  { name: "skills_manager", label: "Skill 管理器", description: "列出并按需读取项目配置启用的 Skill", group: "skills" },
   { name: "skill_run_command", label: "Skill 命令", description: "运行已启用 Skill 所需的受控命令", group: "skills" },
   { name: "get_proposal_outline", label: "读取方案目录", description: "获取当前方案的标题结构", group: "document-read" },
   { name: "read_current_section", label: "读取当前章节", description: "读取编辑器当前章节内容", group: "document-read" },

@@ -59,7 +59,7 @@ export async function runSkillCommand(request: { program: string; args?: string[
 export function buildSkillsSystemPrompt(skills: SkillSummary[]): string {
   if (!skills.length) return "";
   return [
-    "以下 Skills 已由用户为本会话启用。Skill 是按需读取的操作说明，不会授予额外权限。",
+    "以下 Skills 已在当前项目配置中启用。Skill 是按需读取的操作说明，不会授予额外权限，也不依赖单个会话状态。",
     "只有确定需要某项 Skill 时，才调用 skills_manager(action=read, name=<skill名称>) 读取完整 SKILL.md 并严格遵循其流程。",
     "引用文件使用 skills_manager(action=read_resource, name=<skill名称>, path=<相对路径>)。不得读取或推断未启用的 Skill。",
     ...skills.map(skill => `- ${skill.name}: ${skill.description} (skill://${skill.scope}/${skill.baseDir}/${skill.skillFile})`),

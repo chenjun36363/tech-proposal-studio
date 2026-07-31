@@ -23,6 +23,7 @@ mod connections;
 mod git;
 mod privileged;
 mod skills;
+mod updater;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
 
@@ -536,6 +537,7 @@ fn write_library_markdown(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(TerminalState::default())
         .manage(ModelProxyState::default())
         .manage(privileged::PrivilegedProcessState::default())
@@ -619,6 +621,8 @@ pub fn run() {
             ,ccswitch::list_ccswitch_providers
             ,knowledge::knowledge_scan
             ,knowledge::knowledge_import_markdown
+            ,updater::app_update_check
+            ,updater::app_update_install
             ,knowledge::knowledge_move_workspace_markdown
             ,knowledge::knowledge_index_pending
             ,knowledge::knowledge_list

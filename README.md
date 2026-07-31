@@ -24,6 +24,20 @@ pnpm build:exe
 
 脚本会初始化 MSVC 编译环境，并只生成 NSIS 安装程序。构建产物位于 `src-tauri/target/release/bundle/nsis/*.exe`。
 
+## 桌面发布与在线升级
+
+推送语义化版本 tag（例如 `v0.2.0`）后，`.github/workflows/desktop-release.yml` 会在 Windows runner 上构建 NSIS、MSI 和 Tauri 更新签名文件，并将安装包与 `latest.json` 发布到 Release。客户端在“设置 → 关于与更新”中检查、下载和安装更新。
+
+首次发布前，在 Gitea Actions 中配置：
+
+- Secret `TAURI_SIGNING_PRIVATE_KEY`：通过 `pnpm tauri signer generate -w ~/.tauri/tech-proposal-studio.key` 生成的私钥内容。
+- Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：生成私钥时设置的密码。
+- Variable `TAURI_UPDATER_PUBLIC_KEY`：同一命令输出的公钥内容。
+- Variable `TAURI_UPDATE_ENDPOINT`：可选，默认 `https://gitea.newxuu.top:1888/chen/tech-proposal-studio/releases/latest/download/latest.json`。
+- Secret `RELEASE_TOKEN`：仅在 Gitea 自动提供的仓库 token 无法创建 Release 时设置，需具备仓库发布写权限。
+
+升级地址必须使用 HTTPS。签名私钥只能保存在 Actions Secret 中，不能提交到仓库。Gitea runner 需要提供 `windows-latest` 标签；若使用自托管标签，请同步修改 workflow 的 `runs-on`。
+
 正文和索引默认留在本机。方案正文优化只发送当前章节和明确加入的引用；知识文档结构识别可能发送低置信度标题及相邻上下文，但知识入库和索引不会把正文切片发送给模型。Agent 仅在用户为当前会话启用联网搜索后调用搜索服务。项目缓存始终剥离 API Key；工作区连接配置可按用户设置将密钥保存在 `.gouan/connections.json`，桌面端同时镜像到 OS keyring。
 
 ## 代码架构
