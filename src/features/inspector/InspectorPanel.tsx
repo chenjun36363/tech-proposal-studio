@@ -16,6 +16,8 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { AgentConversationPanel } from "../../components/AgentConversationPanel";
+import { LongWritingPanel } from "../longWriting/LongWritingPanel";
+import type { TextFileSnapshot } from "../workspace/documentSafety";
 import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "../../agent/proposalTools";
 import type { AgentDraft, AgentEditorSelection } from "../../agent/protocol";
 import { IconButton } from "../../components/IconButton";
@@ -108,6 +110,11 @@ export function InspectorPanel({
   notify,
   openSettings,
   openSourcePreview,
+  longWritingBaselineHash,
+  saveBeforeLongWriting,
+  onLongWritingSnapshot,
+  onLongWritingLockChange,
+  onLocateLongWritingChapter,
 }: {
   tab: InspectorTab;
   setTab: (tab: InspectorTab) => void;
@@ -123,6 +130,11 @@ export function InspectorPanel({
   notify: (message: string) => void;
   openSettings: () => void;
   openSourcePreview: (source: SourceRecord) => Promise<void>;
+  longWritingBaselineHash: string | null;
+  saveBeforeLongWriting: (content?: string) => Promise<TextFileSnapshot | null>;
+  onLongWritingSnapshot: (snapshot: TextFileSnapshot) => Promise<void> | void;
+  onLongWritingLockChange: (locked: boolean) => void;
+  onLocateLongWritingChapter: (titlePath: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [qualityFilters, setQualityFilters] = useState<Set<KnowledgeChunkQuality>>(
@@ -136,6 +148,7 @@ export function InspectorPanel({
   const [results, setResults] = useState<KnowledgeResultView[]>([]);
   const [knowledgeChunks, setKnowledgeChunks] = useState<Record<string, KnowledgeChunk>>({});
   const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
+  const [agentMode, setAgentMode] = useState<"conversation" | "long-writing">("conversation");
   const desktop = isDesktop();
   const contextSources = useMemo(
     () => project.sources.filter(source => block.sourceRefs.includes(source.id)),
@@ -368,7 +381,15 @@ export function InspectorPanel({
       </div>
     </div>
     {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
-    {tab === "commands" && <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} workspaceRuntime={agentWorkspaceRuntime} onDocumentSearch={onAgentDocumentSearch} notify={notify} />}
+    <div className={`agent-mode-shell ${tab === "commands" ? "" : "is-hidden"}`} aria-hidden={tab !== "commands"}>
+      <div className="agent-mode-tabs"><button className={agentMode === "conversation" ? "active" : ""} onClick={() => setAgentMode("conversation")}>普通对话</button><button className={agentMode === "long-writing" ? "active" : ""} onClick={() => setAgentMode("long-writing")}>长任务</button></div>
+      <div className={`agent-conversation-host ${agentMode === "conversation" ? "" : "is-hidden"}`}>
+        <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} workspaceRuntime={agentWorkspaceRuntime} onDocumentSearch={onAgentDocumentSearch} notify={notify} />
+      </div>
+      <div className={`long-writing-host ${agentMode === "long-writing" ? "" : "is-hidden"}`}>
+        <LongWritingPanel project={project} baselineHash={longWritingBaselineHash} saveBeforeStart={saveBeforeLongWriting} onDocumentSnapshot={onLongWritingSnapshot} onLockChange={onLongWritingLockChange} onLocateChapter={onLocateLongWritingChapter} notify={notify} />
+      </div>
+    </div>
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}
     {tab === "sources" && <div className="inspector-content sources-panel knowledge-panel">
       {!desktop

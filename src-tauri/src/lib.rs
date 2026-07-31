@@ -32,6 +32,8 @@ mod process;
 mod agent_conversations;
 #[path = "workspace/connections.rs"]
 mod connections;
+#[path = "workspace/drafts.rs"]
+mod drafts;
 #[path = "workspace/git.rs"]
 mod git;
 #[path = "platform/privileged.rs"]
@@ -40,6 +42,10 @@ mod privileged;
 mod skills;
 #[path = "integrations/updater.rs"]
 mod updater;
+#[path = "workspace/files.rs"]
+mod workspace_files;
+#[path = "workspace/long_writing.rs"]
+mod long_writing;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
 
@@ -619,6 +625,20 @@ pub fn run() {
             open_external_url,
             read_binary_file,
             write_text_file,
+            workspace_files::read_text_file_snapshot,
+            workspace_files::write_text_file_checked,
+            workspace_files::save_text_file_as,
+            long_writing::create_proposal_backup,
+            long_writing::list_proposal_backups,
+            long_writing::restore_proposal_backup,
+            long_writing::commit_long_task_chapter,
+            long_writing::save_proposal_long_task,
+            long_writing::get_proposal_long_task,
+            long_writing::list_proposal_long_tasks,
+            long_writing::save_proposal_long_task_chapter,
+            long_writing::list_proposal_long_task_chapters,
+            long_writing::recover_proposal_long_task,
+            long_writing::delete_proposal_long_task,
             agent_conversations::agent_conversation_list,
             agent_conversations::agent_conversation_get,
             agent_conversations::agent_conversation_upsert,
@@ -634,6 +654,9 @@ pub fn run() {
             ,privileged::privileged_cancel_powershell
             ,connections::load_workspace_connections
             ,connections::save_workspace_connections
+            ,drafts::save_workspace_document_draft
+            ,drafts::list_workspace_document_drafts
+            ,drafts::delete_workspace_document_draft
             ,ccswitch::list_ccswitch_providers
             ,knowledge::knowledge_scan
             ,knowledge::knowledge_import_markdown

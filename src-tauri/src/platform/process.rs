@@ -13,6 +13,7 @@ pub(crate) fn init_db(app: &AppHandle) -> Result<(), String> {
     let dir = app_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let db = rusqlite::Connection::open(dir.join("workspace.db")).map_err(|error| error.to_string())?;
+    db.busy_timeout(Duration::from_secs(5)).map_err(|error| error.to_string())?;
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS command_runs(
             id INTEGER PRIMARY KEY,
@@ -25,7 +26,8 @@ pub(crate) fn init_db(app: &AppHandle) -> Result<(), String> {
         );",
     )
     .map_err(|error| error.to_string())?;
-    crate::connections::initialize_schema(&db)
+    crate::connections::initialize_schema(&db)?;
+    crate::drafts::initialize_schema(&db)
 }
 
 #[derive(Deserialize)]

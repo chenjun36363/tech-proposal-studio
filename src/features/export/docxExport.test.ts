@@ -33,6 +33,39 @@ describe("Word export", () => {
     expect(settingsXml).toContain("updateFields");
   });
 
+  it("uses Word built-in heading styles without duplicate style definitions", async () => {
+    const project = createProject();
+    project.name = "标题样式测试";
+    project.markdown = "# 标题样式测试\n\n## 第一章\n\n### 1.1 子章\n\n正文\n";
+
+    const doc = await buildDocx(project);
+    const stylesXml = JSON.stringify((doc as unknown as { Styles: unknown }).Styles);
+    for (let level = 1; level <= 6; level += 1) {
+      const definitions = stylesXml.match(new RegExp(`\"styleId\":\"Heading${level}\"`, "g")) ?? [];
+      expect(definitions, `Heading${level} should have one style definition`).toHaveLength(1);
+    }
+    expect((stylesXml.match(/w:qFormat/g) ?? []).length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("keeps heading appearance in the Word style instead of direct text formatting", async () => {
+    const project = createProject();
+    project.name = "封面标题";
+    project.markdown = "# 正文一级标题\n\n## 正文二级标题\n";
+
+    const doc = await buildDocx(project);
+    const documentXml = JSON.stringify((doc as unknown as { Document: unknown }).Document);
+    const headingTextAt = documentXml.indexOf("正文一级标题");
+    const paragraphStart = documentXml.lastIndexOf('{"rootKey":"w:p"', headingTextAt);
+    const nextParagraph = documentXml.indexOf('{"rootKey":"w:p"', headingTextAt + 1);
+    const headingParagraphXml = documentXml.slice(paragraphStart, nextParagraph);
+
+    expect(headingParagraphXml).toContain('"value":"Heading1"');
+    expect(headingParagraphXml).toContain('"rootKey":"w:rPr","root":[]');
+    expect(headingParagraphXml).not.toContain('"rootKey":"w:rFonts"');
+    expect(headingParagraphXml).not.toContain('"rootKey":"w:b"');
+    expect(headingParagraphXml).not.toContain('"rootKey":"w:sz"');
+  });
+
   it("reads PNG dimensions from IHDR", () => {
     expect(readImageSize(PNG_1x1, "png")).toEqual({ width: 1, height: 1 });
   });

@@ -499,38 +499,41 @@ async function paragraphFromImage(
   });
 }
 
-function headingParagraph(level: number, title: string, centeredTitle: boolean, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Paragraph {
-  const index = Math.min(Math.max(level, 1), 6) - 1;
-  const size = halfPoints(settings.headingSizes[index]);
-  if (level === 1 && centeredTitle) {
-    return new Paragraph({
-      children: [
-        new TextRun({
-          text: title,
-          font: exportFont(settings.headingFont),
-          bold: true,
-          size: halfPoints(settings.headingSizes[0]),
-          color: "000000",
-        }),
-      ],
-      heading: HeadingLevel.TITLE,
-      spacing: { after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO },
-      alignment: AlignmentType.CENTER,
-    });
-  }
+function headingParagraph(level: number, title: string): Paragraph {
   return new Paragraph({
-    children: [
-      new TextRun({
-        text: title,
-        font: exportFont(settings.headingFont),
-        bold: true,
-        size,
-        color: "000000",
-      }),
-    ],
-    heading: HEADING_LEVELS[Math.min(level, 6) - 1],
-    spacing: { before: twips(settings.headingBefore[index]), after: twips(settings.headingAfter[index]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO },
+    // Keep heading formatting in the built-in Word style instead of applying
+    // direct run/paragraph formatting. This lets users insert another heading
+    // from Word's style gallery and get exactly the same appearance.
+    children: [new TextRun({ text: title })],
+    heading: HEADING_LEVELS[Math.min(Math.max(level, 1), 6) - 1],
   });
+}
+
+function builtInHeadingStyle(index: number, settings: DocxExportSettings) {
+  return {
+    basedOn: "Normal",
+    next: "Normal",
+    uiPriority: 9,
+    quickFormat: true,
+    unhideWhenUsed: true,
+    run: {
+      font: exportFont(settings.headingFont),
+      size: halfPoints(settings.headingSizes[index]),
+      bold: true,
+      color: "000000",
+    },
+    paragraph: {
+      spacing: {
+        before: twips(settings.headingBefore[index]),
+        after: twips(settings.headingAfter[index]),
+        line: lineTwips(settings.lineSpacing),
+        lineRule: LineRuleType.AUTO,
+      },
+      outlineLevel: index,
+      keepNext: true,
+      keepLines: true,
+    },
+  };
 }
 
 /** Build DOCX from project markdown body (fallback to legacy sections). */
@@ -581,10 +584,8 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
           i += 1;
           continue;
         }
-        children.push(headingParagraph(1, title, true, settings));
-      } else {
-        children.push(headingParagraph(level, title, false, settings));
       }
+      children.push(headingParagraph(level, title));
       i += 1;
       continue;
     }
@@ -717,64 +718,25 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
           run: { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize), color: "000000" },
           paragraph: { spacing: { before: twips(settings.bodyBefore), after: twips(settings.bodyAfter), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO } },
         },
+        title: {
+          basedOn: "Normal",
+          next: "Normal",
+          uiPriority: 10,
+          quickFormat: true,
+          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[0]), bold: true, color: "000000" },
+          paragraph: { spacing: { before: 0, after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, alignment: AlignmentType.CENTER },
+        },
+        // Configure docx's built-in Heading1~Heading6 definitions directly.
+        // Do not redeclare those IDs in paragraphStyles: duplicate style IDs make
+        // Word treat the visible formatting and its built-in heading gallery inconsistently.
+        heading1: builtInHeadingStyle(0, settings),
+        heading2: builtInHeadingStyle(1, settings),
+        heading3: builtInHeadingStyle(2, settings),
+        heading4: builtInHeadingStyle(3, settings),
+        heading5: builtInHeadingStyle(4, settings),
+        heading6: builtInHeadingStyle(5, settings),
       },
       paragraphStyles: [
-        {
-          id: "Title",
-          name: "Title",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[0]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: 0, after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, alignment: AlignmentType.CENTER, outlineLevel: 0 },
-        },
-        {
-          id: "Heading1",
-          name: "Heading 1",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[0]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: twips(settings.headingBefore[0]), after: twips(settings.headingAfter[0]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 0 },
-        },
-        {
-          id: "Heading2",
-          name: "Heading 2",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[1]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: twips(settings.headingBefore[1]), after: twips(settings.headingAfter[1]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 1 },
-        },
-        {
-          id: "Heading3",
-          name: "Heading 3",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[2]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: twips(settings.headingBefore[2]), after: twips(settings.headingAfter[2]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 2 },
-        },
-        {
-          id: "Heading4",
-          name: "Heading 4",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[3]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: twips(settings.headingBefore[3]), after: twips(settings.headingAfter[3]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 3 },
-        },
-        {
-          id: "Heading5",
-          name: "Heading 5",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[4]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: twips(settings.headingBefore[4]), after: twips(settings.headingAfter[4]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 4 },
-        },
-        {
-          id: "Heading6",
-          name: "Heading 6",
-          basedOn: "Normal",
-          next: "Normal",
-          run: { font: exportFont(settings.headingFont), size: halfPoints(settings.headingSizes[5]), bold: true, color: "000000" },
-          paragraph: { spacing: { before: twips(settings.headingBefore[5]), after: twips(settings.headingAfter[5]), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO }, outlineLevel: 5 },
-        },
         {
           id: "Code",
           name: "Code",

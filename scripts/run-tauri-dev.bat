@@ -10,6 +10,7 @@ if errorlevel 1 (
 for /f "tokens=5" %%P in ('netstat -ano -p tcp ^| findstr /r /c:":1420 .*LISTENING"') do (
   echo Port 1420 is already in use by PID %%P.
   echo Stop the existing dev server before running this script again.
+  echo You can kill it with:  powershell -ExecutionPolicy Bypass -File "%~dp0kill-port.ps1"
   exit /b 1
 )
 

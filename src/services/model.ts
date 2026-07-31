@@ -77,7 +77,13 @@ async function desktopProxyJson(request: WireHttpRequest, config: ResolvedModelC
     });
   } catch (error) {
     if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
-    throw error;
+    if (error instanceof Error) throw error;
+    const detail = typeof error === "string"
+      ? error.trim()
+      : error && typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string"
+        ? (error as { message: string }).message.trim()
+        : "";
+    throw new Error(detail ? `模型服务请求失败：${detail}` : "模型服务请求失败");
   } finally {
     signal?.removeEventListener("abort", onAbort);
   }

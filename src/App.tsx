@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
-import { createProject, defaultWorkspaceFromRoot } from "./core/data";
+import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
 import { isDesktop } from "./services/runtime";
 import { privilegedFileOperation } from "./services/privileged";
@@ -22,6 +22,7 @@ import {
   replaceSection,
   sectionBody,
   shiftHeadingSectionLevels,
+  stripHeadingPrefix,
   titleFromMarkdown,
   type HeadingNumberingStyle,
 } from "./features/editor/markdownDoc";
@@ -39,15 +40,18 @@ import {
   loadWorkspaceConfig,
   mergeLibrarySources,
   pickDirectory,
-  readTextFile,
+  pickDocumentFile,
+  pickMarkdownFile,
   renameFile,
   withWorkspace,
   writeLibraryMarkdown,
-  writeTextFile,
   deleteFile,
 } from "./features/workspace/workspace";
+import { readTextFileSnapshot, runDocumentChangeGuard, sameDocumentPath, writeTextFileChecked, type TextFileSnapshot } from "./features/workspace/documentSafety";
 import { normalizeAgentSettings } from "./agent/settings";
 import { IconButton } from "./components/IconButton";
+import { FileUploadPanel } from "./components/FileUploadPanel";
+import { DiskConflictModal, UnsavedChangesModal } from "./components/DocumentSafetyModals";
 import { InlineMarkdown } from "./components/InlineMarkdown";
 import { SourcePreviewModal } from "./components/SourcePreviewModal";
 import { MemorySettingsPanel } from "./components/MemorySettingsPanel";
@@ -57,7 +61,8 @@ import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
 import { SkillsSettingsSection } from "./features/settings/SkillsSettingsSection";
 import { AppUpdateSettings } from "./features/settings/AppUpdateSettings";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
-import { useProposalFileActions } from "./hooks/useProposalFileActions";
+import { useDocumentSafety } from "./hooks/useDocumentSafety";
+import { useProposalFileActions, type ConflictChoice, type UnsafeDocumentAction } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
 import { useSourcePreview } from "./hooks/useSourcePreview";
 import { useEnvironmentTools } from "./hooks/useEnvironmentTools";
@@ -80,6 +85,9 @@ import type { DocumentBlock, Project, WorkspaceMarkdownFile, WorkspacePaths } fr
 const appIcon = new URL("../src-tauri/icons/128x128.png", import.meta.url).href;
 
 type EditorMode = "section" | "full";
+type WorkspaceImportKind = "markdown" | "document";
+const MARKDOWN_UPLOAD_EXTENSIONS = [".md", ".markdown"] as const;
+const DOCUMENT_UPLOAD_EXTENSIONS = [".pdf", ".doc", ".docx"] as const;
 const RIGHT_PANEL_MIN = 280;
 const RIGHT_PANEL_MAX = 720;
 const RIGHT_PANEL_DEFAULT = 400;
@@ -121,6 +129,7 @@ export default function App() {
   const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_DEFAULT);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [workspaceImportKind, setWorkspaceImportKind] = useState<WorkspaceImportKind | null>(null);
   const [knowledgeManagerOpen, setKnowledgeManagerOpen] = useState(false);
   const [webSearchOpen, setWebSearchOpen] = useState(false);
   const [envOpen, setEnvOpen] = useState(false);
@@ -145,6 +154,8 @@ export default function App() {
   const [gitDiffActive, setGitDiffActive] = useState(false);
   const [agentSelection, setAgentSelection] = useState<AgentEditorSelection | undefined>(undefined);
   const confirmDeleteRef = useRef<number>(0);
+  const allowCloseRef = useRef(false);
+  const closePendingRef = useRef(false);
   const sourcePreview = useSourcePreview();
   const rightDrag = useRef<{ startX: number; startW: number } | null>(null);
   const leftDrag = useRef<{ startX: number; startW: number } | null>(null);
@@ -153,7 +164,48 @@ export default function App() {
   const sourceEditorRef = useRef<MarkdownSourceEditorHandle | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const desktop = isDesktop();
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2500); };
+  const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2500); }, []);
+  const [guardRequest, setGuardRequest] = useState<{ reason: UnsafeDocumentAction; resolve: (choice: "save" | "discard" | "cancel") => void } | null>(null);
+  const [conflictRequest, setConflictRequest] = useState<{ resolve: (choice: ConflictChoice) => void } | null>(null);
+  const saveToWorkspaceRef = useRef<() => Promise<boolean>>(async () => false);
+  const saveAsCopyRef = useRef<() => Promise<boolean>>(async () => false);
+  const [longWritingLocked, setLongWritingLocked] = useState(false);
+  const safety = useDocumentSafety({ project, setProject, resetHistory, desktop, notify });
+  const requestGuardChoice = useCallback((reason: UnsafeDocumentAction) => new Promise<"save" | "discard" | "cancel">(resolve => {
+    setGuardRequest({ reason, resolve });
+  }), []);
+  const resolveConflict = useCallback(() => new Promise<ConflictChoice>(resolve => {
+    setConflictRequest({ resolve });
+  }), []);
+  const beforeDocumentChange = useCallback(async (reason: UnsafeDocumentAction) => {
+    if (safety.status === "checking") {
+      notify("正在检查磁盘文件与共享草稿，请稍候再操作");
+      return false;
+    }
+    if (longWritingLocked && reason !== "close") {
+      notify("长任务正在安全写入文档，请先停止或完成长任务");
+      return false;
+    }
+    return runDocumentChangeGuard({
+      isDirty: safety.isDirty,
+      flushDraft: safety.flushDraft,
+      choose: () => requestGuardChoice(reason),
+      save: () => reason === "delete" ? saveAsCopyRef.current() : saveToWorkspaceRef.current(),
+      discard: safety.discardChanges,
+      clearHandledDrafts: safety.clearHandledDrafts,
+    });
+  }, [longWritingLocked, notify, requestGuardChoice, safety]);
+  const ensureDocumentEditable = useCallback(() => {
+    if (safety.status === "checking") {
+      notify("正在检查磁盘文件与共享草稿，请稍候再编辑");
+      return false;
+    }
+    if (longWritingLocked) {
+      notify("长任务运行期间不能修改正文");
+      return false;
+    }
+    return true;
+  }, [longWritingLocked, notify, safety.status]);
   const environmentTools = useEnvironmentTools({ desktop, notify });
   const workspace = project.workspace;
   const markdown = project.markdown ?? "";
@@ -205,6 +257,8 @@ export default function App() {
   const {
     importingDocument: importingDoc,
     save: saveToWorkspace,
+    saveContent: saveWorkspaceContent,
+    saveAsCopy: saveCurrentAsCopy,
     openPath: openMarkdownPath,
     reload: reloadCurrentMarkdown,
     openFromDialog,
@@ -215,7 +269,30 @@ export default function App() {
   } = useProposalFileActions({
     project, desktop, setProject, resetHistory, selectedHeadingId, setSelectedHeadingId, setEditorMode,
     refreshWorkspaceDocs: () => refreshWorkspaceDocs(), notify,
+    safety,
+    beforeDocumentChange,
+    resolveConflict,
   });
+  const saveCurrentDocument = useCallback(async (): Promise<boolean> => {
+    if (longWritingLocked) {
+      notify("长任务占有当前文档写锁；请先停止、终止或完成长任务");
+      return false;
+    }
+    return saveToWorkspace();
+  }, [longWritingLocked, notify, saveToWorkspace]);
+  saveToWorkspaceRef.current = saveCurrentDocument;
+  saveAsCopyRef.current = saveCurrentAsCopy;
+  const applyLongWritingSnapshot = useCallback(async (snapshot: TextFileSnapshot) => {
+    resetHistory();
+    setProject(current => ({
+      ...current,
+      markdown: snapshot.content,
+      filePath: snapshot.path,
+      name: titleFromMarkdown(snapshot.content, current.name),
+      updatedAt: new Date().toISOString(),
+    }));
+    await safety.markSaved(snapshot);
+  }, [resetHistory, safety, setProject]);
   const agentWorkspaceRuntime = useMemo<AgentWorkspaceRuntime | undefined>(() => {
     if (!desktop || !workspace?.root) return undefined;
     const separator = workspace.root.includes("\\") ? "\\" : "/";
@@ -225,44 +302,56 @@ export default function App() {
       if (!found) throw new Error("只能通过工作区文档工具操作目录中已列出的 Markdown 文件");
       return found.path;
     };
-    const bind = (path: string, nextMarkdown: string) => {
-      const name = titleFromMarkdown(nextMarkdown, path.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || "未命名");
-      projectRef.current = { ...projectRef.current, name, markdown: nextMarkdown, filePath: path || undefined, updatedAt: new Date().toISOString() };
+    const bind = (next: Project) => {
+      projectRef.current = next;
       resetHistory();
-      setProject(projectRef.current);
-      setSelectedHeadingId(parseMarkdownHeadings(nextMarkdown)[0]?.id ?? null);
+      setProject(next);
+      setSelectedHeadingId(parseMarkdownHeadings(next.markdown)[0]?.id ?? null);
       setEditorMode("section");
-      return { markdown: nextMarkdown, filePath: path };
+      return { markdown: next.markdown, filePath: next.filePath ?? "" };
+    };
+    const requireAllowed = async (reason: UnsafeDocumentAction) => {
+      if (!(await beforeDocumentChange(reason))) throw new Error("用户已取消文档操作，当前编辑内容保持不变");
     };
     return {
       listDocuments: async () => workspaceDocs.map(({ title, path, size }) => ({ title, path, size })),
       createBlank: async name => {
+        await requireAllowed("create");
         const title = name.replace(/\.(md|markdown)$/i, "").trim();
         if (!title) throw new Error("文档名称不能为空");
         const fileName = fileNameFromTitle(title);
         const path = `${workspace.root.replace(/[\\/]+$/, "")}${separator}${fileName}`;
         if (workspaceDocs.some(item => normalizePath(item.path) === normalizePath(path))) throw new Error(`文件已存在：${fileName}`);
         const nextMarkdown = `# ${title}\n`;
-        await writeTextFile(path, nextMarkdown);
-        const state = bind(path, nextMarkdown);
+        const result = await writeTextFileChecked(path, nextMarkdown, null, false);
+        if (result.outcome === "conflict") throw new Error(`文件已存在：${fileName}`);
+        await safety.markSaved(result.snapshot);
+        const next = { ...projectRef.current, id: makeId(), name: title, markdown: nextMarkdown, filePath: result.snapshot.path, contextSourceRefs: [], updatedAt: new Date().toISOString() };
+        const state = bind(next);
         await refreshWorkspaceDocs();
         return state;
       },
       open: async path => {
+        await requireAllowed("open");
         const resolved = requireWorkspaceDocument(path);
-        return bind(resolved, await readTextFile(resolved));
+        const seed = { ...projectRef.current, id: makeId(), filePath: resolved, contextSourceRefs: [], updatedAt: new Date().toISOString() };
+        return bind(await safety.openWithRecovery(resolved, seed));
       },
       save: async (nextMarkdown, path) => {
         if (!path) throw new Error("当前文档尚未关联磁盘文件");
-        const saved = await writeTextFile(path, nextMarkdown);
-        projectRef.current = { ...projectRef.current, markdown: nextMarkdown, filePath: saved, name: titleFromMarkdown(nextMarkdown, projectRef.current.name), updatedAt: new Date().toISOString() };
-        setProject(projectRef.current);
-        await refreshWorkspaceDocs();
-        return { markdown: nextMarkdown, filePath: saved };
+        if (longWritingLocked) throw new Error("长任务占有当前文档写锁，普通 Agent 不能写入该文件");
+        const snapshot = await saveWorkspaceContent(nextMarkdown, path);
+        if (!snapshot) throw new Error("保存已取消，当前内容和草稿保持不变");
+        projectRef.current = { ...projectRef.current, markdown: nextMarkdown, filePath: snapshot.path, name: titleFromMarkdown(nextMarkdown, projectRef.current.name), updatedAt: new Date().toISOString() };
+        return { markdown: nextMarkdown, filePath: snapshot.path };
       },
       reload: async path => {
         if (!path) throw new Error("当前文档尚未关联磁盘文件");
-        return bind(path, await readTextFile(path));
+        await requireAllowed("reload");
+        const reloadPath = safety.getBaseline()?.path ?? path;
+        const snapshot = await readTextFileSnapshot(reloadPath);
+        await safety.markSaved(snapshot);
+        return bind({ ...projectRef.current, markdown: snapshot.content, filePath: snapshot.path, name: titleFromMarkdown(snapshot.content, projectRef.current.name), updatedAt: new Date().toISOString() });
       },
       rename: async (name, path) => {
         if (!path) throw new Error("当前文档尚未关联磁盘文件");
@@ -271,33 +360,40 @@ export default function App() {
         const nextPath = `${dir}${oldPath.includes("\\") ? "\\" : "/"}${fileNameFromTitle(name)}`;
         if (workspaceDocs.some(item => normalizePath(item.path) === normalizePath(nextPath) && normalizePath(item.path) !== normalizePath(oldPath))) throw new Error("目标文件名已存在");
         await renameFile(oldPath, nextPath);
+        safety.renameBaseline(nextPath);
         projectRef.current = { ...projectRef.current, filePath: nextPath, name, updatedAt: new Date().toISOString() };
         setProject(projectRef.current);
         await refreshWorkspaceDocs();
-        return { markdown: project.markdown, filePath: nextPath };
+        return { markdown: projectRef.current.markdown, filePath: nextPath };
       },
       delete: async (path, mode, currentPath) => {
         const resolved = requireWorkspaceDocument(path);
+        const isCurrent = Boolean(currentPath && normalizePath(currentPath) === normalizePath(resolved));
+        if (isCurrent) await requireAllowed("delete");
         if (mode === "trash") await privilegedFileOperation({ operation: "delete", path: resolved, deleteMode: "trash" });
         else await deleteFile(resolved);
         await refreshWorkspaceDocs();
-        if (currentPath && normalizePath(currentPath) === normalizePath(resolved)) {
-          return bind("", "# 未命名文档\n");
+        if (isCurrent) {
+          safety.markUnsaved();
+          return bind({ ...createProject(), workspace: projectRef.current.workspace });
         }
         return null;
       },
     };
-  }, [desktop, workspace?.root, workspaceDocs, project.markdown, refreshWorkspaceDocs, resetHistory, setProject]);
+  }, [desktop, workspace?.root, workspaceDocs, refreshWorkspaceDocs, resetHistory, setProject, beforeDocumentChange, safety, saveWorkspaceContent, longWritingLocked]);
   const {
     transferringPath: knowledgeTransferPath,
     transfer: transferWorkspaceDocToKnowledge,
   } = useKnowledgeTransfer({
     project, desktop, setProject, refreshLibrary, refreshWorkspaceDocs,
     openKnowledgeManager: () => setKnowledgeManagerOpen(true), notify,
+    beforeDocumentChange: () => beforeDocumentChange("knowledge"),
+    markCurrentUnsaved: safety.markUnsaved,
   });
 
 
   const setActiveContent = (next: string) => {
+    if (!ensureDocumentEditable()) return;
     if (selectedHeading && editorMode === "section") {
       const nextMarkdown = replaceSection(markdown, selectedHeading, next);
       const nextHeading = remapHeadingAfterMarkdownChange(markdown, nextMarkdown, selectedHeading.id);
@@ -376,6 +472,7 @@ export default function App() {
   };
 
   const renumberAllHeadings = () => {
+    if (!ensureDocumentEditable()) return;
     const fallbackTitle = project.filePath?.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || project.name;
     const result = alignHeadingsToRules(markdown, fallbackTitle, headingNumberingStyle);
     const next = result.markdown;
@@ -411,6 +508,7 @@ export default function App() {
     if (!workspace?.root) return notify("请在设置中配置工作目录");
     const name = window.prompt("请输入文件名：")?.trim();
     if (!name) return;
+    if (!(await beforeDocumentChange("create"))) return;
     try {
       const markdown = templateId === "__default__"
         ? defaultProposalMarkdown(name)
@@ -418,8 +516,10 @@ export default function App() {
       const fileName = fileNameFromTitle(name);
       const separator = workspace.root.includes("\\") ? "\\" : "/";
       const path = `${workspace.root.replace(/[\\/]+$/, "")}${separator}${fileName}`;
-      await writeTextFile(path, markdown);
-      await openMarkdownPath(path);
+      const result = await writeTextFileChecked(path, markdown, null, false);
+      if (result.outcome === "conflict") throw new Error(`文件已存在：${fileName}`);
+      await safety.markSaved(result.snapshot);
+      await openMarkdownPath(path, true);
       await refreshWorkspaceDocs();
       notify(`已从模板创建：${fileName}`);
     } catch (error) {
@@ -440,6 +540,7 @@ export default function App() {
   };
 
   const deleteHeadingSection = async (headingNode: import("./features/editor/markdownDoc").HeadingNode) => {
+    if (!ensureDocumentEditable()) return;
     const h = headingNode.heading;
     if (h.level <= 1) return notify("不能删除文档标题");
     if (!window.confirm(`确定删除「${h.title}」及其全部内容？`)) return;
@@ -450,15 +551,18 @@ export default function App() {
 
   const deleteWorkspaceDoc = async (doc: WorkspaceMarkdownFile) => {
     if (!desktop) return notify("删除文件仅在桌面端可用");
-    const isCurrent = project.filePath === doc.path;
+    const isCurrent = sameDocumentPath(project.filePath, doc.path);
+    if (isCurrent && !(await beforeDocumentChange("delete"))) return;
     try {
+      await deleteFile(doc.path);
       if (isCurrent) {
+        await safety.clearHandledDrafts();
+        safety.markUnsaved();
         const blank = createProject();
         blank.workspace = project.workspace;
         setProject(blank);
         resetHistory();
       }
-      await deleteFile(doc.path);
       setPendingDelete(null);
       await refreshWorkspaceDocs();
       notify(`已删除：${doc.title}`);
@@ -507,6 +611,7 @@ export default function App() {
   };
 
   const replaceCurrent = () => {
+    if (!ensureDocumentEditable()) return;
     if (!findQuery) return notify("请输入查找内容");
     if (!findHits.length) return notify("未找到匹配");
     const idx = Math.min(Math.max(findIndex, 0), findHits.length - 1);
@@ -529,6 +634,7 @@ export default function App() {
   };
 
   const replaceAllInScope = () => {
+    if (!ensureDocumentEditable()) return;
     if (!findQuery) return notify("请输入查找内容");
     const { text, count } = replaceAllMatches(activeBody, findQuery, replaceQuery, { caseSensitive: findCaseSensitive });
     if (!count) return notify("未找到匹配");
@@ -538,6 +644,7 @@ export default function App() {
   };
 
   const shiftHeadingTree = (headingNode: import("./features/editor/markdownDoc").HeadingNode, direction: "promote" | "demote") => {
+    if (!ensureDocumentEditable()) return;
     try {
       const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, headingNumberingStyle);
       setMarkdown(result.markdown);
@@ -576,14 +683,21 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
+      if (mod && key === "s") {
+        e.preventDefault();
+        void saveCurrentDocument();
+        return;
+      }
       if (mod && key === "z" && !e.altKey) {
         e.preventDefault();
+        if (!ensureDocumentEditable()) return;
         if (e.shiftKey) redo();
         else undo();
         return;
       }
       if (mod && key === "y" && !e.altKey && !e.shiftKey) {
         e.preventDefault();
+        if (!ensureDocumentEditable()) return;
         redo();
         return;
       }
@@ -605,9 +719,47 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findOpen, findHits, findIndex, findQuery, activeBody, viewMode, editorMode, project]);
+  }, [findOpen, findHits, findIndex, findQuery, activeBody, viewMode, editorMode, project, ensureDocumentEditable, saveCurrentDocument]);
+
+  useEffect(() => {
+    if (!desktop) {
+      const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+        if (!safety.isDirty) return;
+        event.preventDefault();
+        event.returnValue = "";
+      };
+      window.addEventListener("beforeunload", warnBeforeUnload);
+      return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+    }
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      const appWindow = getCurrentWindow();
+      unlisten = await appWindow.onCloseRequested(async event => {
+        if (allowCloseRef.current) return;
+        event.preventDefault();
+        if (closePendingRef.current) return;
+        closePendingRef.current = true;
+        try {
+          const allowed = await beforeDocumentChange("close");
+          if (!allowed) return;
+          safety.suppressNextUnloadDraftFlush();
+          allowCloseRef.current = true;
+          await appWindow.close();
+        } finally {
+          if (!allowCloseRef.current) closePendingRef.current = false;
+        }
+      });
+      if (disposed) unlisten();
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [desktop, beforeDocumentChange, safety]);
 
   const updateActiveBlock = (fn: (b: DocumentBlock) => DocumentBlock) => {
+    if (!ensureDocumentEditable()) return;
     const next = fn(activeBlock);
     updateProject(p => {
       const currentMarkdown = p.markdown ?? "";
@@ -622,6 +774,25 @@ export default function App() {
         contextSourceRefs: next.sourceRefs,
       };
     });
+  };
+
+  const locateLongWritingChapter = (titlePath: string[]) => {
+    const targetTitle = stripHeadingPrefix(titlePath.at(-1) ?? "");
+    const heading = parseMarkdownHeadings(projectRef.current.markdown).find(item =>
+      item.level === 2 && stripHeadingPrefix(item.title) === targetTitle,
+    );
+    if (!heading) {
+      notify(`未能在当前文档中定位章节：${titlePath.join(" / ")}`);
+      return;
+    }
+    setSelectedHeadingId(heading.id);
+    setEditorMode("section");
+    setCollapsedHeadings(current => {
+      const next = new Set(current);
+      next.delete(heading.id);
+      return next;
+    });
+    notify(`已定位：${heading.title}`);
   };
 
   const captureAgentSelection = (selection: { start: number; end: number }) => {
@@ -645,6 +816,7 @@ export default function App() {
     : undefined;
 
   const applyAgentEditDraft = (draft: AgentDraft) => {
+    if (!ensureDocumentEditable()) return;
     const applied = applyAgentDraftToMarkdown(projectRef.current.markdown, draft);
     const nextHeadings = parseMarkdownHeadings(applied.markdown);
     const nextHeading = applied.headingId ? nextHeadings.find(item => item.id === applied.headingId) : undefined;
@@ -728,13 +900,21 @@ export default function App() {
     <header className="topbar">
       <div className="brand-mark"><img src={appIcon} alt="" /><span>TechProposal Studio</span></div>
       <div className="project-identity">
-        <input value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }), false)} />
-        <span>{project.filePath ? `磁盘 · ${project.filePath}` : `未关联文件 · 自动缓存 ${new Date(project.updatedAt).toLocaleDateString("zh-CN")}`}</span>
+        <input disabled={longWritingLocked || safety.status === "checking"} className={safety.isDirty ? "document-name-dirty" : ""} value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }), false)} />
+        <span className={`document-status status-${safety.status}`}>{safety.status === "checking"
+          ? "检查磁盘与草稿中…"
+          : safety.status === "conflict"
+            ? `⚠ 磁盘已在外部修改${project.filePath ? ` · ${project.filePath}` : ""}${safety.otherDraftCount ? ` · 另有 ${safety.otherDraftCount} 份草稿` : ""}`
+            : safety.status === "recovered"
+              ? `已恢复草稿 · 尚未写入磁盘${safety.otherDraftCount ? ` · 另有 ${safety.otherDraftCount} 份草稿` : ""}`
+              : safety.status === "saved"
+                ? `已保存 · ${project.filePath ?? "浏览器缓存"}`
+                : `● 未保存 · ${project.filePath ?? "尚未关联磁盘文件"}`}</span>
       </div>
       <div className="top-actions">
         <button className="text-button" disabled={!desktop} title={desktop ? "管理知识文档与索引" : "知识管理仅在桌面端可用"} onClick={() => setKnowledgeManagerOpen(true)}><BookOpen size={16} />知识管理</button>
         <button className="text-button" title="联网搜索" onClick={() => setWebSearchOpen(true)}><Globe2 size={16} />联网搜索</button>
-        <button className="text-button" onClick={() => void saveToWorkspace()}><Save size={16} />保存</button>
+        <button disabled={longWritingLocked || safety.status === "checking"} title={longWritingLocked ? "长任务占有当前文档写锁" : "保存当前 Markdown"} className={`text-button save-action ${safety.isDirty ? "dirty" : ""}`} onClick={() => void saveCurrentDocument()}><Save size={16} />保存</button>
         <div className="export-menu" ref={exportMenuRef}>
           <button className="text-button" onClick={() => setExportMenu(v => !v)}>
             <Download size={16} />导出<ChevronDown size={14} />
@@ -747,7 +927,13 @@ export default function App() {
         <IconButton
           title={rightOpen ? "收起右侧面板" : "打开右侧面板"}
           active={rightOpen}
-          onClick={() => setRightOpen(v => !v)}
+          onClick={() => {
+            if (rightOpen && longWritingLocked) {
+              notify("长任务运行期间请保持右侧面板打开");
+              return;
+            }
+            setRightOpen(value => !value);
+          }}
         >
           {rightOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
         </IconButton>
@@ -764,17 +950,22 @@ export default function App() {
             <button type="button" onClick={() => { setFileMenu(false); void createNewFile(); }}><FilePlus2 size={15} />空白新建</button>
             <button type="button" onClick={() => { setFileMenu(false); void openTemplatePicker(); }}><FilePlus2 size={15} />从模板新建</button>
             <button type="button" onClick={() => { setFileMenu(false); void saveAsTemplate(); }} disabled={!desktop || !project.filePath}><FileText size={15} />另存为模板</button>
-            <button type="button" onClick={() => { setFileMenu(false); void importFromDialog(); }}><Download size={15} />导入 Markdown</button>
             <button
               type="button"
-              disabled={importingDoc || !desktop}
-              title={!desktop ? "仅桌面端可用" : importingDoc ? "MinerU 解析中…" : "通过 MinerU 将 Word/PDF 转为 Markdown"}
-              onClick={() => { setFileMenu(false); void importWordPdfFromDialog(); }}
+              disabled={!desktop || !workspace?.root}
+              title={!desktop ? "仅桌面端可用" : !workspace?.root ? "请先配置工作目录" : "通过拖拽或文件路径导入 Markdown"}
+              onClick={() => { setFileMenu(false); setWorkspaceImportKind("markdown"); }}
+            ><Download size={15} />导入 Markdown…</button>
+            <button
+              type="button"
+              disabled={importingDoc || !desktop || !workspace?.root}
+              title={!desktop ? "仅桌面端可用" : !workspace?.root ? "请先配置工作目录" : importingDoc ? "MinerU 解析中…" : "通过拖拽或文件路径导入 Word/PDF"}
+              onClick={() => { setFileMenu(false); setWorkspaceImportKind("document"); }}
             >
-              <FilePlus2 size={15} />{importingDoc ? "解析中…" : "导入 Word/PDF"}
+              <FilePlus2 size={15} />{importingDoc ? "解析中…" : "导入 Word/PDF…"}
             </button>
             <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); void reloadCurrentMarkdown(); }}><RefreshCw size={15} />重新加载</button>
-            <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); void renameCurrentFile(); }}><Pencil size={15} />重命名</button>
+            <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); if (longWritingLocked) notify("长任务运行期间不能重命名当前文件"); else void renameCurrentFile(); }}><Pencil size={15} />重命名</button>
             <div className="file-dropdown-sep" />
             <button type="button" onClick={() => { setFileMenu(false); setEnvOpen(true); }}><Command size={15} />环境检查</button>
           </div>}
@@ -884,14 +1075,15 @@ export default function App() {
         />}
       </aside>
       <div className="left-splitter" onMouseDown={onLeftResizeStart} title="拖动调整左侧面板宽度" />
-      <main className="editor-area">
+      <main className={`editor-area ${longWritingLocked ? "long-task-locked" : ""}`}>
+        {longWritingLocked && <div className="long-task-lock-banner">长任务正在按章节安全写入。正文编辑、手动保存、标题操作、文件切换、重命名和删除已锁定；仍可预览已完成章节。</div>}
         <div className="editor-title">
           <div>
             <span>{gitDiffActive && gitDiff ? (gitDiff.kind === "commit" ? "提交历史" : gitDiff.staged ? "暂存区差异" : "工作区差异") : editorMode === "full" ? "全文" : selectedHeading ? `H${selectedHeading.level}` : "正文"}</span>
             <input
               value={gitDiffActive && gitDiff ? (gitDiff.kind === "commit" ? gitDiff.title : gitDiff.path) : editorMode === "full" ? project.name : (selectedHeading?.title ?? project.name)}
-              readOnly={gitDiffActive || editorMode === "section"}
-              onChange={e => editorMode === "full" && updateProject(p => ({ ...p, name: e.target.value }), false)}
+              readOnly={longWritingLocked || safety.status === "checking" || gitDiffActive || editorMode === "section"}
+              onChange={e => !longWritingLocked && safety.status !== "checking" && editorMode === "full" && updateProject(p => ({ ...p, name: e.target.value }), false)}
             />
           </div>
           <div className="editor-title-actions">
@@ -925,8 +1117,8 @@ export default function App() {
           </div>
           <div className="heading-toolbar-row">
             <div className="toolbar-history">
-              <IconButton title="撤销 (Ctrl+Z)" onClick={undo}><Undo2 size={16} /></IconButton>
-              <IconButton title="重做 (Ctrl+Y / Ctrl+Shift+Z)" onClick={redo}><Redo2 size={16} /></IconButton>
+              <IconButton title="撤销 (Ctrl+Z)" disabled={longWritingLocked || safety.status === "checking"} onClick={undo}><Undo2 size={16} /></IconButton>
+              <IconButton title="重做 (Ctrl+Y / Ctrl+Shift+Z)" disabled={longWritingLocked || safety.status === "checking"} onClick={redo}><Redo2 size={16} /></IconButton>
             </div>
             <span className="format-divider" />
             <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
@@ -1004,6 +1196,7 @@ export default function App() {
                 placeholder={editorMode === "full" ? "编辑完整 Markdown…" : "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片"}
                 highlights={findOpen ? findHits : []}
                 activeHighlight={findIndex}
+                readOnly={longWritingLocked || safety.status === "checking"}
               />
             </div>
           )}
@@ -1037,6 +1230,11 @@ export default function App() {
           notify={notify}
           openSettings={() => setSettingsOpen(true)}
           openSourcePreview={sourcePreview.open}
+          longWritingBaselineHash={safety.baseline?.sha256 ?? null}
+          saveBeforeLongWriting={(content) => saveWorkspaceContent(content ?? exportMarkdown(projectRef.current), projectRef.current.filePath)}
+          onLongWritingSnapshot={applyLongWritingSnapshot}
+          onLongWritingLockChange={setLongWritingLocked}
+          onLocateLongWritingChapter={locateLongWritingChapter}
         />
       </> : (
         <button className="right-rail" title="打开右侧面板" onClick={() => setRightOpen(true)}>
@@ -1060,12 +1258,16 @@ export default function App() {
       close={() => setSettingsOpen(false)}
       save={async (next, context) => {
         try {
-          let projectToSave = next;
           const nextRoot = next.workspace?.root;
-          if (nextRoot && !sameWorkspaceRoot(project.workspace?.root, nextRoot)
+          const switchingWorkspace = !sameWorkspaceRoot(project.workspace?.root, nextRoot);
+          if (switchingWorkspace && !(await beforeDocumentChange("workspace"))) return;
+          let projectToSave = switchingWorkspace
+            ? { ...next, id: makeId(), name: "未命名文档", markdown: defaultProposalMarkdown("未命名文档"), filePath: undefined, contextSourceRefs: [], updatedAt: new Date().toISOString() }
+            : next;
+          if (nextRoot && switchingWorkspace
             && !sameWorkspaceRoot(context?.connectionsLoadedRoot, nextRoot)) {
             const connections = await loadWorkspaceConnections(nextRoot);
-            projectToSave = applyConnections(next, connections);
+            projectToSave = applyConnections(projectToSave, connections);
           }
           let workspacePaths = projectToSave.workspace;
           if (projectToSave.workspace?.root) {
@@ -1078,6 +1280,7 @@ export default function App() {
             workspace: workspacePaths ?? projectToSave.workspace,
           }, root);
           saveProject(saved);
+          if (switchingWorkspace) safety.markUnsaved();
           setProject(saved);
           setSettingsOpen(false);
           notify(root ? "设置已保存到工作区" : "设置已保存（浏览器本地）");
@@ -1099,6 +1302,28 @@ export default function App() {
       project={project}
       notify={notify}
       close={() => setWebSearchOpen(false)}
+    />}
+    {workspaceImportKind && <FileUploadPanel
+      title={workspaceImportKind === "markdown" ? "导入 Markdown 到工作区" : "导入 Word / PDF 到工作区"}
+      description={workspaceImportKind === "markdown"
+        ? "拖入现有 Markdown，或选择文件路径。文件会复制到工作区根目录并立即打开。"
+        : "拖入 Word / PDF，或选择文件路径。构案将通过 MinerU 转换为 Markdown，并把图片写入工作区 assets。"}
+      extensions={workspaceImportKind === "markdown" ? MARKDOWN_UPLOAD_EXTENSIONS : DOCUMENT_UPLOAD_EXTENSIONS}
+      extensionLabel={workspaceImportKind === "markdown" ? "Markdown（.md / .markdown）" : "Word / PDF（.doc / .docx / .pdf）"}
+      destination={workspace?.root}
+      busy={workspaceImportKind === "document" && importingDoc}
+      submitLabel={workspaceImportKind === "markdown" ? "导入并打开" : "解析并导入"}
+      choosePath={() => workspaceImportKind === "markdown"
+        ? pickMarkdownFile("选择要导入到工作区的 Markdown", workspace?.root)
+        : pickDocumentFile("选择要导入的 Word / PDF", workspace?.root)}
+      upload={async path => {
+        const succeeded = workspaceImportKind === "markdown"
+          ? await importFromDialog(path)
+          : await importWordPdfFromDialog(path);
+        if (succeeded) setWorkspaceImportKind(null);
+        return succeeded;
+      }}
+      close={() => setWorkspaceImportKind(null)}
     />}
     {templatePickerOpen && <div className="modal-backdrop" onClick={() => setTemplatePickerOpen(false)}>
       <div className="modal wide template-picker-modal" onClick={e => e.stopPropagation()}>
@@ -1130,6 +1355,7 @@ export default function App() {
           setSourceOpen(false);
         } catch (e: any) {
           notify(e?.message ?? "导入失败");
+          throw e;
         }
       }}
     />}
@@ -1138,6 +1364,16 @@ export default function App() {
       controller={environmentTools}
       close={() => setEnvOpen(false)}
     />}
+    {guardRequest && <UnsavedChangesModal reason={guardRequest.reason} choose={choice => {
+      const resolve = guardRequest.resolve;
+      setGuardRequest(null);
+      resolve(choice);
+    }} />}
+    {conflictRequest && <DiskConflictModal choose={choice => {
+      const resolve = conflictRequest.resolve;
+      setConflictRequest(null);
+      resolve(choice);
+    }} />}
     {toast && <div className="toast"><Check size={16} />{toast}</div>}
   </div>;
 }

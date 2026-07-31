@@ -1,8 +1,7 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { moveWorkspaceMarkdownToKnowledge } from "./knowledge";
-import { exportMarkdown } from "../workspace/storage";
 import type { Project, WorkspaceMarkdownFile, WorkspacePaths } from "../../core/types";
-import { writeTextFile } from "../workspace/workspace";
+import { sameDocumentPath } from "../workspace/documentSafety";
 
 interface KnowledgeTransferOptions {
   project: Project;
@@ -12,6 +11,8 @@ interface KnowledgeTransferOptions {
   refreshWorkspaceDocs: (paths?: WorkspacePaths) => Promise<void>;
   openKnowledgeManager: () => void;
   notify: (message: string) => void;
+  beforeDocumentChange: () => Promise<boolean>;
+  markCurrentUnsaved: () => void;
 }
 
 export function useKnowledgeTransfer({
@@ -22,6 +23,8 @@ export function useKnowledgeTransfer({
   refreshWorkspaceDocs,
   openKnowledgeManager,
   notify,
+  beforeDocumentChange,
+  markCurrentUnsaved,
 }: KnowledgeTransferOptions) {
   const [transferringPath, setTransferringPath] = useState<string | null>(null);
 
@@ -31,11 +34,13 @@ export function useKnowledgeTransfer({
       notify("知识管理仅在桌面端可用");
       return;
     }
+    const isCurrent = sameDocumentPath(project.filePath, document.path);
+    if (isCurrent && !(await beforeDocumentChange())) return;
     setTransferringPath(document.path);
     try {
-      if (project.filePath === document.path) await writeTextFile(document.path, exportMarkdown(project));
       const imported = await moveWorkspaceMarkdownToKnowledge(workspace, document.path);
-      if (project.filePath === document.path) {
+      if (isCurrent) {
+        markCurrentUnsaved();
         setProject(current => ({ ...current, filePath: undefined, updatedAt: new Date().toISOString() }));
       }
       await refreshWorkspaceDocs(workspace);

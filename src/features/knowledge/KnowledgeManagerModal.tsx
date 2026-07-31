@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BookOpen, Check, ChevronDown, ChevronRight, ExternalLink, Eye, FilePlus2, FolderSearch, Globe2, LoaderCircle, Minus, RefreshCw, Search, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { HeadingReviewModal } from "../../components/HeadingReviewModal";
 import { IconButton } from "../../components/IconButton";
+import { FileUploadPanel } from "../../components/FileUploadPanel";
 import { SourcePreviewModal } from "../../components/SourcePreviewModal";
 import { importWordOrPdfToWorkspace } from "../export/documentImport";
 import {
@@ -20,6 +21,9 @@ import { deleteFile, importMarkdownToWorkspace, pickDocumentFile, pickMarkdownFi
 
 type ProjectUpdater = (updater: (project: Project) => Project) => void;
 type BlockUpdater = (updater: (block: DocumentBlock) => DocumentBlock) => void;
+type KnowledgeImportKind = "markdown" | "document";
+const KNOWLEDGE_MARKDOWN_EXTENSIONS = [".md", ".markdown"] as const;
+const KNOWLEDGE_DOCUMENT_EXTENSIONS = [".pdf", ".doc", ".docx"] as const;
 
 const resolveWorkspaceLocation = (root: string, location: string) => /^[a-zA-Z]:[\\/]|^\\\\/.test(location)
   ? location
@@ -30,7 +34,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   updateProject: ProjectUpdater;
   updateBlock: BlockUpdater;
   refreshWorkspaceDocs: (workspace?: WorkspacePaths) => Promise<void>;
-  openMarkdownPath: (path: string) => Promise<void>;
+  openMarkdownPath: (path: string) => Promise<void | boolean>;
   notify: (message: string) => void;
   close: () => void;
 }) {
@@ -47,6 +51,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [importKind, setImportKind] = useState<KnowledgeImportKind | null>(null);
 
   const reload = async () => {
     if (!project.workspace?.root) return;
@@ -90,26 +95,26 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [searchQuery, project.workspace?.root]);
 
-  const analyze = async (path: string) => {
-    if (!project.workspace) return;
+  const analyze = async (path: string): Promise<boolean> => {
+    if (!project.workspace) return false;
     setProgress({ documentId: "", stage: "structure_scanning", current: 0, total: 0, message: "正在本地扫描标题和章节结构…" });
     setBusy(true);
     try {
       const result = await analyzeKnowledgeMarkdown(project.workspace, path, project.model);
       setHeadingReview(result);
       setHeadingCandidates(result.candidates);
-    } catch (error) { notify(error instanceof Error ? error.message : "文档结构识别失败"); }
-    finally { setBusy(false); }
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "文档结构识别失败");
+      return false;
+    } finally { setBusy(false); }
   };
-  const importFile = async () => {
-    if (!project.workspace) return notify("请先配置工作目录");
-    const path = await pickMarkdownFile("上传知识 Markdown", project.workspace.historyDir);
-    if (path) await analyze(path);
+  const importFile = async (path: string): Promise<boolean> => {
+    if (!project.workspace) { notify("请先配置工作目录"); return false; }
+    return analyze(path);
   };
-  const importWordPdf = async () => {
-    if (!project.workspace) return notify("请先配置工作目录");
-    const sourcePath = await pickDocumentFile("选择要导入知识库的 Word / PDF（推荐 .docx / .pdf）", project.workspace.root);
-    if (!sourcePath) return;
+  const importWordPdf = async (sourcePath: string): Promise<boolean> => {
+    if (!project.workspace) { notify("请先配置工作目录"); return false; }
     setBusy(true);
     setProgress({ documentId: "", stage: "document_parsing", current: 0, total: 0, message: "正在通过 MinerU 解析 Word / PDF…" });
     let temporaryPath = "";
@@ -129,9 +134,11 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
       }
       await refreshWorkspaceDocs(project.workspace);
       notify(`已解析 ${converted.sourceFileName}，请确认知识库章节结构${converted.assetRelativeDir ? `；图片已保存到 ${converted.assetRelativeDir}` : ""}${cleanupWarning}`);
+      return true;
     } catch (error) {
       if (temporaryPath) await refreshWorkspaceDocs(project.workspace).catch(() => undefined);
       notify(error instanceof Error ? error.message : "Word/PDF 导入知识库失败");
+      return false;
     } finally {
       setBusy(false);
       setProgress(null);
@@ -261,7 +268,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   return <div className="modal-backdrop knowledge-manager-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
     <div className="modal knowledge-manager-modal" onMouseDown={event => event.stopPropagation()}>
       <div className="modal-title"><div><BookOpen size={19} /><span>知识管理</span></div><IconButton title="关闭" onClick={() => !busy && close()}><X size={18} /></IconButton></div>
-      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button disabled={busy} onClick={() => void importWordPdf()} title="通过 MinerU 将 Word/PDF 转为 Markdown"><FilePlus2 size={15} />导入 Word/PDF</button><button className="primary" disabled={busy} onClick={() => void importFile()}><FilePlus2 size={15} />导入 Markdown</button></div></div>
+      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button disabled={busy} onClick={() => setImportKind("document")} title="通过拖拽或文件路径导入 Word/PDF"><FilePlus2 size={15} />导入 Word/PDF…</button><button className="primary" disabled={busy} onClick={() => setImportKind("markdown")}><FilePlus2 size={15} />导入 Markdown…</button></div></div>
       <label className="knowledge-search"><Search size={16} /><input type="search" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索文档标题、章节和正文" aria-label="搜索知识库" />{searching && <LoaderCircle className="spinning" size={15} />}{searchQuery && !searching && <IconButton title="清空搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton>}</label>
       {progress && busy && !headingReview && <div className="knowledge-progress"><span>{progress.message}</span><b>{progress.stage === "structure_ai" ? `已等待 ${busySeconds} 秒` : progress.total > 1 ? `${progress.current}/${progress.total}` : `已进行 ${busySeconds} 秒`}</b></div>}
       {searchQuery.trim() ? <section className="knowledge-search-results">
@@ -287,6 +294,26 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
         </div></section>
       </div>}
     </div>
+    {importKind && project.workspace && <FileUploadPanel
+      title={importKind === "markdown" ? "导入 Markdown 到知识库" : "导入 Word / PDF 到知识库"}
+      description={importKind === "markdown"
+        ? "拖入 Markdown，或选择完整文件路径。导入后将先识别章节结构，再由你确认入库。"
+        : "拖入 Word / PDF，或选择完整文件路径。MinerU 转换完成后将进入章节结构确认。"}
+      extensions={importKind === "markdown" ? KNOWLEDGE_MARKDOWN_EXTENSIONS : KNOWLEDGE_DOCUMENT_EXTENSIONS}
+      extensionLabel={importKind === "markdown" ? "Markdown（.md / .markdown）" : "Word / PDF（.doc / .docx / .pdf）"}
+      destination={project.workspace.historyDir}
+      busy={busy}
+      submitLabel={importKind === "markdown" ? "识别并导入" : "解析并导入"}
+      choosePath={() => importKind === "markdown"
+        ? pickMarkdownFile("选择要导入知识库的 Markdown", project.workspace?.historyDir)
+        : pickDocumentFile("选择要导入知识库的 Word / PDF", project.workspace?.root)}
+      upload={async path => {
+        const succeeded = importKind === "markdown" ? await importFile(path) : await importWordPdf(path);
+        if (succeeded) setImportKind(null);
+        return succeeded;
+      }}
+      close={() => setImportKind(null)}
+    />}
     {headingReview && <HeadingReviewModal result={headingReview} candidates={headingCandidates} setCandidates={setHeadingCandidates} busy={busy} progress={progress} busySeconds={busySeconds} close={() => { if (!busy) { setHeadingReview(null); setHeadingCandidates([]); } }} confirm={() => void confirmReview()} />}
     {preview && <SourcePreviewModal source={preview.source} markdown={preview.markdown} loading={preview.loading} error={preview.error} workspaceRoot={project.workspace?.root} notify={notify} close={() => setPreview(null)} />}
   </div>;

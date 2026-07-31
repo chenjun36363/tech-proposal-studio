@@ -143,6 +143,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   placeholder?: string;
   highlights?: FindMatch[];
   activeHighlight?: number;
+  readOnly?: boolean;
 }>(function MarkdownSourceEditor({
   value,
   onChange,
@@ -152,6 +153,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   placeholder,
   highlights = [],
   activeHighlight = 0,
+  readOnly = false,
 }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -271,7 +273,9 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
         placeholder={placeholder ?? "在此编辑 Markdown…"}
         spellCheck={false}
         wrap="soft"
-        onChange={(e) => {
+        readOnly={readOnly}
+      aria-readonly={readOnly}
+      onChange={(e) => {
           const next = e.target.value;
           pendingInputSelectionRef.current = {
             start: e.target.selectionStart ?? next.length,
