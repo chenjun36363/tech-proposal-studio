@@ -1,3 +1,0 @@
-[    1757ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1421/node_modules/.vite/deps/react-dom_client.js?v=be90295b:20102
-[    1808ms] [WARNING] Warning: KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype. @ http://localhost:1421/node_modules/.vite/deps/marked-katex-extension.js?v=be90295b:14201
-[    2012ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:1421/favicon.ico:0
