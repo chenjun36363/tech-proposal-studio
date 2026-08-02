@@ -5,6 +5,7 @@ import {
   createChapterDraft,
   createChapterSummary,
   createConsistencyReport,
+  createLocalChapterSummary,
   createOutlinePlan,
   type ChapterDraftInput,
   type ChapterSummaryInput,
@@ -108,7 +109,7 @@ function expectForcedOnly(name: string): void {
 describe("long writing structured model calls", () => {
   afterEach(() => {
     vi.useRealTimers();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("forces submit_outline_plan and parses its tool JSON", async () => {
@@ -127,6 +128,54 @@ describe("long writing structured model calls", () => {
       config,
       undefined,
     );
+  });
+
+  it("applies phase output limits and does not send the local context budget field", async () => {
+    vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_chapter_summary", chapterSummary));
+
+    await createChapterSummary({
+      chapterId: "chapter-1",
+      titlePath: ["第一章 项目概述"],
+      markdown: "## 第一章 项目概述\n\n正文。",
+      documentTitle: "技术方案",
+      instruction: "总结",
+      contextBudgetTokens: 12000,
+    }, config);
+
+    const payload = lastPayload();
+    expect(payload.max_tokens).toBe(3000);
+    expect(JSON.stringify(payload)).not.toContain("contextBudgetTokens");
+  });
+
+  it("keeps full plans only for the target and adjacent chapters in chapter workers", async () => {
+    vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_chapter_draft", draft));
+    const expandedPlan = {
+      ...plan,
+      frozenOutline: Array.from({ length: 5 }, (_, index) => ({
+        chapterId: `chapter-${index + 1}`,
+        order: index,
+        titlePath: [`第${index + 1}章`],
+        headingSkeleton: [`## 第${index + 1}章`, `### ${index + 1}.1 详细标题`],
+        goal: `章节目标 ${index + 1} ${"详细约束".repeat(100)}`,
+        action: "rewrite" as const,
+      })),
+      targetChapterIds: ["chapter-1"],
+    };
+
+    await createChapterDraft({
+      chapterId: "chapter-1",
+      titlePath: ["第一章"],
+      originalMarkdown: "## 第一章\n\n正文。",
+      chapterGoal: "改写",
+      outlinePlan: expandedPlan,
+      contextBudgetTokens: 12000,
+    }, config);
+
+    const messages = lastPayload().messages as Array<{ role: string; content: string }>;
+    const userPayload = messages.find(message => message.role === "user")?.content ?? "";
+    expect(userPayload).toContain("### 2.1 详细标题");
+    expect(userPayload).toContain("## 第5章");
+    expect(userPayload).not.toContain("### 5.1 详细标题");
   });
 
   it("falls back to auto when a DeepSeek-compatible gateway rejects forced tool_choice", async () => {
@@ -241,6 +290,35 @@ describe("long writing structured model calls", () => {
     expect(agentCompletion).toHaveBeenCalledTimes(3);
   });
 
+  it("accepts a strict JSON content response when a gateway ignores tool calls", async () => {
+    vi.mocked(agentCompletion).mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: JSON.stringify(chapterSummary) } }],
+    });
+
+    await expect(createChapterSummary({
+      chapterId: "chapter-1",
+      titlePath: ["第一章 项目概述"],
+      markdown: "## 第一章 项目概述\n\n正文。",
+      documentTitle: "技术方案",
+      instruction: "统一改写全文",
+    }, config)).resolves.toEqual(chapterSummary);
+  });
+
+  it("builds a deterministic local summary for a failed chapter worker", () => {
+    expect(createLocalChapterSummary({
+      chapterId: "chapter-1",
+      titlePath: ["第一章 项目概述"],
+      markdown: "## 第一章 项目概述\n\n建设统一平台。\n\n- 部署在内网\n- 支持审计",
+    })).toEqual({
+      chapterId: "chapter-1",
+      titlePath: ["第一章 项目概述"],
+      summary: "建设统一平台。 部署在内网 支持审计",
+      facts: ["部署在内网", "支持审计"],
+      terminology: [],
+      unresolvedQuestions: [],
+    });
+  });
+
   it("forces isolated submit_chapter_summary for long-document preprocessing", async () => {
     vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_chapter_summary", chapterSummary));
     const input: ChapterSummaryInput = {
@@ -286,16 +364,28 @@ describe("long writing structured model calls", () => {
     expectForcedOnly("submit_consistency_report");
   });
 
-  it("rejects plain text instead of using it as a fallback", async () => {
+  it("rejects non-JSON plain text instead of using it as a fallback", async () => {
     vi.mocked(agentCompletion).mockResolvedValue({
-      choices: [{ message: { role: "assistant", content: JSON.stringify(plan) } }],
+      choices: [{ message: { role: "assistant", content: "我已经完成了目录规划。" } }],
     });
 
     await expect(createOutlinePlan({
       mode: "fill",
       instruction: "补写",
       markdown: "# 方案",
-    }, config)).rejects.toThrow("不接受文本兜底");
+    }, config)).rejects.toThrow("无效 JSON");
+  });
+
+  it("accepts strict JSON content for outline planning when the gateway omits tool_calls", async () => {
+    vi.mocked(agentCompletion).mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: JSON.stringify(plan) } }],
+    });
+
+    await expect(createOutlinePlan({
+      mode: "rewrite",
+      instruction: "统一改写全文",
+      markdown: "# 方案\n\n## 第一章 项目概述\n\n正文。",
+    }, config)).resolves.toEqual(plan);
   });
 
   it("asks the isolated worker to correct invalid function argument JSON once", async () => {

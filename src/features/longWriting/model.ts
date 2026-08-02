@@ -2,6 +2,7 @@ import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "../.
 import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../../core/types";
 import { agentCompletion } from "../../services/model";
 import type { ChapterDraftResult, ChapterSummarySubmission, ConsistencyIssue, OutlinePlan } from "./types";
+import { prepareLongWritingPayload } from "./contextBudget";
 
 export type LongWritingModelConfig = ResolvedModelConfig | OpenAICompatibleConfig;
 
@@ -22,6 +23,7 @@ export interface OutlinePlanningInput {
   }>;
   requestedChapterIds?: string[];
   attachedSources?: string[];
+  contextBudgetTokens?: number;
 }
 
 export interface ChapterSummaryInput {
@@ -30,6 +32,7 @@ export interface ChapterSummaryInput {
   markdown: string;
   documentTitle?: string;
   instruction: string;
+  contextBudgetTokens?: number;
 }
 
 export interface ChapterDraftInput {
@@ -51,6 +54,7 @@ export interface ChapterDraftInput {
     summary: string;
   }>;
   attachedSources?: string[];
+  contextBudgetTokens?: number;
 }
 
 export interface ConsistencyCheckInput {
@@ -61,6 +65,7 @@ export interface ConsistencyCheckInput {
     titlePath: string[];
     summary: string;
   }>;
+  contextBudgetTokens?: number;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -285,6 +290,30 @@ function parseOutlinePlan(argumentsValue: JsonRecord): OutlinePlan {
   return argumentsValue as unknown as OutlinePlan;
 }
 
+export function createLocalChapterSummary(input: Pick<ChapterSummaryInput, "chapterId" | "titlePath" | "markdown">): ChapterSummarySubmission {
+  const facts = input.markdown
+    .split(/\r?\n/)
+    .map(line => line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$/)?.[1]?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 8);
+  const body = input.markdown
+    .replace(/^\s*#{1,6}\s+.*$/gm, " ")
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/[ *_`~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return {
+    chapterId: input.chapterId,
+    titlePath: input.titlePath,
+    summary: (body || input.titlePath.join(" / ")).slice(0, 1200),
+    facts,
+    terminology: [],
+    unresolvedQuestions: [],
+  };
+}
+
 function parseChapterSummary(argumentsValue: JsonRecord, expectedChapterId: string): ChapterSummarySubmission {
   const chapterId = requireString(argumentsValue, "chapterId", "章节摘要");
   if (chapterId !== expectedChapterId) throw new Error(`章节摘要 chapterId 不匹配：期望 ${expectedChapterId}，实际 ${chapterId}`);
@@ -324,14 +353,34 @@ function parseConsistencyReport(argumentsValue: JsonRecord): ConsistencyIssue[] 
   return issues as unknown as ConsistencyIssue[];
 }
 
-function parseForcedToolArguments(response: unknown, expectedName: ToolName): JsonRecord {
+function parseJsonObjectText(value: string, expectedName: ToolName): JsonRecord {
+  const text = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${expectedName} 返回了无效 JSON：${detail}`);
+  }
+  return requireRecord(parsed, `${expectedName} 参数`);
+}
+
+function parseForcedToolArguments(response: unknown, expectedName: ToolName, allowContentJson = false): JsonRecord {
   const envelope = requireRecord(response, "模型返回");
   if (!Array.isArray(envelope.choices) || envelope.choices.length !== 1) {
     throw new Error("模型必须返回且只返回一个 choice");
   }
   const choice = requireRecord(envelope.choices[0], "模型 choice");
   const message = requireRecord(choice.message, "模型消息");
-  if (!Array.isArray(message.tool_calls) || message.tool_calls.length !== 1) {
+  if (!Array.isArray(message.tool_calls)) {
+    if (allowContentJson && typeof message.content === "string" && message.content.trim()) {
+      return parseJsonObjectText(message.content, expectedName);
+    }
+    const contentLength = typeof message.content === "string" ? message.content.length : 0;
+    const finishReason = typeof choice.finish_reason === "string" ? `，finish_reason=${choice.finish_reason}` : "";
+    throw new Error(`模型未返回 ${expectedName} 工具调用或严格 JSON 内容（contentLength=${contentLength}${finishReason}）`);
+  }
+  if (message.tool_calls.length !== 1) {
     throw new Error(`模型必须调用且只调用 ${expectedName}，不接受文本兜底`);
   }
   const call = requireRecord(message.tool_calls[0], "模型工具调用");
@@ -339,15 +388,7 @@ function parseForcedToolArguments(response: unknown, expectedName: ToolName): Js
   const fn = requireRecord(call.function, "模型 function 工具调用");
   if (fn.name !== expectedName) throw new Error(`模型调用了错误工具：${String(fn.name ?? "")}`);
   if (typeof fn.arguments !== "string" || !fn.arguments.trim()) throw new Error(`${expectedName} 未返回 JSON 参数`);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fn.arguments);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`${expectedName} 返回了无效 JSON：${detail}`);
-  }
-  return requireRecord(parsed, `${expectedName} 参数`);
+  return parseJsonObjectText(fn.arguments, expectedName);
 }
 
 function prefersAutoToolChoice(config: LongWritingModelConfig): boolean {
@@ -403,9 +444,10 @@ function parseStructuredToolResult<T>(
   response: AgentModelResponse,
   name: ToolName,
   parse: (argumentsValue: JsonRecord) => T,
+  allowContentJson = false,
 ): T {
   try {
-    return parse(parseForcedToolArguments(response, name));
+    return parse(parseForcedToolArguments(response, name, allowContentJson));
   } catch (error) {
     throw new StructuredToolOutputError(errorMessage(error));
   }
@@ -430,6 +472,8 @@ async function callForcedTool<T>(
   config: LongWritingModelConfig,
   signal: AbortSignal | undefined,
   parse: (argumentsValue: JsonRecord) => T,
+  maxTokens?: number,
+  allowContentJson = false,
 ): Promise<T> {
   const name = tool.function.name as ToolName;
   let useAutoToolChoice = prefersAutoToolChoice(config);
@@ -442,6 +486,7 @@ async function callForcedTool<T>(
       tool_choice: useAutoToolChoice ? "auto" as const : { type: "function" as const, function: { name } },
       temperature: 0.2,
       stream: false,
+      max_tokens: maxTokens,
     };
     try {
       return await agentCompletion(request, config, signal) as AgentModelResponse;
@@ -470,7 +515,7 @@ async function callForcedTool<T>(
 
   const firstResponse = await complete(messages);
   try {
-    return parseStructuredToolResult(firstResponse, name, parse);
+    return parseStructuredToolResult(firstResponse, name, parse, allowContentJson);
   } catch (error) {
     if (!(error instanceof StructuredToolOutputError)) throw error;
     const firstError = error.message;
@@ -480,7 +525,7 @@ async function callForcedTool<T>(
     ];
     const retryResponse = await complete(correctionMessages);
     try {
-      return parseStructuredToolResult(retryResponse, name, parse);
+      return parseStructuredToolResult(retryResponse, name, parse, allowContentJson);
     } catch (retryError) {
       if (!(retryError instanceof StructuredToolOutputError)) throw retryError;
       throw new Error(
@@ -494,22 +539,43 @@ function jsonPayload(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function scopedChapterPlan(plan: OutlinePlan, chapterId: string): OutlinePlan {
+  const target = plan.frozenOutline.find(item => item.chapterId === chapterId);
+  if (!target) return plan;
+  const nearbyIds = new Set(plan.frozenOutline
+    .filter(item => Math.abs(item.order - target.order) <= 1)
+    .map(item => item.chapterId));
+  return {
+    ...plan,
+    frozenOutline: plan.frozenOutline.map(item => nearbyIds.has(item.chapterId)
+      ? item
+      : { ...item, headingSkeleton: item.headingSkeleton.slice(0, 1), goal: item.goal.slice(0, 400) }),
+    transitionRequirements: plan.transitionRequirements.filter(item => nearbyIds.has(item.fromChapterId) || nearbyIds.has(item.toChapterId)),
+  };
+}
+
 export async function createChapterSummary(
   input: ChapterSummaryInput,
   config: LongWritingModelConfig,
   signal?: AbortSignal,
 ): Promise<ChapterSummarySubmission> {
+  const systemPrompt = [
+    "你是隔离的章节摘要 Worker，只读取当前一个 H2 章节。",
+    "只能调用 submit_chapter_summary；不得输出普通文本，不得调用文件、搜索或普通 Agent 工具。",
+    "摘要应保留可供全文规划使用的固定事实、术语和待确认项，不提出目录变更。",
+  ].join("\n");
+  const prefix = "请总结当前章节：";
+  const prepared = prepareLongWritingPayload({
+    phase: "chapter_summary",
+    input: { ...input },
+    systemPrompt,
+    userPrefix: prefix,
+    tool: chapterSummaryTool,
+  });
   return callForcedTool(chapterSummaryTool, [
-    {
-      role: "system",
-      content: [
-        "你是隔离的章节摘要 Worker，只读取当前一个 H2 章节。",
-        "只能调用 submit_chapter_summary；不得输出普通文本，不得调用文件、搜索或普通 Agent 工具。",
-        "摘要应保留可供全文规划使用的固定事实、术语和待确认项，不提出目录变更。",
-      ].join("\n"),
-    },
-    { role: "user", content: `请总结当前章节：\n${jsonPayload(input)}` },
-  ], config, signal, argumentsValue => parseChapterSummary(argumentsValue, input.chapterId));
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
+  ], config, signal, argumentsValue => parseChapterSummary(argumentsValue, input.chapterId), 3000, true);
 }
 
 export async function createOutlinePlan(
@@ -517,18 +583,24 @@ export async function createOutlinePlan(
   config: LongWritingModelConfig,
   signal?: AbortSignal,
 ): Promise<OutlinePlan> {
+  const systemPrompt = [
+    "你是长篇软件技术方案的规划 Coordinator。",
+    "只能调用 submit_outline_plan，不得输出普通文本，不得调用任何文件或 Agent 工具。",
+    "规划必须覆盖文档摘要、受众、写作规则、固定事实、术语、完整标题骨架、章节目标、衔接要求和最终处理范围。",
+    "标题骨架中的 Markdown 标题行必须保持可验证；未纳入处理范围的章节 action 使用 keep。",
+  ].join("\n");
+  const prefix = "请根据以下输入生成目录规划：";
+  const prepared = prepareLongWritingPayload({
+    phase: "outline",
+    input: { ...input },
+    systemPrompt,
+    userPrefix: prefix,
+    tool: outlineTool,
+  });
   return callForcedTool(outlineTool, [
-    {
-      role: "system",
-      content: [
-        "你是长篇软件技术方案的规划 Coordinator。",
-        "只能调用 submit_outline_plan，不得输出普通文本，不得调用任何文件或 Agent 工具。",
-        "规划必须覆盖文档摘要、受众、写作规则、固定事实、术语、完整标题骨架、章节目标、衔接要求和最终处理范围。",
-        "标题骨架中的 Markdown 标题行必须保持可验证；未纳入处理范围的章节 action 使用 keep。",
-      ].join("\n"),
-    },
-    { role: "user", content: `请根据以下输入生成目录规划：\n${jsonPayload(input)}` },
-  ], config, signal, parseOutlinePlan);
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
+  ], config, signal, parseOutlinePlan, 6000, true);
 }
 
 export async function createChapterDraft(
@@ -536,18 +608,25 @@ export async function createChapterDraft(
   config: LongWritingModelConfig,
   signal?: AbortSignal,
 ): Promise<ChapterDraftResult> {
+  const systemPrompt = [
+    "你是隔离的章节 Worker，只负责当前一个 H2 章节及其完整子树。",
+    "只能调用 submit_chapter_draft；你没有文件权限，也没有普通 Agent、搜索或其他工具。",
+    "markdown 必须包含当前章节完整内容，并严格保留输入中冻结的标题层级、标题文本和顺序。",
+    "不得新增、删除、改名或移动标题；正文应遵守 Document Bible、固定事实和术语。",
+  ].join("\n");
+  const prefix = "请生成当前章节草稿：";
+  const preparedInput = { ...input, outlinePlan: scopedChapterPlan(input.outlinePlan, input.chapterId) };
+  const prepared = prepareLongWritingPayload({
+    phase: "chapter_draft",
+    input: preparedInput,
+    systemPrompt,
+    userPrefix: prefix,
+    tool: chapterDraftTool,
+  });
   return callForcedTool(chapterDraftTool, [
-    {
-      role: "system",
-      content: [
-        "你是隔离的章节 Worker，只负责当前一个 H2 章节及其完整子树。",
-        "只能调用 submit_chapter_draft；你没有文件权限，也没有普通 Agent、搜索或其他工具。",
-        "markdown 必须包含当前章节完整内容，并严格保留输入中冻结的标题层级、标题文本和顺序。",
-        "不得新增、删除、改名或移动标题；正文应遵守 Document Bible、固定事实和术语。",
-      ].join("\n"),
-    },
-    { role: "user", content: `请生成当前章节草稿：\n${jsonPayload(input)}` },
-  ], config, signal, argumentsValue => parseChapterDraft(argumentsValue, input.chapterId));
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
+  ], config, signal, argumentsValue => parseChapterDraft(argumentsValue, input.chapterId), undefined, true);
 }
 
 export async function createConsistencyReport(
@@ -555,18 +634,24 @@ export async function createConsistencyReport(
   config: LongWritingModelConfig,
   signal?: AbortSignal,
 ): Promise<ConsistencyIssue[]> {
+  const systemPrompt = [
+    "你是长篇技术方案的一致性审查器。",
+    "只能调用 submit_consistency_report，不得输出普通文本，不得修改正文或调用其他工具。",
+    "仅报告术语冲突、事实冲突、重复内容、章节缺失、前后衔接和 Markdown 结构问题。",
+    "所有问题初始 status 必须为 pending；没有问题时提交 issues: []。",
+  ].join("\n");
+  const prefix = "请检查以下冻结计划和全文：";
+  const prepared = prepareLongWritingPayload({
+    phase: "consistency",
+    input: { ...input },
+    systemPrompt,
+    userPrefix: prefix,
+    tool: consistencyTool,
+  });
   return callForcedTool(consistencyTool, [
-    {
-      role: "system",
-      content: [
-        "你是长篇技术方案的一致性审查器。",
-        "只能调用 submit_consistency_report，不得输出普通文本，不得修改正文或调用其他工具。",
-        "仅报告术语冲突、事实冲突、重复内容、章节缺失、前后衔接和 Markdown 结构问题。",
-        "所有问题初始 status 必须为 pending；没有问题时提交 issues: []。",
-      ].join("\n"),
-    },
-    { role: "user", content: `请检查以下冻结计划和全文：\n${jsonPayload(input)}` },
-  ], config, signal, parseConsistencyReport);
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
+  ], config, signal, parseConsistencyReport, 5000, true);
 }
 
 export const longWritingToolContracts = {

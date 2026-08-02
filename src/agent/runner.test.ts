@@ -179,6 +179,22 @@ describe("runProposalAgent", () => {
     expect(payload.messages.some(message => message.content?.includes("自动上下文压缩检查点"))).toBe(true);
   });
 
+  it("fails before calling the model when the minimum recent context still exceeds the budget", async () => {
+    const events: AgentEvent[] = [];
+
+    await expect(runProposalAgent({
+      task: "本轮超长输入".repeat(2000),
+      config,
+      registry: new AgentToolRegistry(),
+      signal: new AbortController().signal,
+      onEvent: event => events.push(event),
+      contextCompressionTokens: 800,
+    })).rejects.toThrow("上下文压缩后仍超出预算");
+
+    expect(agentCompletion).not.toHaveBeenCalled();
+    expect(events.at(-1)).toEqual(expect.objectContaining({ type: "run_failed", error: expect.stringContaining("提高上下文压缩阈值") }));
+  });
+
   it("does not execute or emit calls for unavailable tools", async () => {
     agentCompletion
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "missing-1", type: "function", function: { name: "search_knowledge", arguments: "{}" } }] } }] })

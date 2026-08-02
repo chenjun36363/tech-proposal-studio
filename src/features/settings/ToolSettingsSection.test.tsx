@@ -50,7 +50,7 @@ describe("ToolSettingsSection category permissions", () => {
     const root = createRoot(container);
     act(() => root.render(<Harness initial={createProject()} />));
     const labels = Array.from(container.querySelectorAll(".tool-group-toggle b")).map(node => node.textContent);
-    expect(labels).toEqual(["规划与协作", "技能", "方案读取", "方案编辑", "知识库", "长期记忆", "联网访问", "工作区文档", "Git 读取", "Git 变更", "系统访问"]);
+    expect(labels).toEqual(["规划与协作", "内容审核", "技能", "方案读取", "方案编辑", "知识库", "长期记忆", "联网访问", "工作区文档", "Git 读取", "Git 变更", "系统访问"]);
     act(() => root.unmount());
   });
 });

@@ -111,7 +111,7 @@ export async function runProposalAgent(params: {
     ? params.config
     : resolvedFromLegacy(params.config);
   const { registry, signal, onEvent } = params;
-  const contextCompressionTokens = params.contextCompressionTokens ?? 48000;
+  const contextCompressionTokens = params.contextCompressionTokens ?? 98000;
   const maxRounds = Math.max(1, Math.round(params.maxRounds ?? 20));
   const emit = (event: AgentEventInput) => onEvent({ ...event, id: makeEventId(), at: Date.now() } as AgentEvent);
   const baseMessages = messagesForAvailableTools(params.messages ?? [{ role: "system" as const, content: params.systemPrompt ?? "" }], registry);
@@ -148,6 +148,9 @@ export async function runProposalAgent(params: {
       if (compaction.compacted) {
         messages = compaction.messages;
         emit({ type: "context_compacted", round, beforeTokens: compaction.beforeTokens, afterTokens: compaction.afterTokens, removedMessages: compaction.removedMessages });
+      }
+      if (!compaction.fitsBudget) {
+        throw new Error(`Agent 上下文压缩后仍超出预算 ${compaction.overflowTokens.toLocaleString()} tokens；请减少本轮超长输入、附加资料或工具定义，或提高上下文压缩阈值。`);
       }
       const toolChoice = requiredFirstTool
         ? { type: "function" as const, function: { name: requiredFirstTool } }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Archive, CheckCircle2, Download, Package, Plus, RefreshCw, Search, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import type { Project } from "../../core/types";
-import { checkSkillUpdates, createSkill, deleteSkill, discoverSkills, getSkillRuntimeStatus, installSkill, packageSkill, searchSkillMarket, updateMarketSkill, validateSkill, type SkillRuntimeStatus, type SkillScope, type SkillSummary } from "../skills/skills";
+import { checkSkillUpdates, createSkill, deleteSkill, discoverSkills, getSkillRuntimeStatus, installSkill, isAlwaysEnabledSkill, packageSkill, searchSkillMarket, updateMarketSkill, validateSkill, type SkillRuntimeStatus, type SkillScope, type SkillSummary } from "../skills/skills";
 import { isDesktop } from "../../services/runtime";
 import "./skills-settings.css";
 
@@ -47,8 +47,8 @@ export function SkillsSettingsSection({ project, setProject }: { project: Projec
     {error && <div className="skill-message error"><XCircle size={15} />{error}</div>}{message && <div className="skill-message success"><CheckCircle2 size={15} />{message}</div>}
     {tab === "installed" && <>
       <div className="skill-summary"><span>内置 {counts.builtin}</span><span>全局 {counts.global}</span><span>工作区 {counts.workspace}</span><button type="button" onClick={() => void refresh()} disabled={busy}><RefreshCw size={13} />刷新</button></div>
-      <div className="skill-list">{skills.map(skill => { const enabled = project.agent.enabledSkills?.some(item => item.name === skill.name && item.scope === skill.scope) ?? false; return <article className={enabled ? "enabled" : ""} key={`${skill.scope}:${skill.name}`}>
-        <div><span><b>{skill.name}</b><small>{skill.scope === "builtin" ? "内置" : skill.scope === "global" ? "全局" : "工作区"}</small></span><label className="skill-card-toggle"><input type="checkbox" role="switch" checked={enabled} disabled={!skill.available} onChange={event => toggleSkill(skill, event.target.checked)} /><span>{enabled ? "已启用" : "已停用"}</span></label></div><p>{skill.description}</p>
+      <div className="skill-list">{skills.map(skill => { const alwaysEnabled = skill.available && isAlwaysEnabledSkill(skill); const enabled = alwaysEnabled || (project.agent.enabledSkills?.some(item => item.name === skill.name && item.scope === skill.scope) ?? false); return <article className={enabled ? "enabled" : ""} key={`${skill.scope}:${skill.name}`}>
+        <div><span><b>{skill.name}</b><small>{skill.scope === "builtin" ? "内置" : skill.scope === "global" ? "全局" : "工作区"}</small></span><label className="skill-card-toggle"><input type="checkbox" role="switch" checked={enabled} disabled={!skill.available || alwaysEnabled} onChange={event => toggleSkill(skill, event.target.checked)} /><span>{alwaysEnabled ? "始终启用" : enabled ? "已启用" : "已停用"}</span></label></div><p>{skill.description}</p>
         <div className="skill-tools">{skill.allowedTools.map(tool => <code key={tool}>{tool}</code>)}</div>
         <footer><button type="button" onClick={() => void act(async () => { const result = await validateSkill(skill, workspaceRoot); if (!result.ok) throw new Error(result.errors.join("；")); }, `${skill.name} 校验通过`)}><ShieldCheck size={13} />校验</button>
           {!skill.readOnly && <><button type="button" onClick={() => { const destination = window.prompt("输入导出 ZIP 的绝对路径", `${skill.name}.zip`); if (destination) void act(() => packageSkill(skill, destination, workspaceRoot), "Skill 已打包"); }}><Package size={13} />打包</button><button type="button" className="danger" onClick={() => { if (confirm(`删除 Skill「${skill.name}」？`)) void act(() => deleteSkill(skill, workspaceRoot), "Skill 已删除"); }}><Trash2 size={13} />删除</button></>}

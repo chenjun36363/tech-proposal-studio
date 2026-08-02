@@ -2386,10 +2386,18 @@
   .md-preview p {
     margin: 0.7em 0;
   }
+  /* Tailwind's preflight removes native markers; restore them for rendered Markdown lists. */
   .md-preview ul,
   .md-preview ol {
-    padding-left: 1.4em;
+    margin: 0.7em 0;
+    padding-left: 1.75em;
+    list-style-position: outside;
   }
+  .md-preview ul { list-style-type: disc; }
+  .md-preview ol { list-style-type: decimal; }
+  .md-preview ul ul { list-style-type: circle; }
+  .md-preview ol ol { list-style-type: lower-alpha; }
+  .md-preview li + li { margin-top: 0.2em; }
   .md-preview code {
     font: 12px/1.5 Consolas, monospace;
     background: hsl(var(--muted));
@@ -3092,12 +3100,20 @@
   }
   .knowledge-search-tool {
     display: grid;
-    gap: 9px;
-    margin-bottom: 10px;
-    padding: 12px;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 11px 12px 12px;
     border: 1px solid hsl(var(--border));
-    border-radius: 7px;
+    border-radius: 8px;
     background: hsl(var(--muted) / 0.32);
+  }
+  .knowledge-search-intro {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid hsl(var(--border) / 0.85);
   }
   .knowledge-query-row {
     display: grid;
@@ -3128,14 +3144,20 @@
   .knowledge-query-row button {
     align-self: stretch;
     min-width: 54px;
+    padding: 0 12px;
     border: 0;
     border-left: 1px solid hsl(var(--border));
     border-radius: 0 5px 5px 0;
     background: hsl(var(--primary));
     color: hsl(var(--primary-foreground));
     font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms ease, opacity 120ms ease;
   }
-  .knowledge-query-row button:disabled { opacity: 0.65; }
+  .knowledge-query-row button:hover:not(:disabled) { background: hsl(var(--primary) / 0.9); }
+  .knowledge-query-row button:active:not(:disabled) { background: hsl(var(--primary) / 0.82); }
+  .knowledge-query-row button:disabled { opacity: 0.6; cursor: default; }
   .knowledge-filter-row {
     display: grid;
     grid-template-columns: 32px minmax(0, 1fr);
@@ -3148,6 +3170,9 @@
   .knowledge-filter-row > span {
     padding-top: 10px;
     line-height: 1;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: hsl(var(--muted-foreground) / 0.85);
   }
   .knowledge-search-intro > div {
     display: flex;
@@ -3179,6 +3204,26 @@
   }
   .knowledge-search-empty span {
     font-size: 10px;
+  }
+  .knowledge-results-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 2px 2px 8px;
+    font-size: 11px;
+    color: hsl(var(--muted-foreground));
+  }
+  .knowledge-results-head span {
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.85);
+  }
+  .knowledge-results-head em {
+    font-style: normal;
+    font-size: 10px;
+    padding: 2px 7px;
+    border: 1px solid hsl(var(--border));
+    border-radius: 999px;
+    background: hsl(var(--muted) / 0.6);
   }
   .knowledge-results .source-item-actions button {
     display: inline-flex;
@@ -3213,7 +3258,9 @@
     gap: 5px;
     cursor: pointer;
     border-radius: 6px;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
   }
+  .knowledge-quality-filter label:hover { border-color: hsl(var(--ring) / 0.45); }
   .knowledge-quality-filter label.active {
     position: relative;
     border-color: hsl(var(--primary) / 0.5);
@@ -3320,6 +3367,164 @@
     gap: 5px;
     cursor: pointer;
     border-radius: 6px;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  }
+  .knowledge-field-filter label:hover { border-color: hsl(var(--ring) / 0.45); }
+
+  .knowledge-doc-filter { align-items: start; }
+  .knowledge-doc-filter-body {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .knowledge-doc-filter-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .knowledge-doc-toggle {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--card));
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+  }
+  .knowledge-doc-toggle:hover { border-color: hsl(var(--ring) / 0.45); }
+  .knowledge-doc-toggle > span {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .knowledge-doc-toggle svg { flex: none; transition: transform 150ms ease; }
+  .knowledge-doc-toggle svg.open { transform: rotate(180deg); }
+  .knowledge-doc-toggle[aria-expanded="true"] {
+    border-color: hsl(var(--primary) / 0.5);
+    color: hsl(var(--primary));
+  }
+  .knowledge-doc-clear {
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 120ms ease;
+  }
+  .knowledge-doc-clear:hover { color: hsl(var(--destructive)); }
+  .knowledge-doc-list {
+    padding: 8px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--card) / 0.6);
+    border-radius: 6px;
+    display: grid;
+    gap: 7px;
+    animation: knowledge-doc-fade-in 140ms ease;
+  }
+  @keyframes knowledge-doc-fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .knowledge-doc-list-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .knowledge-doc-list-actions input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--background));
+    border-radius: 5px;
+    font-size: 11px;
+    outline: none;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .knowledge-doc-list-actions input:focus {
+    border-color: hsl(var(--ring));
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.12);
+  }
+  .knowledge-doc-list-actions input::placeholder { color: hsl(var(--muted-foreground) / 0.7); }
+  .knowledge-doc-list-actions button {
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.5);
+    border-radius: 5px;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+  }
+  .knowledge-doc-list-actions button:hover:not(:disabled) {
+    border-color: hsl(var(--primary) / 0.5);
+    color: hsl(var(--primary));
+  }
+  .knowledge-doc-list-actions button:disabled { opacity: 0.5; cursor: default; }
+  .knowledge-doc-list-items {
+    max-height: 168px;
+    overflow-y: auto;
+    display: grid;
+    gap: 2px;
+    padding-right: 2px;
+  }
+  .knowledge-doc-list-items::-webkit-scrollbar { width: 6px; }
+  .knowledge-doc-list-items::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+  .knowledge-doc-list-items label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    transition: background-color 100ms ease, color 100ms ease;
+  }
+  .knowledge-doc-list-items label:hover { background: hsl(var(--muted) / 0.6); }
+  .knowledge-doc-list-items label.active { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
+  .knowledge-doc-list-items label input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .knowledge-doc-list-items label > svg { display: none; flex: none; }
+  .knowledge-doc-list-items label.active > svg { display: block; }
+  .knowledge-doc-list-items label > span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .knowledge-doc-list-empty {
+    padding: 10px 6px;
+    text-align: center;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
   }
 
   .ai-runtime-switch {
@@ -5841,4 +6046,124 @@
     pointer-events: none;
     opacity: 0.5;
   }
+}
+
+/* ---- 编辑/预览字体缩放 + 段落首行缩进 ------------------------------------ */
+/* App.tsx 在 .md-workspace 上以内联样式注入 --md-font-scale 与 --md-preview-indent。
+   放在文件末尾、限定在 .md-workspace 作用域内，可稳定覆盖上方各主题块。 */
+.md-workspace {
+  --md-font-scale: 1;
+  --md-preview-indent: 0;
+}
+.md-workspace .md-source,
+.md-workspace .md-source-highlight {
+  font-size: calc(13px * var(--md-font-scale, 1));
+}
+.md-workspace .md-source-highlight > div {
+  min-height: calc(22.1px * var(--md-font-scale, 1));
+}
+.md-workspace .md-preview {
+  font-size: calc(14px * var(--md-font-scale, 1));
+}
+/* 首行缩进仅作用于顶层正文段落，列表项/引用/代码块保持原样 */
+.md-workspace .md-preview > p {
+  text-indent: var(--md-preview-indent, 0);
+}
+.md-workspace .md-preview code {
+  font-size: calc(12px * var(--md-font-scale, 1));
+}
+.md-workspace .md-preview table {
+  font-size: calc(13px * var(--md-font-scale, 1));
+}
+
+.font-scale-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: hsl(var(--muted-foreground));
+}
+.font-scale-control .heading-level-btn {
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground) / 0.72);
+  cursor: pointer;
+}
+.font-scale-control .heading-level-btn:hover {
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+.font-scale-value {
+  min-width: 38px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+}
+.font-scale-value:hover {
+  background: hsl(var(--foreground) / 0.055);
+  color: hsl(var(--foreground));
+}
+
+.editor-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.editor-toggle:hover {
+  border-color: hsl(var(--primary) / 0.35);
+  color: hsl(var(--foreground));
+}
+.editor-toggle.active {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+@layer components {
+  .word-export-settings { display: grid; gap: 12px; }
+  .word-logo-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .word-logo-upload, .word-logo-change {
+    display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px;
+    border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--background));
+    color: hsl(var(--foreground)); cursor: pointer;
+  }
+  .word-logo-upload:hover, .word-logo-change:hover { background: hsl(var(--muted)); }
+  .word-logo-preview {
+    width: 100%; display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+    padding: 9px; border: 1px solid hsl(var(--border)); border-radius: 9px; background: hsl(var(--muted) / .25);
+  }
+  .word-logo-preview img { max-width: 82px; max-height: 48px; object-fit: contain; justify-self: center; }
+  .word-logo-preview div { min-width: 0; display: grid; gap: 3px; }
+  .word-logo-preview b { font-size: 12px; }
+  .word-logo-preview span, .word-logo-error { font-size: 11px; color: hsl(var(--muted-foreground)); }
+  .word-logo-error { margin: 0; color: hsl(var(--destructive)); }
+  .word-logo-preview .danger-ghost { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: hsl(var(--destructive)); cursor: pointer; }
+  .word-export-subtitle { margin-top: 5px; padding-top: 13px; border-top: 1px solid hsl(var(--border)); font-size: 12px; font-weight: 650; }
+  .form-grid .word-page-number-option { display: flex; flex-direction: row; align-items: center; gap: 8px; padding-top: 5px; color: hsl(var(--foreground)); cursor: pointer; }
+  .word-page-number-option input { width: 15px; height: 15px; padding: 0; accent-color: hsl(var(--primary)); }
+  @media (max-width: 560px) { .word-logo-preview { grid-template-columns: 68px minmax(0, 1fr); } .word-logo-preview .danger-ghost { grid-column: 1 / -1; justify-self: start; } }
 }

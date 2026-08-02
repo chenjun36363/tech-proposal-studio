@@ -18,7 +18,7 @@ export function buildProposalAgentMessages(params: {
   memoryIndexLimit?: number;
 }): AgentMessage[] {
   const memoryOverview = params.memoryEnabled === false ? "" : (params.memories ?? []).filter(item => item.status === "active").slice(0, params.memoryIndexLimit ?? 20).map(item => `- ${item.title} [${item.id} | ${item.memoryType}]`).join("\n");
-  let remaining = params.pinnedContextChars ?? 24000;
+  let remaining = params.pinnedContextChars ?? 198000;
   const pinned = params.pinnedContext.map(item => {
     const title = item.source.heading ? `${item.source.title} / ${item.source.heading}` : item.source.title;
     const content = item.content.slice(0, Math.max(0, remaining));

@@ -144,6 +144,8 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   highlights?: FindMatch[];
   activeHighlight?: number;
   readOnly?: boolean;
+  /** 供外部同步滚动使用，镜像内部 textarea 元素 */
+  scrollElementRef?: React.RefObject<HTMLTextAreaElement | null>;
 }>(function MarkdownSourceEditor({
   value,
   onChange,
@@ -154,6 +156,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   highlights = [],
   activeHighlight = 0,
   readOnly = false,
+  scrollElementRef,
 }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -174,6 +177,11 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     textarea.setSelectionRange(start, end);
     if (draft === value) pendingInputSelectionRef.current = null;
   }, [draft, value]);
+
+  useLayoutEffect(() => {
+    if (scrollElementRef) scrollElementRef.current = taRef.current;
+    return () => { if (scrollElementRef) scrollElementRef.current = null; };
+  }, [scrollElementRef]);
 
   useImperativeHandle(ref, () => ({
     getSelection: () => {

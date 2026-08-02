@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  FileText,
   Info,
   Layers3,
   Minus,
@@ -24,6 +25,7 @@ import { IconButton } from "../../components/IconButton";
 import {
   getKnowledgeChunk,
   getKnowledgeSectionScope,
+  listKnowledge,
   searchKnowledge,
   setKnowledgeChunkQuality,
 } from "../knowledge/knowledge";
@@ -32,6 +34,7 @@ import type {
   DocumentBlock,
   KnowledgeChunk,
   KnowledgeChunkQuality,
+  KnowledgeDocument,
   KnowledgeSearchField,
   KnowledgeSearchResult,
   KnowledgeSectionScope,
@@ -149,6 +152,10 @@ export function InspectorPanel({
   const [knowledgeChunks, setKnowledgeChunks] = useState<Record<string, KnowledgeChunk>>({});
   const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
   const [agentMode, setAgentMode] = useState<"conversation" | "long-writing">("conversation");
+  const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([]);
+  const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
+  const [docFilterOpen, setDocFilterOpen] = useState(false);
+  const [docFilterQuery, setDocFilterQuery] = useState("");
   const desktop = isDesktop();
   const contextSources = useMemo(
     () => project.sources.filter(source => block.sourceRefs.includes(source.id)),
@@ -223,6 +230,15 @@ export function InspectorPanel({
       });
   }, [desktop, project.workspace, block.sourceRefs, knowledgeChunks]);
 
+  useEffect(() => {
+    if (!desktop || tab !== "sources" || !project.workspace?.root) return;
+    let cancelled = false;
+    void listKnowledge(project.workspace)
+      .then(documents => { if (!cancelled) setKnowledgeDocuments(documents); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [desktop, tab, project.workspace?.root]);
+
   const updateSourceContext = (
     sourceId: string,
     source?: SourceRecord,
@@ -292,6 +308,8 @@ export function InspectorPanel({
       query,
       qualities,
       [...searchFields],
+      undefined,
+      selectedDocuments.size > 0 ? [...selectedDocuments] : undefined,
     );
     const scopes = await Promise.all(found.map(result =>
       getKnowledgeSectionScope(project.workspace!, result.scopeSectionId)
@@ -358,6 +376,18 @@ export function InspectorPanel({
     });
   };
 
+  const toggleDocument = (id: string) => {
+    setSelectedDocuments(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllDocuments = () => setSelectedDocuments(new Set(knowledgeDocuments.map(doc => doc.id)));
+  const clearDocuments = () => setSelectedDocuments(new Set());
+
   const markQuality = async (chunk: KnowledgeChunk, quality: KnowledgeChunkQuality) => {
     if (!project.workspace || chunk.quality === quality) return;
     try {
@@ -418,9 +448,37 @@ export function InspectorPanel({
                 <span>{quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}</span>
               </label>)}</div>
             </div>
+            <div className="knowledge-filter-row knowledge-doc-filter">
+              <span>文档</span>
+              <div className="knowledge-doc-filter-body">
+                <div className="knowledge-doc-filter-head">
+                  <button type="button" className="knowledge-doc-toggle" onClick={() => setDocFilterOpen(open => !open)} aria-expanded={docFilterOpen}>
+                    <FileText size={13} />
+                    <span>{selectedDocuments.size === 0 ? "全部文档" : `已选 ${selectedDocuments.size}/${knowledgeDocuments.length} 个`}</span>
+                    <ChevronDown size={12} className={docFilterOpen ? "open" : ""} />
+                  </button>
+                  {selectedDocuments.size > 0 && <button type="button" className="knowledge-doc-clear" onClick={clearDocuments}>清除</button>}
+                </div>
+                {docFilterOpen && <div className="knowledge-doc-list">
+                  <div className="knowledge-doc-list-actions">
+                    <input value={docFilterQuery} onChange={event => setDocFilterQuery(event.target.value)} placeholder="筛选文档名称" />
+                    <button type="button" onClick={selectAllDocuments} disabled={!knowledgeDocuments.length}>全选</button>
+                  </div>
+                  <div className="knowledge-doc-list-items">
+                    {knowledgeDocuments.filter(doc => doc.title.toLocaleLowerCase().includes(docFilterQuery.trim().toLocaleLowerCase())).map(doc => <label key={doc.id} className={selectedDocuments.has(doc.id) ? "active" : ""}>
+                      <input type="checkbox" checked={selectedDocuments.has(doc.id)} onChange={() => toggleDocument(doc.id)} />
+                      <Check size={13} aria-hidden="true" />
+                      <span>{doc.title}</span>
+                    </label>)}
+                    {!knowledgeDocuments.length && <div className="knowledge-doc-list-empty">暂无知识文档</div>}
+                  </div>
+                </div>}
+              </div>
+            </div>
           </div>
           {searching && <div className="loading-line">正在检索知识切片…</div>}
           {!!results.length && <div className="source-list knowledge-results">
+            <div className="knowledge-results-head"><span>检索结果</span><em>{results.length} 条</em></div>
             {results.map((result, index) => <article key={result.chunk.id}>
               <div className="knowledge-result-title"><span className="knowledge-result-level">H{result.scope.level}</span><b onClick={() => previewKnowledgeScope(result.scope)}>{result.scope.title}{result.scope.sectionCount > 1 ? `（含 ${result.scope.sectionCount} 个章节）` : ""}</b><span className="knowledge-path-hint" title={`H${result.scope.level} · ${result.scope.headingPath}`} aria-label={`章节路径：H${result.scope.level} · ${result.scope.headingPath}`}><Info size={13} /></span><em className={`knowledge-quality-badge ${result.chunk.quality}`}>{result.chunk.quality === "good" ? "优质" : result.chunk.quality === "bad" ? "劣质" : "普通"}</em></div>
               <p>{result.scope.content.replace(/^#{1,6}\s+.*\n*/, "").replace(/\s+/g, " ").slice(0, 220) || "（该章节暂无正文）"}</p>

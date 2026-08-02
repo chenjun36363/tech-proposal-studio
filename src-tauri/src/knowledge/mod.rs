@@ -400,8 +400,8 @@ pub fn knowledge_sections(workspace: WorkspacePaths, document_id: String) -> Res
 }
 
 #[tauri::command]
-pub fn knowledge_search(workspace: WorkspacePaths, query: String, limit: Option<usize>, qualities: Option<Vec<String>>, fields: Option<Vec<String>>) -> Result<Vec<KnowledgeSearchResult>, String> {
-    search_repository(&workspace, &query, limit, qualities, fields)
+pub fn knowledge_search(workspace: WorkspacePaths, query: String, limit: Option<usize>, qualities: Option<Vec<String>>, fields: Option<Vec<String>>, document_ids: Option<Vec<String>>) -> Result<Vec<KnowledgeSearchResult>, String> {
+    search_repository(&workspace, &query, limit, qualities, fields, document_ids)
 }
 
 #[tauri::command]
@@ -539,22 +539,34 @@ mod tests{
  #[test] fn indexes_searches_and_removes_without_deleting_source(){
    let root=std::env::temp_dir().join(format!("gouan-knowledge-test-{}",now_string()));let history=root.join("history");fs::create_dir_all(&history).unwrap();let source=history.join("payment.md");let markdown="# 支付架构\n\n接口使用幂等键避免重复扣款。";fs::write(&source,markdown).unwrap();
    let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};let location=source.to_string_lossy().to_string();let first=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();let second=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();assert_eq!(first.id,second.id);
-   let hits=knowledge_search(workspace.clone(),"幂等".into(),Some(10),None,None).unwrap();assert_eq!(hits.len(),1);assert!(hits[0].chunk.content.contains("重复扣款"));
-   assert_eq!(knowledge_search(workspace.clone(),"支付 幂等".into(),Some(10),None,None).unwrap().len(),1);
-   let relaxed=knowledge_search(workspace.clone(),"如何保障支付接口幂等和灾备".into(),Some(10),None,None).unwrap();assert_eq!(relaxed.len(),1);assert!(relaxed[0].excerpt.contains("幂等键"));
-   assert_eq!(knowledge_search(workspace.clone(),"支付方案".into(),Some(10),None,Some(vec!["documentTitle".into()])).unwrap().len(),1);
-   assert!(knowledge_search(workspace.clone(),"支付方案".into(),Some(10),None,Some(vec!["content".into()])).unwrap().is_empty());
-   assert_eq!(knowledge_search(workspace.clone(),"支付架构".into(),Some(10),None,Some(vec!["headingPath".into()])).unwrap().len(),1);
-   let chunk_id=hits[0].chunk.id.clone();knowledge_set_chunk_quality(workspace.clone(),chunk_id.clone(),"bad".into()).unwrap();assert!(knowledge_search(workspace.clone(),"幂等".into(),Some(10),None,None).unwrap().is_empty());assert_eq!(knowledge_search(workspace.clone(),"幂等".into(),Some(10),Some(vec!["bad".into()]),None).unwrap().len(),1);knowledge_set_chunk_quality(workspace.clone(),chunk_id,"good".into()).unwrap();knowledge_remove(workspace.clone(),first.id).unwrap();assert!(source.exists());assert!(knowledge_list(workspace.clone()).unwrap().is_empty());let restored=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();knowledge_delete_file(workspace.clone(),location,Some(restored.id)).unwrap();assert!(!source.exists());assert!(knowledge_list(workspace).unwrap().is_empty());let _=fs::remove_dir_all(root);
+   let hits=knowledge_search(workspace.clone(),"幂等".into(),Some(10),None,None,None).unwrap();assert_eq!(hits.len(),1);assert!(hits[0].chunk.content.contains("重复扣款"));
+   assert_eq!(knowledge_search(workspace.clone(),"支付 幂等".into(),Some(10),None,None,None).unwrap().len(),1);
+   let relaxed=knowledge_search(workspace.clone(),"如何保障支付接口幂等和灾备".into(),Some(10),None,None,None).unwrap();assert_eq!(relaxed.len(),1);assert!(relaxed[0].excerpt.contains("幂等键"));
+   assert_eq!(knowledge_search(workspace.clone(),"支付方案".into(),Some(10),None,Some(vec!["documentTitle".into()]),None).unwrap().len(),1);
+   assert!(knowledge_search(workspace.clone(),"支付方案".into(),Some(10),None,Some(vec!["content".into()]),None).unwrap().is_empty());
+   assert_eq!(knowledge_search(workspace.clone(),"支付架构".into(),Some(10),None,Some(vec!["headingPath".into()]),None).unwrap().len(),1);
+   let chunk_id=hits[0].chunk.id.clone();knowledge_set_chunk_quality(workspace.clone(),chunk_id.clone(),"bad".into()).unwrap();assert!(knowledge_search(workspace.clone(),"幂等".into(),Some(10),None,None,None).unwrap().is_empty());assert_eq!(knowledge_search(workspace.clone(),"幂等".into(),Some(10),Some(vec!["bad".into()]),None,None).unwrap().len(),1);knowledge_set_chunk_quality(workspace.clone(),chunk_id,"good".into()).unwrap();knowledge_remove(workspace.clone(),first.id).unwrap();assert!(source.exists());assert!(knowledge_list(workspace.clone()).unwrap().is_empty());let restored=store_document(&workspace,"markdown",&location,None,"支付方案",markdown).unwrap();knowledge_delete_file(workspace.clone(),location,Some(restored.id)).unwrap();assert!(!source.exists());assert!(knowledge_list(workspace).unwrap().is_empty());let _=fs::remove_dir_all(root);
+ }
+ #[test] fn filters_search_by_selected_documents(){
+   let root=std::env::temp_dir().join(format!("gouan-docfilter-test-{}",now_string()));let history=root.join("history");fs::create_dir_all(&history).unwrap();
+   let first_path=history.join("a.md");let second_path=history.join("b.md");let first_md="# 文档甲\n\n权限认证正文。";let second_md="# 文档乙\n\n权限认证正文。";
+   fs::write(&first_path,first_md).unwrap();fs::write(&second_path,second_md).unwrap();
+   let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};
+   let first=store_document(&workspace,"markdown",&first_path.to_string_lossy(),None,"文档甲",first_md).unwrap();let second=store_document(&workspace,"markdown",&second_path.to_string_lossy(),None,"文档乙",second_md).unwrap();
+   assert_eq!(knowledge_search(workspace.clone(),"权限认证".into(),Some(10),None,None,None).unwrap().len(),2);
+   let only_first=knowledge_search(workspace.clone(),"权限认证".into(),Some(10),None,None,Some(vec![first.id.clone()])).unwrap();assert_eq!(only_first.len(),1);assert_eq!(only_first[0].chunk.document_id,first.id);
+   let only_second=knowledge_search(workspace.clone(),"权限认证".into(),Some(10),None,None,Some(vec![second.id.clone()])).unwrap();assert_eq!(only_second.len(),1);assert_eq!(only_second[0].chunk.document_id,second.id);
+   assert!(knowledge_search(workspace.clone(),"权限认证".into(),Some(10),None,None,Some(vec!["nonexistent-id".into()])).unwrap().is_empty());
+   let _=fs::remove_dir_all(root);
  }
  #[test] fn ranks_relevance_before_quality_and_handles_long_natural_queries(){
    let nonce=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("gouan-ranking-test-{nonce}"));let history=root.join("history");fs::create_dir_all(&history).unwrap();
    let weak=history.join("weak.md");let exact=history.join("exact.md");let weak_markdown="# 通用高质量参考\n\n支付接口仅说明基础接入。";let exact_markdown="# 支付接口幂等与灾备\n\n支付接口使用幂等键避免重复扣款，并通过双中心灾备保障连续性。";fs::write(&weak,weak_markdown).unwrap();fs::write(&exact,exact_markdown).unwrap();
    let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};store_document(&workspace,"markdown",&weak.to_string_lossy(),None,"通用高质量参考",weak_markdown).unwrap();store_document(&workspace,"markdown",&exact.to_string_lossy(),None,"支付接口幂等与灾备",exact_markdown).unwrap();
-   let weak_hit=knowledge_search(workspace.clone(),"基础接入".into(),Some(10),None,None).unwrap().remove(0);knowledge_set_chunk_quality(workspace.clone(),weak_hit.chunk.id,"good".into()).unwrap();
-   let ranked=knowledge_search(workspace.clone(),"支付 接口".into(),Some(10),None,None).unwrap();assert!(ranked.len()>=2);assert_eq!(ranked[0].chunk.document_title,"支付接口幂等与灾备");assert_eq!(ranked[0].chunk.quality,"normal");
-   let hits=knowledge_search(workspace.clone(),"请帮我查一下如何保障支付接口幂等和灾备".into(),Some(10),None,None).unwrap();assert!(!hits.is_empty());assert_eq!(hits[0].chunk.document_title,"支付接口幂等与灾备");
-   let quoted=knowledge_search(workspace.clone(),"\"支付\" 支付 接口 幂等 灾备 标准 安全 连续性 高可用 容灾".into(),Some(10),None,None).unwrap();assert!(!quoted.is_empty());let _=fs::remove_dir_all(root);
+   let weak_hit=knowledge_search(workspace.clone(),"基础接入".into(),Some(10),None,None,None).unwrap().remove(0);knowledge_set_chunk_quality(workspace.clone(),weak_hit.chunk.id,"good".into()).unwrap();
+   let ranked=knowledge_search(workspace.clone(),"支付 接口".into(),Some(10),None,None,None).unwrap();assert!(ranked.len()>=2);assert_eq!(ranked[0].chunk.document_title,"支付接口幂等与灾备");assert_eq!(ranked[0].chunk.quality,"normal");
+   let hits=knowledge_search(workspace.clone(),"请帮我查一下如何保障支付接口幂等和灾备".into(),Some(10),None,None,None).unwrap();assert!(!hits.is_empty());assert_eq!(hits[0].chunk.document_title,"支付接口幂等与灾备");
+   let quoted=knowledge_search(workspace.clone(),"\"支付\" 支付 接口 幂等 灾备 标准 安全 连续性 高可用 容灾".into(),Some(10),None,None,None).unwrap();assert!(!quoted.is_empty());let _=fs::remove_dir_all(root);
  }
  #[test] fn repeated_heading_recognition_is_idempotent(){
    let original="目 录\n\n[第一章 概述](#_Toc1)\n[1.1 建设目标](#_Toc2)\n[1.2 建设范围](#_Toc3)\n\n# 第一章 概述\n\n## 1.1 建设目标\n\n正文\n";
@@ -565,9 +577,9 @@ mod tests{
  #[test] fn searches_leaf_section_and_expands_parent_scope(){
    let root=std::env::temp_dir().join(format!("gouan-scope-test-{}",now_string()));let history=root.join("history");fs::create_dir_all(&history).unwrap();let source=history.join("water.md");let markdown="# 功能方案\n\n章引言\n\n## 领导驾驶舱\n\n驾驶舱引言\n\n### 环境质量专题\n\n专题引言\n\n#### 水环境专题\n\n水质达标率正文\n\n#### 声环境专题\n\n噪声正文\n\n### 实验室专题\n\n实验室正文";fs::write(&source,markdown).unwrap();
    let workspace=WorkspacePaths{root:root.to_string_lossy().into(),history_dir:history.to_string_lossy().into()};let document=store_document(&workspace,"markdown",&source.to_string_lossy(),None,"水环境方案",markdown).unwrap();assert_eq!(document.section_count,document.chunk_count);
-   let hits=knowledge_search(workspace.clone(),"水质达标率".into(),Some(10),None,Some(vec!["content".into()])).unwrap();assert_eq!(hits.len(),1);assert_eq!(hits[0].level,4);assert!(hits[0].chunk.heading_path.contains("水环境专题"));
-   let water_section=hits[0].matched_section_id.clone();assert_eq!(knowledge_set_section_quality(workspace.clone(),water_section.clone(),"good".into()).unwrap(),"good");let listed=knowledge_sections(workspace.clone(),document.id.clone()).unwrap();assert_eq!(listed.iter().find(|section|section.id==water_section).unwrap().quality,"good");assert_eq!(knowledge_search(workspace.clone(),"水质达标率".into(),Some(10),Some(vec!["good".into()]),Some(vec!["content".into()])).unwrap().len(),1);assert!(knowledge_search(workspace.clone(),"水质达标率".into(),Some(10),Some(vec!["normal".into()]),Some(vec!["content".into()])).unwrap().is_empty());
+   let hits=knowledge_search(workspace.clone(),"水质达标率".into(),Some(10),None,Some(vec!["content".into()]),None).unwrap();assert_eq!(hits.len(),1);assert_eq!(hits[0].level,4);assert!(hits[0].chunk.heading_path.contains("水环境专题"));
+   let water_section=hits[0].matched_section_id.clone();assert_eq!(knowledge_set_section_quality(workspace.clone(),water_section.clone(),"good".into()).unwrap(),"good");let listed=knowledge_sections(workspace.clone(),document.id.clone()).unwrap();assert_eq!(listed.iter().find(|section|section.id==water_section).unwrap().quality,"good");assert_eq!(knowledge_search(workspace.clone(),"水质达标率".into(),Some(10),Some(vec!["good".into()]),Some(vec!["content".into()]),None).unwrap().len(),1);assert!(knowledge_search(workspace.clone(),"水质达标率".into(),Some(10),Some(vec!["normal".into()]),Some(vec!["content".into()]),None).unwrap().is_empty());
    let parent=hits[0].parent_id.clone().unwrap();let scope=knowledge_section_scope(workspace.clone(),parent).unwrap();assert_eq!(scope.level,3);assert!(scope.content.contains("水环境专题"));assert!(scope.content.contains("声环境专题"));assert!(!scope.content.contains("实验室专题"));assert_eq!(scope.section_count,3);
-   let title_hits=knowledge_search(workspace.clone(),"水环境专题".into(),Some(10),None,Some(vec!["headingPath".into()])).unwrap();assert_eq!(title_hits.len(),1);assert_eq!(title_hits[0].matched_section_id,hits[0].matched_section_id);let _=fs::remove_dir_all(root);
+   let title_hits=knowledge_search(workspace.clone(),"水环境专题".into(),Some(10),None,Some(vec!["headingPath".into()]),None).unwrap();assert_eq!(title_hits.len(),1);assert_eq!(title_hits[0].matched_section_id,hits[0].matched_section_id);let _=fs::remove_dir_all(root);
  }
 }

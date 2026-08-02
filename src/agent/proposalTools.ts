@@ -1,6 +1,6 @@
 import type { AgentDraft, AgentEditorSelection, AgentGitApprovalRequest, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
 import { AgentToolRegistry, objectSchema } from "./toolRegistry";
-import type { DocumentBlock, Project } from "../core/types";
+import type { DocumentBlock, Project, ResolvedModelConfig } from "../core/types";
 import { searchWeb } from "../services/search";
 import { applyAgentDraft, parseMarkdownHeadings, sectionBody } from "../features/editor/markdownDoc";
 import { isDesktop } from "../services/runtime";
@@ -9,6 +9,7 @@ import { privilegedFileOperation, runPrivilegedPowerShell } from "../services/pr
 import { fetchKnowledgeWebPage, getKnowledgeSectionScope, searchKnowledge } from "../features/knowledge/knowledge";
 import { proposeProjectMemory, readProjectMemory, searchProjectMemories } from "./memoryService";
 import { registerAgentGitTools, type AgentGitRuntime } from "./gitTools";
+import { formatContentReview, reviewContent } from "./contentReview";
 const text = (value: unknown, field: string) => {
   if (typeof value !== "string" || !value.trim()) throw new Error(`缺少参数：${field}`);
   return value.trim();
@@ -55,7 +56,8 @@ export const proposalAgentSystemPrompt = `你是“构案”中的软件技术�
 10. 用户明确加入的资料已直接提供在系统上下文中。search_knowledge 的 query 使用 2～6 个核心名词或标准号，不要提交完整问题；无结果时最多改写关键词重试一次，禁止重复同一查询。
 11. 联网搜索可用时，仅在本地资料和知识库不足以回答时调用 web_search。需要搜索时直接调用工具，不要在回复文本中询问用户是否同意查询。搜索次数不得超过系统配置的单任务上限，每次任务最多阅读 3 个网页；优先选择政府、标准组织和厂商官方来源，达到足够依据后立即停止检索并完成用户任务，不要遍历全部结果或重复查询。需要依据网页正文时调用 read_web_page，不能只根据搜索摘要下结论。
 12. 只有跨会话仍有价值的事实、偏好或决策，才可调用 remember_project_fact 提出待审核记忆；不得声称记忆已被用户确认。
-13. 缺少会实质改变结果的关键上下文，且无法从当前对话、方案或可用资料中确定时，调用 ask_user。问题必须具体，并分别给出 A 首选推荐、B 更激进、C 更保守的方案概述；不要用普通回复代替工具提问，也不要询问可自行查明的信息。`;
+13. 缺少会实质改变结果的关键上下文，且无法从当前对话、方案或可用资料中确定时，调用 ask_user。问题必须具体，并分别给出 A 首选推荐、B 更激进、C 更保守的方案概述；不要用普通回复代替工具提问，也不要询问可自行查明的信息。
+14. 用户要求验收、审核、合规检查，或任务包含明确完成标准时，在完成读取或修改后调用 review_content 逐项复核。该工具只检查不修改；最终回复必须如实保留未通过和无法确认项。`;
 
 export interface AgentDocumentState { markdown: string; filePath?: string; }
 export interface AgentSearchHighlight { query: string; caseSensitive: boolean; scope: "document" | "section"; headingId?: string; }
@@ -118,6 +120,7 @@ ${JSON.stringify({ start: selection.start, end: selection.end, scope: selection.
 
 export function createProposalToolRegistry(params: {
   project: Project;
+  modelConfig?: ResolvedModelConfig;
   block: DocumentBlock;
   selection?: AgentEditorSelection;
   reviewDraft: (draft: AgentDraft, signal: AbortSignal) => boolean | Promise<boolean>;
@@ -498,6 +501,57 @@ export function createProposalToolRegistry(params: {
         return reviewAndApply(draft, signal);
       },
     });
+
+  if (params.modelConfig) {
+    registry.register({
+      definition: { type: "function", function: {
+        name: "review_content",
+        description: "使用一次隔离的模型审核调用，按明确要求检查当前方案全文、当前章节、指定章节或发送任务时的选区。只返回逐项结论和改进建议，不修改正文。",
+        parameters: objectSchema({
+          scope: { type: "string", enum: ["document", "current_section", "section", "selection"], description: "要审核的内容范围" },
+          heading_id: { type: "string", description: "scope=section 时使用 get_proposal_outline 返回的章节 ID" },
+          requirements: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" }, description: "1 到 20 条可逐项判断的审核要求" },
+        }, ["scope", "requirements"]),
+      } },
+      execute: async (args, signal) => {
+        const scope = text(args.scope, "scope");
+        const requirements = Array.isArray(args.requirements)
+          ? args.requirements.filter((item): item is string => typeof item === "string")
+          : [];
+        let content: string;
+        let scopeLabel: string;
+        let headingId: string | undefined;
+        if (scope === "document") {
+          content = currentMarkdown;
+          scopeLabel = "当前方案全文";
+        } else if (scope === "current_section") {
+          const heading = findHeading(currentHeadingId);
+          if (!heading) throw new Error("当前没有可审核的章节");
+          content = sectionBody(currentMarkdown, heading);
+          headingId = heading.id;
+          scopeLabel = `当前章节：${heading.title}`;
+        } else if (scope === "section") {
+          const heading = requireHeading(text(args.heading_id, "heading_id"));
+          content = sectionBody(currentMarkdown, heading);
+          headingId = heading.id;
+          scopeLabel = `指定章节：${heading.title}`;
+        } else if (scope === "selection") {
+          if (!currentSelection || currentSelection.start === currentSelection.end) throw new Error("发送任务时没有非空选区");
+          content = currentSelection.text;
+          headingId = currentSelection.sectionId;
+          scopeLabel = currentSelection.sectionTitle ? `选区：${currentSelection.sectionTitle}` : "发送任务时的选区";
+        } else {
+          throw new Error("scope 必须是 document、current_section、section 或 selection");
+        }
+        const result = await reviewContent({ content, requirements, scopeLabel }, params.modelConfig!, signal);
+        return {
+          content: formatContentReview(result),
+          data: { kind: "content_review", scope, scopeLabel, headingId, contentChars: content.length, requirements, ...result },
+          isError: false,
+        };
+      },
+    });
+  }
 
   const bindDocument = (state: AgentDocumentState) => {
     currentMarkdown = state.markdown;

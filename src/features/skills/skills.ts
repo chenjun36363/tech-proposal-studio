@@ -17,7 +17,14 @@ const BUILTIN_SKILLS: SkillSummary[] = [
   { name: "docx", scope: "builtin", baseDir: "docx", skillFile: "SKILL.md", description: "创建、读取和修改 DOCX 文档", allowedTools: ["skills_manager", "skill_run_command"], readOnly: true, available: false },
   { name: "excel", scope: "builtin", baseDir: "excel", skillFile: "SKILL.md", description: "创建、读取和修改 Excel XLSX 工作簿", allowedTools: ["skills_manager", "skill_run_command"], readOnly: true, available: false },
   { name: "agent-browser", scope: "builtin", baseDir: "agent-browser", skillFile: "SKILL.md", description: "通过 agent-browser CLI 执行浏览器自动化", allowedTools: ["skills_manager", "skill_run_command"], readOnly: true, available: false },
+  { name: "skills-creator", scope: "builtin", baseDir: "skills-creator", skillFile: "SKILL.md", description: "创建、更新、校验和打包构案 Agent Skills", allowedTools: ["skills_manager"], readOnly: true, available: false },
+  { name: "skills-installer", scope: "builtin", baseDir: "skills-installer", skillFile: "SKILL.md", description: "安装、搜索、更新、校验或打包构案 Agent Skills", allowedTools: ["skills_manager"], readOnly: true, available: false },
 ];
+
+const ALWAYS_ENABLED_SKILL_NAMES = new Set(["skills-creator", "skills-installer"]);
+export function isAlwaysEnabledSkill(skill: Pick<SkillReference, "name" | "scope">): boolean {
+  return skill.scope === "builtin" && ALWAYS_ENABLED_SKILL_NAMES.has(skill.name);
+}
 
 export async function discoverSkills(workspaceRoot?: string): Promise<SkillDiscovery> {
   if (!isDesktop()) return { skills: BUILTIN_SKILLS, globalRoot: "", workspaceRoot: null };
@@ -34,7 +41,7 @@ export async function readSkillResource(reference: SkillReference, path: string,
 export async function validateSkill(reference: Pick<SkillReference, "name" | "scope">, workspaceRoot?: string): Promise<SkillValidationResult> {
   return invoke("skill_validate", { request: { ...reference, workspaceRoot } });
 }
-export async function createSkill(input: { scope: Exclude<SkillScope, "builtin">; workspaceRoot?: string; name: string; description: string; allowedTools?: string[] }): Promise<SkillSummary> {
+export async function createSkill(input: { scope: Exclude<SkillScope, "builtin">; workspaceRoot?: string; name: string; description: string; allowedTools?: string[]; content?: string; files?: Record<string, string>; overwrite?: boolean }): Promise<SkillSummary> {
   return invoke("skill_create", { request: input });
 }
 export async function installSkill(input: SkillInstallSource): Promise<SkillSummary> { return invoke("skill_install", { request: input }); }
@@ -68,7 +75,10 @@ export function buildSkillsSystemPrompt(skills: SkillSummary[]): string {
 
 export function resolveEnabledSkills(references: SkillReference[] | undefined, discovered: SkillSummary[]): SkillSummary[] {
   const byKey = new Map(discovered.map(skill => [`${skill.scope}:${skill.name}`, skill]));
-  return (references ?? []).map(reference => byKey.get(`${reference.scope}:${reference.name}`)).filter((skill): skill is SkillSummary => Boolean(skill));
+  const resolved = (references ?? []).map(reference => byKey.get(`${reference.scope}:${reference.name}`)).filter((skill): skill is SkillSummary => Boolean(skill));
+  const seen = new Set(resolved.map(skill => `${skill.scope}:${skill.name}`));
+  const alwaysEnabled = discovered.filter(skill => skill.available && isAlwaysEnabledSkill(skill) && !seen.has(`${skill.scope}:${skill.name}`));
+  return [...alwaysEnabled, ...resolved];
 }
 
 export function extractExplicitSkillNames(text: string): string[] {

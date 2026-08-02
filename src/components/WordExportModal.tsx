@@ -10,15 +10,16 @@ import {
 } from "../features/export/docxExport";
 import { IconButton } from "./IconButton";
 
-const cloneDefaults = (): DocxExportSettings => ({
+const cloneDefaults = (project: Project): DocxExportSettings => ({
   ...DEFAULT_DOCX_EXPORT_SETTINGS,
+  ...project.wordExport,
   headingSizes: [...DEFAULT_DOCX_EXPORT_SETTINGS.headingSizes],
   headingBefore: [...DEFAULT_DOCX_EXPORT_SETTINGS.headingBefore],
   headingAfter: [...DEFAULT_DOCX_EXPORT_SETTINGS.headingAfter],
 });
 
 export function WordExportModal({ project, close, notify }: { project: Project; close: () => void; notify: (message: string) => void }) {
-  const [settings, setSettings] = useState<DocxExportSettings>(cloneDefaults);
+  const [settings, setSettings] = useState<DocxExportSettings>(() => cloneDefaults(project));
   const [check, setCheck] = useState<DocxImageCheckResult | null>(null);
   const [checking, setChecking] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -42,8 +43,12 @@ export function WordExportModal({ project, close, notify }: { project: Project; 
     setExporting(true);
     try {
       const path = await downloadDocx(project, settings);
-      if (path) notify(`Word 已保存：${path}`);
-      else if (path === undefined) notify("已取消导出");
+      if (path === null) {
+        notify("已取消导出");
+      } else {
+        const result = path ? `Word 已保存：${path}` : "Word 已导出";
+        notify(`${result}。首次打开若目录未自动刷新，请按 Ctrl+A 后按 F9。`);
+      }
       close();
     } catch (error) {
       notify(error instanceof Error ? error.message : "导出 Word 失败");
@@ -66,7 +71,7 @@ export function WordExportModal({ project, close, notify }: { project: Project; 
       <div className="modal-title"><div><FileText size={18} /><span>导出 Word</span></div><IconButton title="关闭" onClick={close}><X size={18} /></IconButton></div>
       <div className="word-export-body">
         <section>
-          <div className="word-export-section-title"><b>文档排版</b><span>当前导出规则已设为默认值</span></div>
+          <div className="word-export-section-title"><b>文档排版</b><span>封面、页眉和页脚来自“设置 → Word 导出”；首次打开若目录未自动刷新，请按 Ctrl+A 后按 F9。</span></div>
           <div className="word-export-grid compact">
             <label>标题字体<input value={settings.headingFont} onChange={e => setSettings({ ...settings, headingFont: e.target.value })} /></label>
             <label>正文字体<input value={settings.bodyFont} onChange={e => setSettings({ ...settings, bodyFont: e.target.value })} /></label>

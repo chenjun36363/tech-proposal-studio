@@ -4,7 +4,8 @@ use crate::knowledge::{
     KnowledgeChunk, KnowledgeDocument, KnowledgeSearchResult, KnowledgeSection,
     KnowledgeSectionScope, WorkspacePaths,
 };
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::types::Value;
+use rusqlite::{params, params_from_iter, OptionalExtension, Row};
 use std::collections::{HashMap, HashSet};
 
 fn chunk_from_row(row: &Row<'_>) -> rusqlite::Result<KnowledgeChunk> {
@@ -248,6 +249,7 @@ pub(in crate::knowledge) fn search(
     limit: Option<usize>,
     qualities: Option<Vec<String>>,
     fields: Option<Vec<String>>,
+    document_ids: Option<Vec<String>>,
 ) -> Result<Vec<KnowledgeSearchResult>, String> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -282,21 +284,38 @@ pub(in crate::knowledge) fn search(
     let include_good = qualities.iter().any(|quality| quality == "good");
     let include_normal = qualities.iter().any(|quality| quality == "normal");
     let include_bad = qualities.iter().any(|quality| quality == "bad");
+    let document_ids = document_ids
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let document_filter = if document_ids.is_empty() {
+        String::new()
+    } else {
+        let placeholders = (0..document_ids.len())
+            .map(|index| format!("?{}", index + 7))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(" AND d.id IN ({placeholders})")
+    };
     let db = knowledge_db(workspace)?;
     let requested_limit = limit.unwrap_or(30).min(100);
     let candidate_limit = requested_limit.saturating_mul(4).clamp(20, 100);
-    let sql = "SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END+CASE c.quality WHEN 'good' THEN -0.6 WHEN 'bad' THEN 2.5 ELSE 0.0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')) ORDER BY score,c.position LIMIT ?6";
+    let sql = format!("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END+CASE c.quality WHEN 'good' THEN -0.6 WHEN 'bad' THEN 2.5 ELSE 0.0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')){document_filter} ORDER BY score,c.position LIMIT ?6");
     let run = |expression: &str, stage_penalty: f64| -> Result<Vec<KnowledgeSearchResult>, String> {
-        let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+        let mut bind_values: Vec<Value> = vec![
+            Value::Text(expression.to_string()),
+            Value::Text(trimmed.to_string()),
+            Value::Integer(include_good as i64),
+            Value::Integer(include_normal as i64),
+            Value::Integer(include_bad as i64),
+            Value::Integer(candidate_limit as i64),
+        ];
+        bind_values.extend(document_ids.iter().cloned().map(Value::Text));
         let rows = stmt.query_map(
-            params![
-                expression,
-                trimmed,
-                include_good,
-                include_normal,
-                include_bad,
-                candidate_limit as i64
-            ],
+            params_from_iter(bind_values),
             |row| {
                 let chunk = chunk_from_row(row)?;
                 let excerpt = search_excerpt(&chunk.content, &query_tokens);

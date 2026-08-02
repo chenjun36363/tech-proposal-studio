@@ -42,8 +42,26 @@ describe("project persistence", () => {
     const project = createProject() as Partial<ReturnType<typeof createProject>>;
     delete project.agent;
     localStorage.setItem("tech-proposal-studio.project.v1", JSON.stringify(project));
-    expect(loadProject().agent.contextCompressionTokens).toBe(48000);
+    expect(loadProject().agent.contextCompressionTokens).toBe(98000);
     expect(loadProject().agent.memoryEnabled).toBe(true);
+  });
+  it("adds default Word export settings to legacy projects and persists custom values", () => {
+    const legacy = createProject() as Partial<ReturnType<typeof createProject>>;
+    delete legacy.wordExport;
+    localStorage.setItem("tech-proposal-studio.project.v1", JSON.stringify(legacy));
+    expect(loadProject().wordExport.companyNameZh).toBe("江苏远大信息股份有限公司");
+    expect(loadProject().wordExport.showFooterPageNumbers).toBe(true);
+
+    const project = createProject();
+    project.wordExport.headerTitle = "项目技术方案";
+    project.wordExport.coverLogoDataUrl = "data:image/png;base64,abc";
+    project.wordExport.showFooterPageNumbers = false;
+    saveProject(project);
+    expect(loadProject().wordExport).toMatchObject({
+      headerTitle: "项目技术方案",
+      coverLogoDataUrl: "data:image/png;base64,abc",
+      showFooterPageNumbers: false,
+    });
   });
   it("persists the configured web search call limit", () => {
     const project = createProject();

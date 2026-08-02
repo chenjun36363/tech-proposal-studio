@@ -1,10 +1,23 @@
-import type { Project } from "./types";
+import type { Project, WordExportPreferences } from "./types";
 import { defaultProposalMarkdown } from "../features/editor/markdownDoc";
 import { defaultAgentSettings } from "../agent/settings";
 import { createDefaultProvider, createDefaultSelection } from "../services/llm/defaults";
 import { deriveModelSnapshot } from "../services/llm/resolve";
 
 export const makeId = () => crypto.randomUUID();
+
+export const DEFAULT_WORD_EXPORT_PREFERENCES: WordExportPreferences = {
+  coverLogoDataUrl: "",
+  companyNameZh: "江苏远大信息股份有限公司",
+  companyNameEn: "JIANGSU YUANDA INFORMATION CO.,LTD.",
+  companyAddress: "地址：江苏省市杨舍镇沙洲西路115号天霸商务楼A幢4F",
+  companyPhone: "电话：0512-58694066",
+  companyFax: "传真：0512-58549682",
+  companyWebsite: "Http://www.sinoyd.com/",
+  companyEmail: "E-mail:sinoyd@sinoyd.com",
+  headerTitle: "",
+  showFooterPageNumbers: true,
+};
 
 export function createProject(): Project {
   const name = "未命名技术方案";
@@ -29,6 +42,7 @@ export function createProject(): Project {
       pollIntervalSeconds: 3,
     },
     agent: { ...defaultAgentSettings },
+    wordExport: { ...DEFAULT_WORD_EXPORT_PREFERENCES },
     workspace: { root: "", historyDir: "" },
     commands: [
       { id: makeId(), name: "检查 Node 版本", program: "node", args: ["--version"], cwd: ".", timeoutMs: 15000, allowShell: false },

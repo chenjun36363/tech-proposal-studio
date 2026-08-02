@@ -12,7 +12,7 @@ import { longWritingErrorMessage } from "./errors";
 import { appendLongWritingEvent, createLongWritingEvent } from "./events";
 import { LongWritingEventLog, LongWritingJobCard } from "./LongWritingOutput";
 import { applyEditableOutline, createEditableOutline, createNewOutlineChapter, type EditableOutlineChapter } from "./outlineEditing";
-import { createChapterDraft, createChapterSummary, createConsistencyReport, createOutlinePlan } from "./model";
+import { createChapterDraft, createChapterSummary, createConsistencyReport, createLocalChapterSummary, createOutlinePlan } from "./model";
 import {
   commitLongTaskChapter,
   createProposalBackup,
@@ -104,6 +104,37 @@ function normalizePlan(plan: OutlinePlan, markdown: string, mode: LongWritingMod
     frozenOutline,
     targetChapterIds: finalTargets,
     frozenHeadingSignature: JSON.stringify(frozenOutline.map(item => item.headingSkeleton)),
+  };
+}
+
+function createLocalOutlinePlan(
+  chapters: ReturnType<typeof parseLongWritingDocument>["chapters"],
+  mode: LongWritingMode,
+  requested: string[],
+): OutlinePlan {
+  // This plan is only a safe reviewable fallback. The user still confirms it
+  // before any chapter worker is allowed to write to the document.
+  const targetIds = new Set(requested.length ? requested : chapters.map(chapter => chapter.id));
+  const action: OutlineChapterAction = mode === "fill" ? "fill" : mode === "rewrite" ? "rewrite" : "modify";
+  const frozenOutline = chapters.map(chapter => ({
+    chapterId: chapter.id,
+    order: chapter.order,
+    titlePath: chapter.titlePath,
+    headingSkeleton: chapter.headings.map(heading => `${"#".repeat(heading.level)} ${heading.title}`),
+    goal: targetIds.has(chapter.id)
+      ? action === "fill" ? "补充完整本章正文" : action === "rewrite" ? "重写并提升本章" : "按总指令修改本章"
+      : "保留现有章节内容",
+    action: targetIds.has(chapter.id) ? action : "keep" as const,
+  }));
+  return {
+    documentSummary: "基于当前正文和现有标题结构生成的本地目录规划。",
+    audience: "技术方案评审人员",
+    writingRules: ["保持现有章节结构、标题文本和顺序不变"],
+    fixedFacts: [],
+    terminology: [],
+    frozenOutline,
+    transitionRequirements: [],
+    targetChapterIds: frozenOutline.filter(item => item.action !== "keep").map(item => item.chapterId),
   };
 }
 
@@ -320,6 +351,7 @@ export function LongWritingPanel({
                 markdown: chapter.markdown,
                 documentTitle: project.name,
                 instruction: instruction.trim(),
+                contextBudgetTokens: project.agent.contextCompressionTokens,
               }, config, controller.signal);
               await recordEvent("summary_completed", `章节摘要已完成：${chapter.titlePath.join(" / ")}`, {
                 chapterId: chapter.id,
@@ -336,7 +368,27 @@ export function LongWritingPanel({
                 contentLength: chapter.bodyMarkdown.length,
               };
             } catch (error) {
-              throw new Error("章节摘要生成失败（" + chapter.titlePath.join(" / ") + "）：" + longWritingErrorMessage(error, "未知模型错误"));
+              if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+              const detail = longWritingErrorMessage(error, "未知模型错误");
+              const fallback = createLocalChapterSummary({
+                chapterId: chapter.id,
+                titlePath: chapter.titlePath,
+                markdown: chapter.markdown,
+              });
+              await recordEvent("summary_fallback", `章节摘要模型调用失败，已使用本地摘要：${chapter.titlePath.join(" / ")}`, {
+                chapterId: chapter.id,
+                details: { error: detail, fallback: true },
+              });
+              return {
+                chapterId: chapter.id,
+                order: chapter.order,
+                titlePath: chapter.titlePath,
+                summary: fallback.summary,
+                facts: fallback.facts,
+                terminology: fallback.terminology,
+                unresolvedQuestions: fallback.unresolvedQuestions,
+                contentLength: chapter.bodyMarkdown.length,
+              };
             }
           })
         : planningChapters.map(chapter => ({
@@ -354,9 +406,15 @@ export function LongWritingPanel({
           requestedChapterIds: requested,
           attachedSources,
           chapterSummaries,
+          contextBudgetTokens: project.agent.contextCompressionTokens,
         }, config, controller.signal);
       } catch (error) {
-        throw new Error("目录规划模型调用失败：" + longWritingErrorMessage(error, "未知模型错误"));
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+        const detail = longWritingErrorMessage(error, "未知模型错误");
+        generated = createLocalOutlinePlan(planningChapters, mode, requested);
+        await recordEvent("outline_fallback", "目录规划模型调用失败，已使用本地目录规划，等待人工确认", {
+          details: { error: detail, fallback: true, chapterCount: planningChapters.length },
+        });
       }
       const plan = normalizePlan(generated, snapshot.content, mode, requested);
       const planningState = taskRef.current?.id === baseTask.id ? taskRef.current : baseTask;
@@ -555,6 +613,7 @@ export function LongWritingPanel({
               transitionRequirement: transitions.find(value => value.fromChapterId === item.chapterId || value.toChapterId === item.chapterId)?.requirement,
             })),
             attachedSources: sourceText,
+            contextBudgetTokens: project.agent.contextCompressionTokens,
           }, modelConfig(initialTask), signal);
         },
         validate: ({ value: job }, draft) => {
@@ -640,6 +699,7 @@ export function LongWritingPanel({
         outlinePlan: initialTask.plan,
         markdown: currentMarkdown,
         chapterSummaries: latest.chapters.filter(job => job.summary).map(job => ({ chapterId: job.chapterId, titlePath: job.titlePath, summary: job.summary! })),
+        contextBudgetTokens: project.agent.contextCompressionTokens,
       }, modelConfig(initialTask), controller.signal);
       const issues = [...new Map([...localIssues, ...modelIssues].map(issue => [issue.id, { ...issue, status: "pending" as const }])).values()];
       await mutateTask(current => ({

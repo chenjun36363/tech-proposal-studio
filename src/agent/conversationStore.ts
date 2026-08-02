@@ -210,7 +210,7 @@ export function compactAgentConversation(conversation: AgentConversation, recent
   if (conversation.messages.length <= keep) return conversation;
   const splitAt = safeTurnSplitIndex(conversation.messages, conversation.messages.length - keep);
   if (splitAt <= 0) return conversation;
-  const compacted = buildAgentCheckpoint(conversation.messages.slice(0, splitAt), conversation.summary, 8000);
+  const compacted = buildAgentCheckpoint(conversation.messages.slice(0, splitAt), conversation.summary, 2400);
   return {
     ...conversation,
     summary: compacted,

@@ -25,8 +25,8 @@ export async function listKnowledge(workspace: WorkspacePaths): Promise<Knowledg
 export async function listKnowledgeSections(workspace: WorkspacePaths, documentId: string): Promise<KnowledgeSection[]> {
   desktopOnly(); return invoke("knowledge_sections", { workspace, documentId });
 }
-export async function searchKnowledge(workspace: WorkspacePaths, query: string, qualities: KnowledgeChunkQuality[] = ["good", "normal"], fields?: KnowledgeSearchField[], limit = 30): Promise<KnowledgeSearchResult[]> {
-  desktopOnly(); return invoke("knowledge_search", { workspace, query, qualities, fields, limit });
+export async function searchKnowledge(workspace: WorkspacePaths, query: string, qualities: KnowledgeChunkQuality[] = ["good", "normal"], fields?: KnowledgeSearchField[], limit = 30, documentIds?: string[]): Promise<KnowledgeSearchResult[]> {
+  desktopOnly(); return invoke("knowledge_search", { workspace, query, qualities, fields, limit, documentIds });
 }
 export async function getKnowledgeSectionScope(workspace: WorkspacePaths, sectionId: string): Promise<KnowledgeSectionScope> {
   desktopOnly(); return invoke("knowledge_section_scope", { workspace, sectionId });

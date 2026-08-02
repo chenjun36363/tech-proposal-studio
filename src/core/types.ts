@@ -67,6 +67,19 @@ export interface CommandPreset { id: string; name: string; program: string; args
 export interface CommandResult { exitCode: number; stdout: string; stderr: string; durationMs: number; }
 export type SessionEventKind = "status" | "output" | "tool" | "error" | "done";
 export interface SessionEvent { id: string; kind: SessionEventKind; label: string; content?: string; channel?: "stdout" | "stderr"; at: number; }
+/** Word 导出的封面、页眉及页脚配置。Logo 以 data URL 保存在本地项目设置中。 */
+export interface WordExportPreferences {
+  coverLogoDataUrl: string;
+  companyNameZh: string;
+  companyNameEn: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyFax: string;
+  companyWebsite: string;
+  companyEmail: string;
+  headerTitle: string;
+  showFooterPageNumbers: boolean;
+}
 export interface WorkspacePaths {
   root: string;
   /** 知识库 Markdown 目录（引用材料，非当前编辑正文）。字段名保留以兼容旧配置。 */
@@ -92,6 +105,8 @@ export interface Project {
   mineru: MinerUConfig;
   /** Agent 会话、上下文和工具策略。 */
   agent: import("../agent/settings").AgentSettings;
+  /** Word 导出的封面、页眉与页脚设置。 */
+  wordExport: WordExportPreferences;
   commands: CommandPreset[];
   workspace?: WorkspacePaths;
   /** 当前打开的工作区 Markdown 绝对路径 */

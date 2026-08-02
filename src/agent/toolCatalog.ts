@@ -1,4 +1,4 @@
-export type AgentToolGroupId = "planning" | "skills" | "document-read" | "document-edit" | "knowledge" | "memory" | "web" | "workspace" | "git-read" | "git-write" | "system";
+export type AgentToolGroupId = "planning" | "review" | "skills" | "document-read" | "document-edit" | "knowledge" | "memory" | "web" | "workspace" | "git-read" | "git-write" | "system";
 
 export interface AgentToolGroup {
   id: AgentToolGroupId;
@@ -8,6 +8,7 @@ export interface AgentToolGroup {
 
 export const agentToolGroups: AgentToolGroup[] = [
   { id: "planning", label: "规划与协作", description: "制定执行计划并在关键信息不足时向用户提问" },
+  { id: "review", label: "内容审核", description: "按明确要求独立检查方案内容并输出逐项结论" },
   { id: "skills", label: "技能", description: "按需读取已启用 Skill 并执行受控技能命令" },
   { id: "document-read", label: "方案读取", description: "读取目录、章节、选区并查找方案文本" },
   { id: "document-edit", label: "方案编辑", description: "提交章节、选区和文档结构修改" },
@@ -30,7 +31,8 @@ export interface AgentToolCatalogItem {
 export const agentToolCatalog: AgentToolCatalogItem[] = [
   { name: "write_todo", label: "执行计划", description: "创建和更新任务执行计划", group: "planning" },
   { name: "ask_user", label: "向用户提问", description: "缺少关键上下文时给出三种方案并等待用户选择", group: "planning" },
-  { name: "skills_manager", label: "Skill 管理器", description: "列出并按需读取项目配置启用的 Skill", group: "skills" },
+  { name: "review_content", label: "Review 内容审核", description: "使用隔离审核调用逐项检查内容是否满足明确要求", group: "review" },
+  { name: "skills_manager", label: "Skill 管理器", description: "读取已启用 Skill，并按会话权限创建、安装、校验和打包 Skills", group: "skills" },
   { name: "skill_run_command", label: "Skill 命令", description: "运行已启用 Skill 所需的受控命令", group: "skills" },
   { name: "get_proposal_outline", label: "读取方案目录", description: "获取当前方案的标题结构", group: "document-read" },
   { name: "read_current_section", label: "读取当前章节", description: "读取编辑器当前章节内容", group: "document-read" },

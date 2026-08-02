@@ -22,7 +22,10 @@ const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 2_000;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_CREATE_FILES: usize = 100;
+const MAX_CREATE_BYTES: usize = 2 * 1024 * 1024;
 const CLAWHUB: &str = "https://clawhub.ai";
+const BUILTIN_MANAGEMENT_SKILLS: [&str; 2] = ["skills-creator", "skills-installer"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -101,6 +104,11 @@ pub struct SkillCreateRequest {
     pub description: String,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    pub content: Option<String>,
+    #[serde(default)]
+    pub files: HashMap<String, String>,
+    #[serde(default)]
+    pub overwrite: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,6 +161,12 @@ pub struct SkillCommandRequest {
 }
 fn default_timeout() -> u64 {
     120_000
+}
+
+fn is_builtin_management_skill(name: &str) -> bool {
+    BUILTIN_MANAGEMENT_SKILLS
+        .iter()
+        .any(|builtin| builtin.eq_ignore_ascii_case(name))
 }
 
 fn safe_name(name: &str) -> Result<String, String> {
@@ -457,19 +471,70 @@ fn discover_root(scope: SkillScope, root: &Path) -> Vec<SkillSummary> {
 }
 
 fn seed_builtins(root: &Path) -> Result<(), String> {
-    for (name, content) in [
-        ("docx", include_str!("../../skills/docx/SKILL.md")),
-        ("excel", include_str!("../../skills/excel/SKILL.md")),
+    let builtins: &[(&str, &[(&str, &str)])] = &[
+        (
+            "docx",
+            &[("SKILL.md", include_str!("../../skills/docx/SKILL.md"))],
+        ),
+        (
+            "excel",
+            &[("SKILL.md", include_str!("../../skills/excel/SKILL.md"))],
+        ),
         (
             "agent-browser",
-            include_str!("../../skills/agent-browser/SKILL.md"),
+            &[(
+                "SKILL.md",
+                include_str!("../../skills/agent-browser/SKILL.md"),
+            )],
         ),
-    ] {
+        (
+            "skills-creator",
+            &[
+                (
+                    "SKILL.md",
+                    include_str!("../../skills/skills-creator/SKILL.md"),
+                ),
+                (
+                    "references/agent-skill-format.md",
+                    include_str!("../../skills/skills-creator/references/agent-skill-format.md"),
+                ),
+                (
+                    "references/authoring-patterns.md",
+                    include_str!("../../skills/skills-creator/references/authoring-patterns.md"),
+                ),
+            ],
+        ),
+        (
+            "skills-installer",
+            &[
+                (
+                    "SKILL.md",
+                    include_str!("../../skills/skills-installer/SKILL.md"),
+                ),
+                (
+                    "references/install-sources.md",
+                    include_str!("../../skills/skills-installer/references/install-sources.md"),
+                ),
+                (
+                    "references/safety-and-conflicts.md",
+                    include_str!(
+                        "../../skills/skills-installer/references/safety-and-conflicts.md"
+                    ),
+                ),
+            ],
+        ),
+    ];
+    for (name, files) in builtins {
         let dir = root.join(name);
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let file = dir.join("SKILL.md");
-        if !file.exists() {
-            fs::write(file, content).map_err(|e| e.to_string())?;
+        for (relative, content) in *files {
+            let file = dir.join(relative);
+            if let Some(parent) = file.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            if !file.exists() {
+                fs::write(file, content).map_err(|e| e.to_string())?;
+            }
         }
     }
     Ok(())
@@ -495,6 +560,11 @@ pub fn skill_discover(
     let mut by_name = HashMap::new();
     for (scope, root) in all_roots {
         for skill in discover_root(scope, &root) {
+            if skill.reference.scope != SkillScope::Builtin
+                && is_builtin_management_skill(&skill.reference.name)
+            {
+                continue;
+            }
             by_name.insert(skill.reference.name.clone(), skill);
         }
     }
@@ -611,25 +681,137 @@ pub fn skill_validate(
     Ok(validate_dir(&root.join(safe_name(&request.name)?)))
 }
 
+fn safe_skill_child_path(value: &str) -> Result<PathBuf, String> {
+    let value = value.trim().replace('\\', "/");
+    if value.is_empty() {
+        return Err("Skill 文件路径不能为空".into());
+    }
+    let mut result = PathBuf::new();
+    for component in Path::new(&value).components() {
+        match component {
+            Component::Normal(part) => result.push(part),
+            _ => return Err(format!("Skill 文件路径无效: {value}")),
+        }
+    }
+    if result.as_os_str().is_empty() {
+        return Err("Skill 文件路径不能为空".into());
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn skill_create(app: AppHandle, request: SkillCreateRequest) -> Result<SkillSummary, String> {
     if request.scope == SkillScope::Builtin {
         return Err("不能创建内置 Skill".into());
     }
+    if request.files.len() > MAX_CREATE_FILES {
+        return Err(format!("Skill 附加文件不能超过 {MAX_CREATE_FILES} 个"));
+    }
     let name = safe_name(&request.name)?;
+    if is_builtin_management_skill(&name) {
+        return Err(format!("Skill 名称「{name}」由内置管理 Skill 保留"));
+    }
     let root = root_for(&app, &request.scope, request.workspace_root.as_deref())?;
-    let dir = root.join(&name);
-    if dir.exists() {
+    let target = root.join(&name);
+    if target.exists() && !request.overwrite {
         return Err("同名 Skill 已存在".into());
     }
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let tools = if request.allowed_tools.is_empty() {
         String::new()
     } else {
         format!("allowed-tools: [{}]\n", request.allowed_tools.join(", "))
     };
-    let body = format!("---\nname: {name}\ndescription: {}\n{tools}---\n\n# {}\n\nDescribe when and how the agent should use this skill.\n", request.description.trim(), request.description.trim());
-    fs::write(dir.join("SKILL.md"), body).map_err(|e| e.to_string())?;
+    let body = request.content.unwrap_or_else(|| {
+        format!(
+            "---\nname: {name}\ndescription: {}\n{tools}---\n\n# {}\n\nDescribe when and how the agent should use this skill.\n",
+            request.description.trim(),
+            request.description.trim()
+        )
+    });
+    let total_bytes = request.files.values().map(String::len).sum::<usize>() + body.len();
+    if total_bytes > MAX_CREATE_BYTES {
+        return Err("Skill 创建内容超过 2MB".into());
+    }
+    let mut seen_paths = HashSet::new();
+    let files = request
+        .files
+        .iter()
+        .map(|(relative, content)| {
+            let relative = safe_skill_child_path(relative)?;
+            if relative
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("SKILL.md"))
+            {
+                return Err("files 不能重复提供 SKILL.md，请使用 content 参数".into());
+            }
+            let normalized = relative.to_string_lossy().to_ascii_lowercase();
+            if !seen_paths.insert(normalized) {
+                return Err(format!("Skill 文件路径重复: {}", relative.display()));
+            }
+            Ok((relative, content))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp_root = root.join(format!(".create-{name}-{stamp}"));
+    let temp = temp_root.join(&name);
+    let write_result = (|| -> Result<(), String> {
+        fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
+        fs::write(temp.join("SKILL.md"), body).map_err(|e| e.to_string())?;
+        for (relative, content) in files {
+            let path = temp.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::write(&path, content).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_dir_all(&temp_root);
+        return Err(error);
+    }
+
+    let validation = validate_dir(&temp);
+    if !validation.ok || validation.name.as_deref() != Some(name.as_str()) {
+        let _ = fs::remove_dir_all(&temp_root);
+        let mut errors = validation.errors;
+        if validation
+            .name
+            .as_deref()
+            .is_some_and(|value| value != name)
+        {
+            errors.push("SKILL.md name 必须与请求名称一致".into());
+        }
+        return Err(errors.join("；"));
+    }
+
+    let backup = root.join(".backups").join(&name);
+    let mut moved_to_backup = false;
+    let commit_result = (|| -> Result<(), String> {
+        if target.exists() {
+            let backup_parent = backup.parent().ok_or("Skill 备份目录无效")?;
+            fs::create_dir_all(backup_parent).map_err(|e| e.to_string())?;
+            if backup.exists() {
+                fs::remove_dir_all(&backup).map_err(|e| e.to_string())?;
+            }
+            fs::rename(&target, &backup).map_err(|e| e.to_string())?;
+            moved_to_backup = true;
+        }
+        fs::rename(&temp, &target).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if let Err(error) = commit_result {
+        if moved_to_backup && !target.exists() && backup.exists() {
+            let _ = fs::rename(&backup, &target);
+        }
+        let _ = fs::remove_dir_all(&temp_root);
+        return Err(error);
+    }
+    let _ = fs::remove_dir_all(&temp_root);
     discover_root(request.scope, &root)
         .into_iter()
         .find(|s| s.reference.name == name)
@@ -724,6 +906,10 @@ fn install_from_path(
         return Err(validation.errors.join("；"));
     }
     let name = validation.name.ok_or("无法确定 Skill 名称")?;
+    if is_builtin_management_skill(&name) {
+        let _ = fs::remove_dir_all(&temp);
+        return Err(format!("Skill 名称「{name}」由内置管理 Skill 保留"));
+    }
     let target = root.join(&name);
     if target.exists() && !request.overwrite {
         let _ = fs::remove_dir_all(&temp);
@@ -756,7 +942,18 @@ fn install_from_path(
 
 #[tauri::command]
 pub fn skill_install(app: AppHandle, request: SkillInstallRequest) -> Result<SkillSummary, String> {
-    install_from_path(&app, &request, Path::new(&request.source))
+    let source = PathBuf::from(&request.source);
+    let source = if source.is_relative() {
+        request
+            .workspace_root
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            .join(source)
+    } else {
+        source
+    };
+    install_from_path(&app, &request, &source)
 }
 
 #[tauri::command]
@@ -913,7 +1110,7 @@ pub async fn skill_update(
     fs::write(&temp, bytes).map_err(|e| e.to_string())?;
     let install_request = SkillInstallRequest {
         source: temp.to_string_lossy().to_string(),
-        overwrite: true,
+        overwrite: request.overwrite,
         scope: request.scope.clone(),
         workspace_root: request.workspace_root.clone(),
     };
@@ -1082,7 +1279,8 @@ pub async fn skill_run_command(request: SkillCommandRequest) -> Result<SkillComm
     if !canonical_cwd.starts_with(&workspace) {
         return Err("Skill 命令工作目录必须位于当前工作区".into());
     }
-    let executable = PathBuf::from(find_program(&request.program).unwrap_or(request.program.clone()));
+    let executable =
+        PathBuf::from(find_program(&request.program).unwrap_or(request.program.clone()));
     let started = std::time::Instant::now();
     let mut command = configure_skill_command(&executable, &request.args);
     command
@@ -1155,15 +1353,20 @@ pub async fn skill_run_command(request: SkillCommandRequest) -> Result<SkillComm
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn metadata_and_validation() {
-        let root = std::env::temp_dir().join(format!(
-            "skill-test-{}",
+
+    fn temp_test_root(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
+        ))
+    }
+
+    #[test]
+    fn metadata_and_validation() {
+        let root = temp_test_root("skill-test");
         let dir = root.join("demo");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("SKILL.md"),"---\nname: demo\ndescription: Demo skill\nallowed-tools: [read_file, web_search]\n---\nBody").unwrap();
@@ -1172,6 +1375,44 @@ mod tests {
         assert_eq!(result.requested_tools.len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn seeds_and_validates_builtin_management_skills() {
+        let root = temp_test_root("builtin-skill-test");
+        seed_builtins(&root).unwrap();
+
+        for (name, reference) in [
+            ("skills-creator", "references/agent-skill-format.md"),
+            ("skills-installer", "references/install-sources.md"),
+        ] {
+            let dir = root.join(name);
+            assert!(dir.join("SKILL.md").is_file());
+            assert!(dir.join(reference).is_file());
+            let validation = validate_dir(&dir);
+            assert!(validation.ok, "{name}: {:?}", validation.errors);
+        }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validates_skill_child_paths() {
+        assert_eq!(
+            safe_skill_child_path("references/checklist.md").unwrap(),
+            PathBuf::from("references").join("checklist.md")
+        );
+        assert!(safe_skill_child_path("../bad").is_err());
+        assert!(safe_skill_child_path("/absolute").is_err());
+        assert!(safe_skill_child_path("./relative").is_err());
+    }
+
+    #[test]
+    fn reserves_builtin_management_skill_names() {
+        assert!(is_builtin_management_skill("skills-creator"));
+        assert!(is_builtin_management_skill("SKILLS-INSTALLER"));
+        assert!(!is_builtin_management_skill("proposal-helper"));
+    }
+
     #[test]
     fn rejects_parent_path() {
         assert!(safe_name("../bad").is_err());

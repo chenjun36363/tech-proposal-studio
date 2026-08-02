@@ -47,4 +47,63 @@ describe("agent context compaction", () => {
     const large = compactAgentRunContext(makeMessages(1000), [], 500, 4);
     expect(large.messages.length).toBeLessThan(small.messages.length);
   });
+
+  it("merges repeated checkpoints without recursively embedding old checkpoint text", () => {
+    const first = buildAgentCheckpoint([
+      { role: "system", content: "system" },
+      { role: "user", content: "先完成第一阶段" },
+      { role: "assistant", content: "已完成第一阶段" },
+    ], "", 240);
+    const second = buildAgentCheckpoint([
+      { role: "system", content: "system" },
+      { role: "user", content: "继续完成第二阶段" },
+      { role: "assistant", content: "正在处理第二阶段" },
+    ], first, 240);
+
+    expect(second.match(/## Agent 自动上下文压缩检查点/g)).toHaveLength(1);
+    expect(second).toContain("继续完成第二阶段");
+    expect(estimateAgentTextTokens(second)).toBeLessThanOrEqual(240);
+  });
+
+  it("keeps a Chinese checkpoint within its token budget", () => {
+    const messages: AgentMessage[] = [{ role: "system", content: "system" }];
+    for (let index = 0; index < 30; index += 1) {
+      messages.push({ role: "user", content: `第 ${index} 轮目标：${"完善技术方案并核验约束".repeat(30)}` });
+      messages.push({ role: "assistant", content: `第 ${index} 轮结果：${"已读取资料并完成阶段工作".repeat(30)}` });
+    }
+
+    const checkpoint = buildAgentCheckpoint(messages, "", 180);
+    expect(estimateAgentTextTokens(checkpoint)).toBeLessThanOrEqual(180);
+  });
+
+  it("reports an explicit overflow when the minimum recent context cannot fit", () => {
+    const messages: AgentMessage[] = [
+      { role: "system", content: "system" },
+      { role: "user", content: "超长本轮输入".repeat(2000) },
+    ];
+
+    const result = compactAgentRunContext(messages, [], 800);
+    expect(result.fitsBudget).toBe(false);
+    expect(result.overflowTokens).toBeGreaterThan(0);
+    expect(result.afterTokens).toBeGreaterThan(800);
+  });
+
+  it("compresses older large tool results but preserves the latest tool result", () => {
+    const oldResult = `旧资料-${"内容".repeat(1800)}`;
+    const latestResult = `最新资料-${"结论".repeat(900)}`;
+    const messages: AgentMessage[] = [
+      { role: "system", content: "system" },
+      { role: "user", content: "第一轮" },
+      { role: "assistant", content: null, tool_calls: [{ id: "old", type: "function", function: { name: "read", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "old", content: oldResult },
+      { role: "user", content: "第二轮" },
+      { role: "assistant", content: null, tool_calls: [{ id: "latest", type: "function", function: { name: "read", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "latest", content: latestResult },
+    ];
+
+    const result = compactAgentRunContext(messages, [], 2200, 6);
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "old", content: expect.stringContaining("较早工具结果已按上下文预算压缩") }));
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "latest", content: latestResult }));
+  });
+
 });

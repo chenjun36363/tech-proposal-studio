@@ -370,10 +370,12 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       push: () => pushGitRepository(workspaceRoot),
       changed: () => window.dispatchEvent(new CustomEvent(AGENT_GIT_CHANGED, { detail: { root: workspaceRoot } })),
     } : undefined;
-    const registry = createProposalToolRegistry({ project, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime, reviewGitOperation, onDocumentSearch, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+    const registry = createProposalToolRegistry({ project, modelConfig: config, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime, reviewGitOperation, onDocumentSearch, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
     registerSkillTools(registry, {
       skills: enabledSkills,
       workspaceRoot,
+      fullAccess: fullAccessEnabled,
+      networkAccess: webSearchEnabled,
     });
     for (const toolName of agentSettings.disabledTools) registry.unregister(toolName);
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");

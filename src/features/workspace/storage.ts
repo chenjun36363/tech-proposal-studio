@@ -1,5 +1,5 @@
-import type { DocumentBlock, Project } from "../../core/types";
-import { createProject } from "../../core/data";
+import type { DocumentBlock, Project, WordExportPreferences } from "../../core/types";
+import { createProject, DEFAULT_WORD_EXPORT_PREFERENCES } from "../../core/data";
 import { defaultProposalMarkdown } from "../editor/markdownDoc";
 import { normalizeAgentSettings } from "../../agent/settings";
 const KEY = "tech-proposal-studio.project.v1";
@@ -17,8 +17,9 @@ interface LegacySection {
   blocks?: DocumentBlock[];
 }
 
-type StoredProject = Omit<Project, "contextSourceRefs"> & {
+type StoredProject = Omit<Project, "contextSourceRefs" | "wordExport"> & {
   contextSourceRefs?: string[];
+  wordExport?: Partial<WordExportPreferences>;
   sections?: LegacySection[];
 };
 
@@ -30,6 +31,30 @@ function ensureMarkdown(project: StoredProject): StoredProject {
   }
   return { ...project, markdown: defaultProposalMarkdown(project.name || "未命名技术方案") };
 }
+function ensureWordExport(project: Project): Project {
+  const stored = project.wordExport as Partial<WordExportPreferences> | undefined;
+  const value: Partial<WordExportPreferences> = stored && typeof stored === "object" ? stored : {};
+  const text = (key: keyof Omit<WordExportPreferences, "showFooterPageNumbers">) =>
+    typeof value[key] === "string" ? value[key] : DEFAULT_WORD_EXPORT_PREFERENCES[key];
+  return {
+    ...project,
+    wordExport: {
+      coverLogoDataUrl: text("coverLogoDataUrl"),
+      companyNameZh: text("companyNameZh"),
+      companyNameEn: text("companyNameEn"),
+      companyAddress: text("companyAddress"),
+      companyPhone: text("companyPhone"),
+      companyFax: text("companyFax"),
+      companyWebsite: text("companyWebsite"),
+      companyEmail: text("companyEmail"),
+      headerTitle: text("headerTitle"),
+      showFooterPageNumbers: typeof value.showFooterPageNumbers === "boolean"
+        ? value.showFooterPageNumbers
+        : DEFAULT_WORD_EXPORT_PREFERENCES.showFooterPageNumbers,
+    },
+  };
+}
+
 function ensureMineru(project: Project): Project {
   if (project.mineru && typeof project.mineru === "object") {
     const base = createProject().mineru;
@@ -56,7 +81,7 @@ function migrateLegacyStructure(raw: StoredProject): Project {
     ? raw.contextSourceRefs.filter(id => typeof id === "string")
     : raw.sections?.[0]?.blocks?.[0]?.sourceRefs ?? [];
   const { sections: _legacySections, ...project } = raw;
-  return { ...project, contextSourceRefs };
+  return { ...project, contextSourceRefs, wordExport: { ...DEFAULT_WORD_EXPORT_PREFERENCES, ...(project.wordExport ?? {}) } };
 }
 
 function ensureProviders(project: Project): Project {
@@ -97,7 +122,7 @@ function ensureProviders(project: Project): Project {
 function normalizeProject(raw: StoredProject): Project {
   const markdownReady = ensureMarkdown(raw);
   const migrated = migrateLegacyStructure(markdownReady);
-  return ensureCommands(ensureProviders(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) })));
+  return ensureCommands(ensureProviders(ensureWordExport(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) }))));
 }
 export function loadProject(): Project {
   try {

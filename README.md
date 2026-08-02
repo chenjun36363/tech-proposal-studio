@@ -30,8 +30,8 @@
 
 **Agent Skills 技能市场**
 
-- 支持 `SKILL.md` 渐进披露协议（兼容 `skill.json` 与 README 回退），内置 docx、excel、agent-browser 三个技能。
-- 内置 / 全局 / 工作区三层发现，工作区同名技能优先；创建、校验、安装、删除、打包与 ClawHub 市场搜索 / 更新检查。
+- 支持 `SKILL.md` 渐进披露协议（兼容 `skill.json` 与 README 回退），内置 docx、excel、agent-browser、skills-creator、skills-installer 五个技能；两个管理 Skill 在桌面端始终启用。
+- 内置 / 全局 / 工作区三层发现，普通 Skill 由工作区同名项优先；内置管理 Skill 名称受保护。支持创建、校验、安装、删除、打包与 ClawHub 市场搜索 / 更新检查。
 - 技能执行走受控 `skill_run_command`，限制程序、工作目录、环境与超时并逐次确认。
 
 **长期记忆**

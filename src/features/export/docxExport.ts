@@ -2,11 +2,15 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  Footer,
+  Header,
   HeadingLevel,
   ImageRun,
   LineRuleType,
+  LevelFormat,
   PageBreak,
   Packer,
+  PageNumber,
   Paragraph,
   Table,
   TableCell,
@@ -17,9 +21,10 @@ import {
   type FileChild,
   type IImageOptions,
 } from "docx";
-import type { Project } from "../../core/types";
+import type { Project, WordExportPreferences } from "../../core/types";
 import { exportMarkdown } from "../workspace/storage";
 import { isDesktop } from "../../services/runtime";
+import { DEFAULT_WORD_EXPORT_PREFERENCES } from "../../core/data";
 import { invoke } from "@tauri-apps/api/core";
 import { readBinaryFile } from "../workspace/workspace";
 
@@ -40,7 +45,29 @@ const SIZE_CODE = 18;
 
 const MAX_IMAGE_WIDTH_PX = 520;
 
-export interface DocxExportSettings {
+const ORDERED_LIST_REFERENCE = "markdown-ordered-list";
+const MAX_LIST_LEVEL = 8;
+
+/** Convert Markdown indentation to a supported Word list level. */
+function markdownListLevel(leadingWhitespace: string): number {
+  const spaces = leadingWhitespace.replace(/\t/g, "    ").length;
+  return Math.min(MAX_LIST_LEVEL, Math.floor(spaces / 2));
+}
+
+function orderedListLevels(settings: DocxExportSettings) {
+  return Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, level) => ({
+    level,
+    format: LevelFormat.DECIMAL,
+    text: `%${level + 1}.`,
+    alignment: AlignmentType.START,
+    style: {
+      run: { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize) },
+      paragraph: { indent: { left: 720 + level * 360, hanging: 360 } },
+    },
+  }));
+}
+
+export interface DocxExportSettings extends WordExportPreferences {
   headingFont: string;
   bodyFont: string;
   headingSizes: [number, number, number, number, number, number];
@@ -55,6 +82,7 @@ export interface DocxExportSettings {
 }
 
 export const DEFAULT_DOCX_EXPORT_SETTINGS: DocxExportSettings = {
+  ...DEFAULT_WORD_EXPORT_PREFERENCES,
   headingFont: "黑体",
   bodyFont: "宋体",
   headingSizes: [22, 16, 14, 12, 12, 10.5],
@@ -101,7 +129,7 @@ function plainText(line: string): string {
 
 function runsFromInline(
   line: string,
-  base?: { italics?: boolean; color?: string; font?: typeof BODY_FONT | string; size?: number },
+  base?: { bold?: boolean; italics?: boolean; color?: string; font?: typeof BODY_FONT | string; size?: number },
   settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS,
 ): TextRun[] {
   const font = base?.font ?? exportFont(settings.bodyFont);
@@ -117,6 +145,7 @@ function runsFromInline(
           text: line.slice(last, m.index),
           font,
           size,
+          bold: base?.bold,
           italics: base?.italics,
           color: base?.color,
         }),
@@ -135,13 +164,14 @@ function runsFromInline(
         }),
       );
     } else if (token.startsWith("`") && token.endsWith("`")) {
-      pieces.push(new TextRun({ text: token.slice(1, -1), font: CODE_FONT, size: SIZE_CODE }));
+      pieces.push(new TextRun({ text: token.slice(1, -1), font: CODE_FONT, size: SIZE_CODE, bold: base?.bold }));
     } else if (token.startsWith("*") && token.endsWith("*")) {
       pieces.push(
         new TextRun({
           text: token.slice(1, -1),
           font,
           size,
+          bold: base?.bold,
           italics: true,
           color: base?.color,
         }),
@@ -155,6 +185,7 @@ function runsFromInline(
         text: line.slice(last),
         font,
         size,
+        bold: base?.bold,
         italics: base?.italics,
         color: base?.color,
       }),
@@ -162,6 +193,11 @@ function runsFromInline(
   }
   if (!pieces.length) pieces.push(new TextRun({ text: " ", font, size }));
   return pieces;
+}
+
+/** Returns the same first-line offset used by regular body paragraphs. */
+function bodyFirstLineIndent(settings: DocxExportSettings): number {
+  return Math.round(settings.firstLineIndent * settings.bodySize * 20);
 }
 
 function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolean }, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Paragraph {
@@ -184,7 +220,7 @@ function paragraphFromLine(line: string, opts?: { code?: boolean; quote?: boolea
   }
   return new Paragraph({
     children: runsFromInline(line, { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize) }, settings),
-    indent: { firstLine: Math.round(settings.firstLineIndent * settings.bodySize * 20) },
+    indent: { firstLine: bodyFirstLineIndent(settings) },
     spacing: { before: twips(settings.bodyBefore), after: twips(settings.bodyAfter), line: lineTwips(settings.lineSpacing), lineRule: LineRuleType.AUTO },
   });
 }
@@ -203,9 +239,77 @@ function parseTableRows(block: string[]): string[][] {
     .filter((r) => r.some((c) => c.length));
 }
 
-function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Table {
-  const colCount = Math.max(...rows.map((r) => r.length), 1);
-  const width = Math.floor(9000 / colCount);
+interface DocxTableCellSource {
+  text: string;
+  columnSpan?: number;
+  rowSpan?: number;
+  bold?: boolean;
+}
+
+/** Parse a positive HTML span attribute, falling back to one cell. */
+function htmlSpan(attributes: string, name: "colspan" | "rowspan"): number {
+  const match = attributes.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  const value = Number.parseInt(match?.[1] ?? match?.[2] ?? match?.[3] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+/** Convert the small inline-HTML subset used inside imported table cells to Markdown runs. */
+function htmlCellToMarkdown(html: string): string {
+  const withoutTags = html
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/<(?:strong|b)\b[^>]*>/gi, "**")
+    .replace(/<\/(?:strong|b)\s*>/gi, "**")
+    .replace(/<(?:em|i)\b[^>]*>/gi, "*")
+    .replace(/<\/(?:em|i)\s*>/gi, "*")
+    .replace(/<[^>]+>/g, " ");
+
+  return withoutTags
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(x[\da-f]+|\d+);/gi, (_all, encoded: string) => {
+      const codePoint = encoded.startsWith("x")
+        ? Number.parseInt(encoded.slice(1), 16)
+        : Number.parseInt(encoded, 10);
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : "";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Read a raw HTML table from Markdown. It deliberately only accepts td/th cells so
+ * arbitrary HTML remains ordinary paragraph content instead of becoming a table.
+ */
+function parseHtmlTableRows(html: string): DocxTableCellSource[][] {
+  const rows: DocxTableCellSource[][] = [];
+  const rowMatcher = /<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi;
+  let rowMatch: RegExpExecArray | null;
+  while ((rowMatch = rowMatcher.exec(html))) {
+    const cells: DocxTableCellSource[] = [];
+    const cellMatcher = /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
+    let cellMatch: RegExpExecArray | null;
+    while ((cellMatch = cellMatcher.exec(rowMatch[1]))) {
+      cells.push({
+        text: htmlCellToMarkdown(cellMatch[3]),
+        columnSpan: htmlSpan(cellMatch[2], "colspan"),
+        rowSpan: htmlSpan(cellMatch[2], "rowspan"),
+        bold: cellMatch[1].toLowerCase() === "th",
+      });
+    }
+    if (cells.length) rows.push(cells);
+  }
+  return rows;
+}
+
+function tableFromCells(rows: DocxTableCellSource[][], settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Table {
+  const colCount = Math.max(...rows.map((row) => row.reduce((count, cell) => count + (cell.columnSpan ?? 1), 0)), 1);
+  const columnWidth = Math.floor(9000 / colCount);
   // 表格边框：1pt(=size 8) 实线，深灰，确保网格线清晰可见
   const cellBorder = {
     style: BorderStyle.SINGLE,
@@ -214,6 +318,7 @@ function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFA
   } as const;
   return new Table({
     width: { size: 9000, type: WidthType.DXA },
+    columnWidths: Array.from({ length: colCount }, () => columnWidth),
     borders: {
       top: cellBorder,
       bottom: cellBorder,
@@ -223,12 +328,14 @@ function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFA
       insideVertical: cellBorder,
     },
     rows: rows.map(
-      (row, ri) =>
+      (row) =>
         new TableRow({
-          children: Array.from({ length: colCount }, (_, ci) => {
-            const text = row[ci] ?? "";
+          children: row.map((cell) => {
+            const columnSpan = cell.columnSpan ?? 1;
             return new TableCell({
-              width: { size: width, type: WidthType.DXA },
+              width: { size: columnWidth * columnSpan, type: WidthType.DXA },
+              columnSpan: columnSpan > 1 ? columnSpan : undefined,
+              rowSpan: cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : undefined,
               borders: {
                 top: cellBorder,
                 bottom: cellBorder,
@@ -237,14 +344,11 @@ function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFA
               },
               children: [
                 new Paragraph({
-                  children: [
-                    new TextRun({
-                      text: text || " ",
-                      font: exportFont(settings.bodyFont),
-                      size: halfPoints(Math.max(9, settings.bodySize - 2)),
-                      bold: ri === 0,
-                    }),
-                  ],
+                  children: runsFromInline(cell.text || " ", {
+                    bold: cell.bold,
+                    font: exportFont(settings.bodyFont),
+                    size: halfPoints(Math.max(9, settings.bodySize - 2)),
+                  }, settings),
                 }),
               ],
             });
@@ -252,6 +356,18 @@ function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFA
         }),
     ),
   });
+}
+
+function tableFromMarkdown(rows: string[][], settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Table {
+  return tableFromCells(
+    rows.map((row, rowIndex) => row.map((text) => ({ text, bold: rowIndex === 0 }))),
+    settings,
+  );
+}
+
+function tableFromHtml(html: string, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Table | null {
+  const rows = parseHtmlTableRows(html);
+  return rows.length ? tableFromCells(rows, settings) : null;
 }
 
 function dirname(path: string): string {
@@ -410,7 +526,7 @@ export async function checkDocxImages(project: Project): Promise<DocxImageCheckR
 
 async function loadImageBytes(path: string): Promise<Uint8Array | null> {
   try {
-    if (isDesktop()) {
+    if (isDesktop() && !/^(https?:|data:|blob:|file:)/i.test(path)) {
       return await readBinaryFile(path);
     }
   } catch {
@@ -494,8 +610,48 @@ async function paragraphFromImage(
   };
 
   return new Paragraph({
+    alignment: AlignmentType.CENTER,
     children: [new ImageRun(options)],
     spacing: { before: 120, after: 120 },
+  });
+}
+
+async function coverLogoParagraph(project: Project, settings: DocxExportSettings): Promise<Paragraph | null> {
+  const source = settings.coverLogoDataUrl.trim();
+  if (!source) return null;
+
+  const resolved = resolveLocalImagePath(source, project.filePath, project.workspace?.root) ?? source;
+  const bytes = await loadImageBytes(resolved);
+  if (!bytes?.length) return null;
+
+  const type = imageTypeFromPath(resolved) ?? sniffImageType(bytes);
+  if (!type) return null;
+
+  const natural = readImageSize(bytes, type);
+  const sized = scaleImage(natural.width, natural.height, 180);
+  return new Paragraph({
+    alignment: AlignmentType.RIGHT,
+    spacing: { before: 280, after: 0 },
+    children: [new ImageRun({
+      type,
+      data: bytes,
+      transformation: { width: sized.width, height: sized.height },
+      altText: { name: "封面 Logo", description: "封面右上角 Logo", title: "封面 Logo" },
+    })],
+  });
+}
+
+function coverContactParagraph(text: string, before = 0, options: { font?: string | Record<string, string>; size?: number; color?: string; bold?: boolean } = {}): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.RIGHT,
+    spacing: { before, after: 0 },
+    children: [new TextRun({
+      text,
+      font: options.font ?? exportFont("宋体"),
+      size: options.size ?? halfPoints(12),
+      color: options.color ?? "000000",
+      bold: options.bold,
+    })],
   });
 }
 
@@ -537,12 +693,24 @@ function builtInHeadingStyle(index: number, settings: DocxExportSettings) {
 }
 
 /** Build DOCX from project markdown body (fallback to legacy sections). */
-export async function buildDocx(project: Project, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Promise<Document> {
+export async function buildDocx(project: Project, configuredSettings?: DocxExportSettings): Promise<Document> {
+  // Project-level Word preferences are the persistent baseline. The export dialog
+  // may provide temporary typography overrides without losing those settings.
+  const settings: DocxExportSettings = {
+    ...DEFAULT_DOCX_EXPORT_SETTINGS,
+    ...project.wordExport,
+    ...configuredSettings,
+    headingSizes: [...(configuredSettings?.headingSizes ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingSizes)] as DocxExportSettings["headingSizes"],
+    headingBefore: [...(configuredSettings?.headingBefore ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingBefore)] as DocxExportSettings["headingBefore"],
+    headingAfter: [...(configuredSettings?.headingAfter ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingAfter)] as DocxExportSettings["headingAfter"],
+  };
   const markdown = exportMarkdown(project);
   const children: FileChild[] = [];
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   let inCode = false;
   let sawTitle = false;
+  let orderedListInstance = 0;
+  let inOrderedList = false;
   let i = 0;
   const filePath = project.filePath;
   const workspaceRoot = project.workspace?.root;
@@ -552,13 +720,51 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
 
     if (line.trim().startsWith("```")) {
       inCode = !inCode;
+      inOrderedList = false;
       i += 1;
       continue;
     }
     if (inCode) {
+      inOrderedList = false;
       children.push(paragraphFromLine(line, { code: true }, settings));
       i += 1;
       continue;
+    }
+
+    const orderedItem = line.match(/^(\s*)\d+\.\s+(.+)$/);
+    if (orderedItem) {
+      if (!inOrderedList) orderedListInstance += 1;
+      inOrderedList = true;
+      children.push(
+        new Paragraph({
+          children: runsFromInline(orderedItem[2], {
+            font: exportFont(settings.bodyFont),
+            size: halfPoints(settings.bodySize),
+          }, settings),
+          numbering: {
+            reference: ORDERED_LIST_REFERENCE,
+            level: markdownListLevel(orderedItem[1]),
+            instance: orderedListInstance,
+          },
+        }),
+      );
+      i += 1;
+      continue;
+    }
+    inOrderedList = false;
+
+    // Raw HTML table block (including imported tables with rowspan / colspan).
+    if (/^\s*<table\b[^>]*>/i.test(line)) {
+      let end = i;
+      while (end < lines.length && !/<\/table\s*>/i.test(lines[end])) end += 1;
+      if (end < lines.length) {
+        const table = tableFromHtml(lines.slice(i, end + 1).join("\n"), settings);
+        if (table) {
+          children.push(table);
+          i = end + 1;
+          continue;
+        }
+      }
     }
 
     // GFM table block
@@ -630,22 +836,10 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
       children.push(
         new Paragraph({
           children: runsFromInline(text, { font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize) }, settings),
-          indent: { left: 360 },
+          // Keep the item text aligned with the first character of ordinary body text.
+          // The bullet itself hangs in the margin immediately to its left.
+          indent: { left: bodyFirstLineIndent(settings), hanging: Math.min(360, bodyFirstLineIndent(settings)) },
           bullet: { level: 0 },
-        }),
-      );
-      i += 1;
-      continue;
-    }
-
-    if (/^\s*\d+\.\s+/.test(line)) {
-      children.push(
-        new Paragraph({
-          children: runsFromInline(line.replace(/^\s*\d+\.\s+/, ""), {
-            font: exportFont(settings.bodyFont),
-            size: halfPoints(settings.bodySize),
-          }, settings),
-          indent: { left: 360 },
         }),
       );
       i += 1;
@@ -674,25 +868,29 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
   const projectName = project.name || "未命名技术方案";
   const today = formatDocDate(project.updatedAt);
 
-  // 封面页：标题居中、日期与署名靠下，整页结束后分页
+  // 封面页：右上角 Logo、居中标题和右下角公司联系信息，整页结束后分页。
+  const logo = await coverLogoParagraph(project, settings);
   const coverChildren: FileChild[] = [
+    ...(logo ? [logo] : []),
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { before: 3200 },
+      spacing: { before: logo ? 1700 : 3200 },
       children: [
         new TextRun({ text: projectName, font: exportFont(settings.headingFont), bold: true, size: 56, color: "000000" }),
       ],
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { before: 1600 },
+      spacing: { before: 900 },
       children: [new TextRun({ text: today, font: exportFont(settings.bodyFont), size: halfPoints(settings.bodySize), color: "666666" })],
     }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { before: 200 },
-      children: [new TextRun({ text: "构案 · TechProposal Studio", font: exportFont(settings.bodyFont), size: halfPoints(Math.max(9, settings.bodySize - 2)), color: "999999" })],
-    }),
+    coverContactParagraph(settings.companyNameZh, 1300, { font: exportFont("黑体"), size: halfPoints(22), color: "0070C0", bold: true }),
+    coverContactParagraph(settings.companyNameEn, 80, { font: "Arial", size: halfPoints(9), color: "0070C0" }),
+    coverContactParagraph(settings.companyAddress, 360),
+    coverContactParagraph(settings.companyPhone, 40),
+    coverContactParagraph(settings.companyFax, 40),
+    coverContactParagraph(settings.companyWebsite, 40),
+    coverContactParagraph(settings.companyEmail, 40),
     new Paragraph({ children: [new PageBreak()] }),
   ];
 
@@ -712,6 +910,12 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
   return new Document({
     // DOCX 本身不排版、无法在导出时计算页码；由 Word 打开文档时更新 TOC 域。
     features: { updateFields: true },
+    numbering: {
+      config: [{
+        reference: ORDERED_LIST_REFERENCE,
+        levels: orderedListLevels(settings),
+      }],
+    },
     styles: {
       default: {
         document: {
@@ -751,6 +955,28 @@ export async function buildDocx(project: Project, settings: DocxExportSettings =
         properties: {
           page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } },
         },
+        headers: settings.headerTitle.trim() ? {
+          default: new Header({
+            children: [new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: settings.headerTitle.trim(), font: exportFont(settings.bodyFont), size: halfPoints(10.5), color: "666666" })],
+            })],
+          }),
+        } : undefined,
+        footers: settings.showFooterPageNumbers ? {
+          default: new Footer({
+            children: [new Paragraph({
+              alignment: AlignmentType.RIGHT,
+              children: [
+                new TextRun({ text: "第 ", font: exportFont(settings.bodyFont), size: halfPoints(10.5), color: "666666" }),
+                new TextRun({ children: [PageNumber.CURRENT], font: exportFont(settings.bodyFont), size: halfPoints(10.5), color: "666666" }),
+                new TextRun({ text: " 页 / 共 ", font: exportFont(settings.bodyFont), size: halfPoints(10.5), color: "666666" }),
+                new TextRun({ children: [PageNumber.TOTAL_PAGES], font: exportFont(settings.bodyFont), size: halfPoints(10.5), color: "666666" }),
+                new TextRun({ text: " 页", font: exportFont(settings.bodyFont), size: halfPoints(10.5), color: "666666" }),
+              ],
+            })],
+          }),
+        } : undefined,
         children: documentChildren,
       },
     ],
@@ -778,7 +1004,7 @@ function safeFileName(name: string): string {
  * Browser / WebView: Packer.toBuffer uses Node buffers and throws
  * "nodebuffer is not supported by this platform". Prefer Blob/ArrayBuffer.
  */
-export async function buildDocxBytes(project: Project, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Promise<Uint8Array> {
+export async function buildDocxBytes(project: Project, settings?: DocxExportSettings): Promise<Uint8Array> {
   const doc = await buildDocx(project, settings);
   try {
     const ab = await Packer.toArrayBuffer(doc);
@@ -798,7 +1024,7 @@ export async function buildDocxBytes(project: Project, settings: DocxExportSetti
   return buf instanceof Uint8Array ? buf : new Uint8Array(buf as ArrayBuffer);
 }
 
-export async function downloadDocx(project: Project, settings: DocxExportSettings = DEFAULT_DOCX_EXPORT_SETTINGS): Promise<string | void> {
+export async function downloadDocx(project: Project, settings?: DocxExportSettings): Promise<string | null | void> {
   const fileName = `${safeFileName(project.name)}.docx`;
   const check = await checkDocxImages(project);
   if (check.issues.length) throw new Error(`图片检查未通过：${check.issues.length} 个链接无法嵌入`);
@@ -812,8 +1038,7 @@ export async function downloadDocx(project: Project, settings: DocxExportSetting
         filters: [["Word 文档", ["docx"]]],
         title: "导出 Word",
       });
-      if (path) return path;
-      return;
+      return path;
     } catch {
       const path = await invoke<string>("save_docx_export", {
         projectName: project.name,

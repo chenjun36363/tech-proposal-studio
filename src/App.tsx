@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Moon, MoreHorizontal, Palette, PanelRightClose, PanelRightOpen, Pencil, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
@@ -8,6 +8,7 @@ import { privilegedFileOperation } from "./services/privileged";
 import { openWorkspaceDirectory, saveMarkdown } from "./services/system";
 import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./features/editor/findReplace";
 import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./features/editor/MarkdownEditor";
+import { useSynchronizedScroll } from "./features/editor/scrollSync";
 import {
   alignHeadingsToRules,
   applyAgentDraft as applyAgentDraftToMarkdown,
@@ -60,6 +61,7 @@ import { ModelSettingsSection } from "./features/settings/ModelSettingsSection";
 import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
 import { SkillsSettingsSection } from "./features/settings/SkillsSettingsSection";
 import { AppUpdateSettings } from "./features/settings/AppUpdateSettings";
+import { WordExportSettingsSection } from "./features/settings/WordExportSettingsSection";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useDocumentSafety } from "./hooks/useDocumentSafety";
 import { useProposalFileActions, type ConflictChoice, type UnsafeDocumentAction } from "./hooks/useProposalFileActions";
@@ -116,6 +118,42 @@ function syntheticBlock(project: Project, content: string, headingId?: string, h
     metadata: headingId ? { headingTitle: headingTitle ?? "", headingLevel: String(headingLevel ?? "") } : undefined,
   };
 }
+
+// 编辑/预览区域字体缩放（--md-font-scale 作用在 .md-workspace 上）
+const EDITOR_FONT_SCALE_KEY = "tech-proposal-studio.editor-font-scale.v1";
+const EDITOR_FONT_SCALE_STEP = 0.1;
+const EDITOR_FONT_SCALE_MIN = 0.75;
+const EDITOR_FONT_SCALE_MAX = 2;
+function loadEditorFontScale(): number {
+  try {
+    const n = Number(localStorage.getItem(EDITOR_FONT_SCALE_KEY));
+    if (Number.isFinite(n) && n >= EDITOR_FONT_SCALE_MIN && n <= EDITOR_FONT_SCALE_MAX) return n;
+  } catch {
+    /* 存储不可用时回退默认值 */
+  }
+  return 1;
+}
+
+// 预览区段落首行缩进偏好（--md-preview-indent 作用在 .md-workspace 上）
+const PREVIEW_INDENT_KEY = "tech-proposal-studio.preview-indent.v1";
+function loadPreviewIndent(): boolean {
+  try {
+    return localStorage.getItem(PREVIEW_INDENT_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+// 编辑区/预览区同步滚动偏好（分栏模式下生效）
+const SYNC_SCROLL_KEY = "tech-proposal-studio.sync-scroll.v1";
+function loadSyncScroll(): boolean {
+  try {
+    return localStorage.getItem(SYNC_SCROLL_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
 export default function App() {
   const { project, setProject, updateProject, setMarkdown, undo, redo, resetHistory } = useProposalDocumentController(
     () => withWorkspace(loadProject(), loadWorkspaceConfig()),
@@ -140,6 +178,9 @@ export default function App() {
   const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("section");
   const [viewMode, setViewMode] = useState<"split" | "edit" | "preview">("split");
+  const [editorFontScale, setEditorFontScale] = useState<number>(() => loadEditorFontScale());
+  const [previewIndent, setPreviewIndent] = useState<boolean>(() => loadPreviewIndent());
+  const [syncScroll, setSyncScroll] = useState<boolean>(() => loadSyncScroll());
   const [headingNumberingStyle, setHeadingNumberingStyle] = useState<HeadingNumberingStyle>(() => detectHeadingNumberingStyle(project.markdown ?? ""));
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
@@ -162,8 +203,11 @@ export default function App() {
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const fileMenuRef = useRef<HTMLDivElement | null>(null);
   const sourceEditorRef = useRef<MarkdownSourceEditorHandle | null>(null);
+  const sourceScrollRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewPaneRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const desktop = isDesktop();
+  useSynchronizedScroll(sourceScrollRef, previewPaneRef, viewMode === "split" && syncScroll);
   const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2500); }, []);
   const [guardRequest, setGuardRequest] = useState<{ reason: UnsafeDocumentAction; resolve: (choice: "save" | "discard" | "cancel") => void } | null>(null);
   const [conflictRequest, setConflictRequest] = useState<{ resolve: (choice: ConflictChoice) => void } | null>(null);
@@ -249,6 +293,16 @@ export default function App() {
   }, [headings, selectedHeadingId]);
 
   useEffect(() => setAgentSelection(undefined), [project.filePath, selectedHeadingId, editorMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(EDITOR_FONT_SCALE_KEY, String(editorFontScale));
+      localStorage.setItem(PREVIEW_INDENT_KEY, previewIndent ? "1" : "0");
+      localStorage.setItem(SYNC_SCROLL_KEY, syncScroll ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [editorFontScale, previewIndent, syncScroll]);
   useEffect(() => setHeadingNumberingStyle(detectHeadingNumberingStyle(project.markdown ?? "")), [project.filePath]);
 
   const { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace } = useWorkspaceSession({
@@ -1104,6 +1158,35 @@ export default function App() {
           </div>
           <div className="editor-title-actions">
             {!gitDiffActive && <span className="editor-word-count" aria-live="polite">{editorMode === "full" ? "全文" : "本章"} {activeWordCount.toLocaleString()} 字</span>}
+            {!gitDiffActive && <button
+              type="button"
+              className={`editor-toggle${previewIndent ? " active" : ""}`}
+              title={previewIndent ? "已启用段落首行缩进（点击关闭）" : "已关闭段落首行缩进（点击启用）"}
+              onClick={() => setPreviewIndent(v => !v)}
+            >
+              <IndentIncrease size={13} />
+              首行
+            </button>}
+            {!gitDiffActive && <button
+              type="button"
+              className={`editor-toggle${syncScroll ? " active" : ""}`}
+              title={syncScroll ? "已启用编辑与预览同步滚动（点击关闭，分栏模式生效）" : "已关闭同步滚动（点击启用，分栏模式生效）"}
+              onClick={() => setSyncScroll(v => !v)}
+            >
+              <MoveVertical size={13} />
+              滚动
+            </button>}
+            {!gitDiffActive && <div className="font-scale-control" title="调整编辑与预览区域的字体大小">
+              <button type="button" className="heading-level-btn" aria-label="缩小字体" onClick={() => setEditorFontScale(s => Math.max(EDITOR_FONT_SCALE_MIN, Math.round((s - EDITOR_FONT_SCALE_STEP) * 100) / 100))}>
+                <Minus size={13} />
+              </button>
+              <button type="button" className="font-scale-value" title="点击恢复 100%" onClick={() => setEditorFontScale(1)}>
+                {Math.round(editorFontScale * 100)}%
+              </button>
+              <button type="button" className="heading-level-btn" aria-label="放大字体" onClick={() => setEditorFontScale(s => Math.min(EDITOR_FONT_SCALE_MAX, Math.round((s + EDITOR_FONT_SCALE_STEP) * 100) / 100))}>
+                <Plus size={13} />
+              </button>
+            </div>}
             <div className="view-toggle">
               <button className={!gitDiffActive && viewMode === "edit" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("edit"); }}>源码</button>
               <button className={!gitDiffActive && viewMode === "split" ? "active" : ""} onClick={() => { setGitDiffActive(false); setViewMode("split"); }}>分栏</button>
@@ -1200,7 +1283,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {gitDiffActive && gitDiff ? <GitDiffView root={workspace?.root ?? ""} selection={gitDiff} /> : <div className={`md-workspace mode-${viewMode}`}>
+        {gitDiffActive && gitDiff ? <GitDiffView root={workspace?.root ?? ""} selection={gitDiff} /> : <div className={`md-workspace mode-${viewMode}`} style={{ "--md-font-scale": editorFontScale, "--md-preview-indent": previewIndent ? "2em" : "0" } as React.CSSProperties}>
           {(viewMode === "edit" || viewMode === "split") && (
             <div className="md-pane source-pane">
               <MarkdownSourceEditor
@@ -1213,11 +1296,12 @@ export default function App() {
                 highlights={findOpen ? findHits : []}
                 activeHighlight={findIndex}
                 readOnly={longWritingLocked || safety.status === "checking"}
+                scrollElementRef={sourceScrollRef}
               />
             </div>
           )}
           {(viewMode === "preview" || viewMode === "split") && (
-            <div className="md-pane preview-pane">
+            <div className="md-pane preview-pane" ref={previewPaneRef}>
               <MarkdownPreview
                 markdown={activeBody}
                 filePath={project.filePath}
@@ -1394,10 +1478,11 @@ export default function App() {
   </div>;
 }
 function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project, context?: { connectionsLoadedRoot?: string }) => void | Promise<void> }) {
-  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "workspace" | "about">("model");
+  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "wordExport" | "workspace" | "about">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
     if (!next.mineru) next.mineru = createProject().mineru;
+    if (!next.wordExport) next.wordExport = createProject().wordExport;
     next.agent = normalizeAgentSettings(next.agent);
     return next;
   });
@@ -1414,6 +1499,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
     history: { title: "历史会话", description: "查看并清理当前项目保存的 Agent 对话记录。", icon: <MessageSquareText size={15} /> },
     memory: { title: "记忆", description: "查看、审核和维护当前工作区的长期记忆。", icon: <Brain size={15} /> },
     parser: { title: "文档解析", description: "配置 Word 和 PDF 转换所使用的 MinerU 服务。", icon: <FilePlus2 size={15} /> },
+    wordExport: { title: "Word 导出", description: "配置封面 Logo、公司信息、页眉及页脚页码。", icon: <FileText size={15} /> },
     workspace: { title: "工作区", description: "管理方案正文、知识库和连接配置的本地目录。", icon: <FolderOpen size={15} /> },
     about: { title: "关于与更新", description: "查看版本并安装经过签名验证的应用更新。", icon: <Info size={15} /> },
   } as const;
@@ -1506,12 +1592,12 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
         <div className="agent-title"><Settings size={15} /><span>Agent 运行策略</span></div>
         <p className="muted">控制多轮执行、会话记忆、知识检索与引用方式。章节修改仍需在审核区手动确认。</p>
         <div className="form-grid agent-runtime-grid">
-          <label>上下文压缩阈值（tokens）<input type="number" min={8000} max={200000} step={1000} value={draft.agent.contextCompressionTokens} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, contextCompressionTokens: Number(e.target.value) || 48000 } })} /></label>
+          <label>上下文压缩阈值（tokens）<input type="number" min={8000} max={200000} step={1000} value={draft.agent.contextCompressionTokens} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, contextCompressionTokens: Number(e.target.value) || 98000 } })} /></label>
           <label>Agent 最大执行轮次<input type="number" min={4} max={50} value={draft.agent.maxRounds} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, maxRounds: Number(e.target.value) || 20 } })} /></label>
           <label>单任务联网搜索次数<input type="number" min={1} max={10} value={draft.agent.webSearchMaxCalls} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, webSearchMaxCalls: Number(e.target.value) || 2 } })} /></label>
           <label>保留近期消息<input type="number" min={4} max={100} value={draft.agent.recentMessages} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, recentMessages: Number(e.target.value) || 20 } })} /></label>
           <label>记忆目录条数<input type="number" min={5} max={100} value={draft.agent.memoryIndexLimit} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, memoryIndexLimit: Number(e.target.value) || 20 } })} /></label>
-          <label>引用上下文上限（字符）<input type="number" min={2000} max={100000} step={1000} value={draft.agent.pinnedContextChars} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, pinnedContextChars: Number(e.target.value) || 24000 } })} /></label>
+          <label>引用上下文上限（字符）<input type="number" min={2000} max={200000} step={1000} value={draft.agent.pinnedContextChars} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, pinnedContextChars: Number(e.target.value) || 198000 } })} /></label>
           <label>模型温度：{draft.agent.temperature.toFixed(1)}<input type="range" min={0} max={2} step={0.1} value={draft.agent.temperature} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, temperature: Number(e.target.value) } })} /></label>
           <label>回复风格<select value={draft.agent.responseStyle} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, responseStyle: e.target.value as Project["agent"]["responseStyle"] } })}><option value="concise">简洁</option><option value="balanced">均衡</option><option value="detailed">详细</option></select></label>
           <label>引用要求<select value={draft.agent.citationMode} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, citationMode: e.target.value as Project["agent"]["citationMode"] } })}><option value="required">必须标注来源</option><option value="preferred">尽量标注来源</option><option value="off">不强制标注</option></select></label>
@@ -1531,6 +1617,7 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
       {section === "memory" && <div className="settings-section-content memory-section-content">
         <MemorySettingsPanel project={draft} />
       </div>}
+      {section === "wordExport" && <WordExportSettingsSection value={draft.wordExport} onChange={wordExport => setDraft({ ...draft, wordExport })} />}
       {section === "parser" && <div className="settings-section-content">
         <div className="agent-title"><FilePlus2 size={15} /><span>文档解析 (MinerU)</span></div>
         <p className="muted">将 Word/PDF 转为 Markdown 时调用 MinerU 云端 API（默认 https://mineru.net）。API Key 写入工作区 <code>.gouan/connections.json</code>。</p>
