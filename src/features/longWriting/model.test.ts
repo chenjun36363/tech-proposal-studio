@@ -130,6 +130,71 @@ describe("long writing structured model calls", () => {
     );
   });
 
+  it("passes the explicit title and attached sources when planning a from-zero document", async () => {
+    const creationPlan = {
+      ...plan,
+      frozenOutline: [{
+        ...plan.frozenOutline[0],
+        chapterId: "planned-1",
+        titlePath: ["智慧园区技术方案", "建设目标"],
+        headingSkeleton: ["## 建设目标"],
+        action: "fill",
+      }],
+      targetChapterIds: ["planned-1"],
+    };
+    vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_outline_plan", creationPlan));
+
+    await expect(createOutlinePlan({
+      mode: "create",
+      documentTitle: "智慧园区技术方案",
+      instruction: "基于资料创建一份完整技术方案",
+      markdown: "# 智慧园区技术方案\n",
+      attachedSources: ["招标文件\n必须覆盖建设目标和总体架构"],
+    }, config)).resolves.toEqual(creationPlan);
+
+    const payload = lastPayload();
+    const serialized = JSON.stringify(payload);
+    expect(serialized).toContain("智慧园区技术方案");
+    expect(serialized).toContain("必须覆盖建设目标和总体架构");
+    expect(JSON.stringify(payload.messages)).toContain("从零创建文档");
+  });
+
+  it("rejects a from-zero plan that does not contain a chapter", async () => {
+    vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_outline_plan", {
+      ...plan,
+      frozenOutline: [],
+      targetChapterIds: [],
+    }));
+
+    await expect(createOutlinePlan({
+      mode: "create",
+      documentTitle: "新方案",
+      instruction: "创建方案",
+      markdown: "",
+    }, config)).rejects.toThrow("至少需要一个 H2 章节");
+  });
+
+  it("rejects a from-zero plan with an empty chapter title", async () => {
+    vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_outline_plan", {
+      ...plan,
+      frozenOutline: [{
+        ...plan.frozenOutline[0],
+        chapterId: "planned-1",
+        titlePath: [],
+        headingSkeleton: [],
+        action: "fill",
+      }],
+      targetChapterIds: ["planned-1"],
+    }));
+
+    await expect(createOutlinePlan({
+      mode: "create",
+      documentTitle: "新方案",
+      instruction: "创建方案",
+      markdown: "",
+    }, config)).rejects.toThrow("缺少标题");
+  });
+
   it("applies phase output limits and does not send the local context budget field", async () => {
     vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_chapter_summary", chapterSummary));
 

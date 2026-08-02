@@ -1,4 +1,4 @@
-export type LongWritingMode = "fill" | "rewrite" | "targeted";
+export type LongWritingMode = "fill" | "rewrite" | "targeted" | "create";
 
 export type LongWritingTaskStatus =
   | "preparing"
@@ -191,6 +191,8 @@ export interface LongWritingTaskRecord {
   mode: LongWritingMode;
   status: LongWritingTaskStatus;
   instruction: string;
+  /** Required for create tasks; absent in persisted tasks created before this mode existed. */
+  documentTitle?: string;
   model: string;
   modelProviderId?: string;
   concurrency: 1 | 2 | 3;

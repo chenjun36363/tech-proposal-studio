@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEditableOutline, createEditableOutline } from "./outlineEditing";
+import { applyEditableOutline, canCreateLongWritingDocument, createEditableOutline } from "./outlineEditing";
 import { parseLongWritingDocument } from "./chapterParser";
 import type { OutlinePlan } from "./types";
 
@@ -40,5 +40,32 @@ describe("editable outline", () => {
     const rows = createEditableOutline(plan, markdown);
     expect(() => applyEditableOutline(markdown, [])).toThrow("至少");
     expect(() => applyEditableOutline(markdown, [rows[0], rows[0]])).toThrow("两次");
+  });
+
+  it("builds a new H1 and editable H2 outline from an H1-only document", () => {
+    const creationPlan: OutlinePlan = {
+      ...plan,
+      frozenOutline: [
+        { chapterId: "planned-1", order: 0, titlePath: ["旧标题", "建设目标"], headingSkeleton: ["## 建设目标"], goal: "说明目标", action: "fill" },
+        { chapterId: "planned-2", order: 1, titlePath: ["旧标题", "总体架构"], headingSkeleton: ["## 总体架构"], goal: "说明架构", action: "fill" },
+      ],
+      targetChapterIds: ["planned-1", "planned-2"],
+    };
+    const rows = createEditableOutline(creationPlan, "# 旧标题\n");
+    expect(rows).toMatchObject([
+      { plannedChapterId: "planned-1", title: "建设目标", action: "fill" },
+      { plannedChapterId: "planned-2", title: "总体架构", action: "fill" },
+    ]);
+
+    const next = applyEditableOutline("# 旧标题\n", rows, { documentTitle: "新技术方案" });
+    expect(next).toBe("# 新技术方案\n\n## 建设目标\n\n## 总体架构\n\n");
+  });
+
+  it("only permits from-zero creation for blank or H1-only Markdown", () => {
+    expect(canCreateLongWritingDocument("")).toBe(true);
+    expect(canCreateLongWritingDocument("# 标题\n\n")).toBe(true);
+    expect(canCreateLongWritingDocument("# 标题\n\n前言")).toBe(false);
+    expect(canCreateLongWritingDocument("# 标题\n\n## 第一章\n")).toBe(false);
+    expect(() => applyEditableOutline("# 标题\n", [{ key: "new", title: "第一章", action: "fill", goal: "写作" }])).toThrow("必须填写方案标题");
   });
 });

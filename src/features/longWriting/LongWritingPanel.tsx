@@ -11,7 +11,7 @@ import { inspectLocalConsistency } from "./consistency";
 import { longWritingErrorMessage } from "./errors";
 import { appendLongWritingEvent, createLongWritingEvent } from "./events";
 import { LongWritingEventLog, LongWritingJobCard } from "./LongWritingOutput";
-import { applyEditableOutline, createEditableOutline, createNewOutlineChapter, type EditableOutlineChapter } from "./outlineEditing";
+import { applyEditableOutline, canCreateLongWritingDocument, createEditableOutline, createNewOutlineChapter, type EditableOutlineChapter } from "./outlineEditing";
 import { createChapterDraft, createChapterSummary, createConsistencyReport, createLocalChapterSummary, createOutlinePlan } from "./model";
 import {
   commitLongTaskChapter,
@@ -77,8 +77,37 @@ function modelKey(selection: SelectedModel): string {
   return `${selection.providerId}\u0000${selection.model}`;
 }
 
-function normalizePlan(plan: OutlinePlan, markdown: string, mode: LongWritingMode, requested: string[]): OutlinePlan {
+function normalizePlan(plan: OutlinePlan, markdown: string, mode: LongWritingMode, requested: string[], documentTitle?: string): OutlinePlan {
   const chapters = parseLongWritingDocument(markdown).chapters;
+  if (mode === "create") {
+    const title = documentTitle?.trim();
+    if (!title) throw new Error("从零创建需要方案标题");
+    if (!plan.frozenOutline.length) throw new Error("从零创建目录至少需要一个 H2 章节");
+    const ids = new Set<string>();
+    const frozenOutline = plan.frozenOutline
+      .slice()
+      .sort((left, right) => left.order - right.order)
+      .map((item, order) => {
+        const chapterTitle = item.titlePath.at(-1)?.trim()
+          || item.headingSkeleton.find(line => /^##(?!#)\s+/.test(line))?.replace(/^##(?!#)\s+/, "").trim();
+        if (!item.chapterId.trim() || ids.has(item.chapterId)) throw new Error("从零创建目录包含重复或空章节标识");
+        if (!chapterTitle) throw new Error(`从零创建目录第 ${order + 1} 章缺少标题`);
+        ids.add(item.chapterId);
+        return {
+          ...item,
+          order,
+          titlePath: [title, chapterTitle],
+          headingSkeleton: [`## ${chapterTitle}`],
+          action: "fill" as const,
+        };
+      });
+    return {
+      ...plan,
+      frozenOutline,
+      targetChapterIds: frozenOutline.map(item => item.chapterId),
+      frozenHeadingSignature: JSON.stringify(frozenOutline.map(item => item.headingSkeleton)),
+    };
+  }
   const goalById = new Map(plan.frozenOutline.map(item => [item.chapterId, item]));
   const goalByOrder = new Map(plan.frozenOutline.map(item => [item.order, item]));
   const requestedSet = new Set(requested);
@@ -166,6 +195,7 @@ export function LongWritingPanel({
       label: `${provider.name} / ${model}`,
     }))), [project.providers]);
   const [mode, setMode] = useState<LongWritingMode>("fill");
+  const [documentTitle, setDocumentTitle] = useState(project.name);
   const [instruction, setInstruction] = useState("");
   const [concurrency, setConcurrency] = useState<1 | 2 | 3>(2);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -236,12 +266,18 @@ export function LongWritingPanel({
   }, [project.selectedModel]);
 
   useEffect(() => {
-    if (mode === "fill") {
+    if (mode === "create") {
+      setSelected(new Set());
+    } else if (mode === "fill") {
       setSelected(new Set(parsed.chapters.filter(chapter => chapter.bodyMarkdown.replace(/\s/g, "").length < 200).map(chapter => chapter.id)));
     } else {
       setSelected(new Set(parsed.chapters.map(chapter => chapter.id)));
     }
   }, [mode, project.filePath]);
+
+  useEffect(() => {
+    if (!taskRef.current && mode === "create") setDocumentTitle(project.name);
+  }, [mode, project.name]);
 
   useEffect(() => {
     if (!project.workspace?.root || !project.filePath) return;
@@ -292,9 +328,15 @@ export function LongWritingPanel({
 
   const startPlanning = async () => {
     if (!project.workspace?.root || !project.filePath) return notify("长任务仅支持已保存的工作区 Markdown");
-    if (!parsed.chapters.length) return notify("当前文档没有可处理的 H2 章节");
-    if (!selected.size && mode !== "targeted") return notify("请至少选择一个章节");
-    if (!instruction.trim()) return notify("请填写通篇编写或修改指令");
+    const title = documentTitle.trim();
+    if (mode === "create") {
+      if (!canCreateLongWritingDocument(project.markdown)) return notify("从零创建只能使用空白或仅含 H1 的已保存 Markdown");
+      if (!title) return notify("请填写方案标题");
+    } else {
+      if (!parsed.chapters.length) return notify("当前文档没有可处理的 H2 章节");
+      if (!selected.size && mode !== "targeted") return notify("请至少选择一个章节");
+    }
+    if (!instruction.trim()) return notify(mode === "create" ? "请填写方案创建指令" : "请填写通篇编写或修改指令");
     if (!hasValidModelSelection) return notify("请选择可用模型");
     setBusy(true);
     onLockChange(true);
@@ -318,6 +360,7 @@ export function LongWritingPanel({
         mode,
         status: "preparing",
         instruction: instruction.trim(),
+        documentTitle: mode === "create" ? title : undefined,
         model: config.model,
         modelProviderId: config.providerId,
         concurrency,
@@ -340,7 +383,7 @@ export function LongWritingPanel({
 
       const attachedSources = project.sources.filter(source => sourceIds.has(source.id)).map(textFromSource);
       const planningChapters = parseLongWritingDocument(snapshot.content).chapters;
-      const useModelSummaries = planningChapters.length >= 8 || snapshot.content.length >= 30_000;
+      const useModelSummaries = mode !== "create" && (planningChapters.length >= 8 || snapshot.content.length >= 30_000);
       const chapterSummaries = useModelSummaries
         ? await mapConcurrent(planningChapters, concurrency, controller.signal, async chapter => {
             try {
@@ -401,7 +444,7 @@ export function LongWritingPanel({
         generated = await createOutlinePlan({
           mode,
           instruction: instruction.trim(),
-          documentTitle: project.name,
+          documentTitle: mode === "create" ? title : project.name,
           markdown: useModelSummaries ? snapshot.content.slice(0, 12_000) : snapshot.content,
           requestedChapterIds: requested,
           attachedSources,
@@ -411,12 +454,13 @@ export function LongWritingPanel({
       } catch (error) {
         if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
         const detail = longWritingErrorMessage(error, "未知模型错误");
+        if (mode === "create") throw error;
         generated = createLocalOutlinePlan(planningChapters, mode, requested);
         await recordEvent("outline_fallback", "目录规划模型调用失败，已使用本地目录规划，等待人工确认", {
           details: { error: detail, fallback: true, chapterCount: planningChapters.length },
         });
       }
-      const plan = normalizePlan(generated, snapshot.content, mode, requested);
+      const plan = normalizePlan(generated, snapshot.content, mode, requested, mode === "create" ? title : undefined);
       const planningState = taskRef.current?.id === baseTask.id ? taskRef.current : baseTask;
       const next: LongWritingTaskRecord = {
         ...planningState,
@@ -461,11 +505,13 @@ export function LongWritingPanel({
   const confirmOutlineAndStart = async () => {
     const current = taskRef.current;
     if (!current?.plan) return;
+    const confirmedTitle = current.mode === "create" ? documentTitle.trim() : undefined;
+    if (current.mode === "create" && !confirmedTitle) return notify("请填写方案标题");
     if (!outlineRows.some(row => row.action !== "keep")) return notify("请至少选择一个需要处理的章节");
     setBusy(true);
     try {
-      const edited = applyEditableOutline(documentRef.current, outlineRows);
-      const numbered = alignHeadingsToRules(edited, project.name, "chapter-h2").markdown;
+      const edited = applyEditableOutline(documentRef.current, outlineRows, { documentTitle: confirmedTitle });
+      const numbered = alignHeadingsToRules(edited, confirmedTitle || project.name, "chapter-h2").markdown;
       const outlineWrite = await writeTextFileChecked(current.filePath, numbered, current.currentDocumentHash, false);
       if (outlineWrite.outcome === "conflict") {
         const conflictSnapshot = outlineWrite.snapshot;
@@ -495,7 +541,10 @@ export function LongWritingPanel({
       const chapters = parseLongWritingDocument(snapshot.content).chapters;
       if (chapters.length !== outlineRows.length) throw new Error("应用目录后的章节数量与审核结果不一致");
       const oldToNew = new Map<string, string>();
-      outlineRows.forEach((row, index) => { if (row.sourceChapterId) oldToNew.set(row.sourceChapterId, chapters[index].id); });
+      outlineRows.forEach((row, index) => {
+        const sourceId = row.sourceChapterId ?? row.plannedChapterId;
+        if (sourceId) oldToNew.set(sourceId, chapters[index].id);
+      });
       const frozenOutline = chapters.map((chapter, index) => ({
         chapterId: chapter.id,
         order: chapter.order,
@@ -524,7 +573,7 @@ export function LongWritingPanel({
         });
       }
       const confirmed: LongWritingTaskRecord = {
-        ...current, status: "running", plan, chapters: jobs, selectedChapterIds: plan.targetChapterIds,
+        ...current, documentTitle: confirmedTitle ?? current.documentTitle, status: "running", plan, chapters: jobs, selectedChapterIds: plan.targetChapterIds,
         currentDocumentHash: snapshot.sha256, consistencyIssues: [],
         events: appendLongWritingEvent(current.events, createLongWritingEvent("outline_confirmed", `目录已确认并冻结，创建 ${jobs.length} 个章节 Worker 任务`, { details: { jobCount: jobs.length } })),
         error: undefined, updatedAt: new Date().toISOString(),
@@ -838,23 +887,24 @@ export function LongWritingPanel({
   if (!task) return <div className="long-writing-panel">
     <div className="long-writing-intro"><WandSparkles size={18} /><div><b>按章节通篇编写/修改</b><span>Coordinator 规划，隔离 Worker 限并发生成，串行安全写入。</span></div></div>
     <label>任务模式<select value={mode} onChange={event => setMode(event.target.value as LongWritingMode)}>
-      <option value="fill">补写空白/短章节</option><option value="rewrite">通篇改写所选章节</option><option value="targeted">按指令修改受影响章节</option>
+      <option value="fill">补写空白/短章节</option><option value="rewrite">通篇改写所选章节</option><option value="targeted">按指令修改受影响章节</option><option value="create">从零创建完整方案</option>
     </select></label>
-    <label>总指令<textarea value={instruction} onChange={event => setInstruction(event.target.value)} rows={5} placeholder="说明目标、必须保留的事实、风格和边界…" /></label>
+    {mode === "create" && <label>方案标题<input value={documentTitle} onChange={event => setDocumentTitle(event.target.value)} placeholder="例如：智慧园区综合管理平台技术方案" /></label>}
+    <label>总指令<textarea value={instruction} onChange={event => setInstruction(event.target.value)} rows={5} placeholder={mode === "create" ? "说明方案目标、受众、必须遵循的事实、风格和边界…" : "说明目标、必须保留的事实、风格和边界…"} /></label>
     <label>模型<select value={modelSelection ? modelKey(modelSelection) : ""} onChange={event => {
       const option = modelOptions.find(item => modelKey(item.selection) === event.target.value);
       setModelSelection(option?.selection ?? null);
     }}><option value="">请选择模型</option>{modelOptions.map(option => <option key={modelKey(option.selection)} value={modelKey(option.selection)}>{option.label}</option>)}</select></label>
-    <div className="long-writing-section"><b>章节范围</b>{parsed.chapters.map(chapter => <label className="long-writing-check" key={chapter.id}>
+    {mode === "create" ? <div className="long-writing-section"><b>创建范围</b><span>AI 将先根据标题、总指令和明确附加资料生成完整 H2 目录，确认后再按章节写作。</span></div> : <div className="long-writing-section"><b>章节范围</b>{parsed.chapters.map(chapter => <label className="long-writing-check" key={chapter.id}>
       <input type="checkbox" checked={selected.has(chapter.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(chapter.id) ? next.delete(chapter.id) : next.add(chapter.id); return next; })} />
       <span>{chapter.titlePath.join(" / ")}</span><em>{chapter.bodyMarkdown.replace(/\s/g, "").length} 字</em>
-    </label>)}</div>
+    </label>)}</div>}
     {!!project.sources.length && <div className="long-writing-section"><b>明确附加资料</b>{project.sources.map(source => <label className="long-writing-check" key={source.id}>
       <input type="checkbox" checked={sourceIds.has(source.id)} onChange={() => setSourceIds(current => { const next = new Set(current); next.has(source.id) ? next.delete(source.id) : next.add(source.id); return next; })} />
       <span>{source.title}</span>
     </label>)}</div>}
     <label>并发 Worker<select value={concurrency} onChange={event => setConcurrency(Number(event.target.value) as 1 | 2 | 3)}><option value={1}>1（严格顺序）</option><option value={2}>2（默认）</option><option value={3}>3（最快）</option></select></label>
-    <button className="long-writing-primary" disabled={busy || !hasValidModelSelection} onClick={() => void startPlanning()}>{busy ? "正在备份并规划…" : "检查目录并生成计划"}</button>
+    <button className="long-writing-primary" disabled={busy || !hasValidModelSelection} onClick={() => void startPlanning()}>{busy ? "正在备份并规划…" : mode === "create" ? "生成目录并开始审核" : "检查目录并生成计划"}</button>
     {busy && <button onClick={() => abortRef.current?.abort()}><Square size={13} />停止规划</button>}
   </div>;
 
@@ -864,12 +914,13 @@ export function LongWritingPanel({
   const resumable = !!task.plan && task.chapters.length > 0 && ["running", "paused", "failed"].includes(task.status);
   return <div className="long-writing-panel">
     {availability && <div className="long-writing-warning"><AlertTriangle size={15} /><span>当前编辑器的桌面工作区上下文暂时不可用：{availability.title}。长任务仍绑定到 <code>{task.filePath}</code>，进度和执行输出不会被此提示页覆盖。</span></div>}
-    <div className={`long-writing-task-head status-${task.status}`}><div><b>{task.status === "awaiting_outline" ? "目录待确认" : task.status === "awaiting_repairs" ? "一致性检查待处理" : `长任务：${task.status}`}</b><span>{task.mode} · {task.model} · 并发 {task.concurrency}</span></div><em>{progress}%</em></div>
+    <div className={`long-writing-task-head status-${task.status}`}><div><b>{task.status === "awaiting_outline" ? "目录待确认" : task.status === "awaiting_repairs" ? "一致性检查待处理" : `长任务：${task.status}`}</b><span>{task.mode === "create" ? `从零创建：${task.documentTitle || "未命名方案"}` : task.mode} · {task.model} · 并发 {task.concurrency}</span></div><em>{progress}%</em></div>
     <div className="long-writing-progress"><i style={{ width: `${progress}%` }} /></div>
     {task.error && <div className="long-writing-warning"><AlertTriangle size={15} />{task.error}</div>}
     <LongWritingEventLog events={task.events ?? []} busy={busy} />
     {planningFailed && <button className="long-writing-primary" disabled={busy} onClick={() => { void mutateTask(current => ({ ...current, status: "cancelled", events: appendLongWritingEvent(current.events, createLongWritingEvent("cancelled", "已关闭失败的目录规划，准备重新创建任务")), updatedAt: new Date().toISOString() })).then(() => { setTaskBoth(null); setOutlineRows([]); onLockChange(false); }).catch(error => notify(longWritingErrorMessage(error, "关闭失败任务失败"))); }}>返回并重新规划</button>}
     {task.status === "awaiting_outline" && task.plan && <>
+      {task.mode === "create" && <label className="long-writing-create-title">方案标题<input value={documentTitle} onChange={event => setDocumentTitle(event.target.value)} placeholder="方案标题" /></label>}
       <div className="long-writing-bible"><b>Document Bible</b><p>{task.plan.documentSummary}</p><small>受众：{task.plan.audience}</small><small>规则：{task.plan.writingRules.join("；") || "无"}</small></div>
       <div className="long-writing-section long-writing-outline-editor"><div className="long-writing-section-title"><b>审核目录与处理范围</b><button type="button" onClick={() => setOutlineRows(rows => [...rows, createNewOutlineChapter(task.mode, rows.length)])}><Plus size={13} />新增章节</button></div>
         {outlineRows.map((row, index) => <div className={`long-writing-outline-edit-row ${row.action === "keep" ? "keep" : "target"}`} key={row.key}>

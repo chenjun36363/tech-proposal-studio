@@ -7,7 +7,7 @@ import { prepareLongWritingPayload } from "./contextBudget";
 export type LongWritingModelConfig = ResolvedModelConfig | OpenAICompatibleConfig;
 
 export interface OutlinePlanningInput {
-  mode: "fill" | "rewrite" | "targeted";
+  mode: "fill" | "rewrite" | "targeted" | "create";
   instruction: string;
   documentTitle?: string;
   markdown: string;
@@ -578,16 +578,33 @@ export async function createChapterSummary(
   ], config, signal, argumentsValue => parseChapterSummary(argumentsValue, input.chapterId), 3000, true);
 }
 
+function validateCreateOutlinePlan(plan: OutlinePlan, documentTitle?: string): OutlinePlan {
+  if (!documentTitle?.trim()) throw new Error("从零创建需要方案标题");
+  if (!plan.frozenOutline.length) throw new Error("从零创建目录至少需要一个 H2 章节");
+  const ids = new Set<string>();
+  plan.frozenOutline.forEach((chapter, index) => {
+    if (!chapter.chapterId.trim() || ids.has(chapter.chapterId)) throw new Error(`从零创建目录第 ${index + 1} 章缺少唯一标识`);
+    ids.add(chapter.chapterId);
+    const title = chapter.titlePath.at(-1)?.trim();
+    if (!title) throw new Error(`从零创建目录第 ${index + 1} 章缺少标题`);
+  });
+  return plan;
+}
+
 export async function createOutlinePlan(
   input: OutlinePlanningInput,
   config: LongWritingModelConfig,
   signal?: AbortSignal,
 ): Promise<OutlinePlan> {
+  const creationRules = input.mode === "create" ? [
+    "当前任务从零创建文档：documentTitle 是用户确定的 H1，绝不能改写或另行生成。",
+    "必须规划至少一个按顺序排列的 H2 章节；每个 frozenOutline 项只代表一个新 H2，action 必须为 fill，targetChapterIds 必须包含全部章节。",
+  ] : ["标题骨架中的 Markdown 标题行必须保持可验证；未纳入处理范围的章节 action 使用 keep。"];
   const systemPrompt = [
     "你是长篇软件技术方案的规划 Coordinator。",
     "只能调用 submit_outline_plan，不得输出普通文本，不得调用任何文件或 Agent 工具。",
     "规划必须覆盖文档摘要、受众、写作规则、固定事实、术语、完整标题骨架、章节目标、衔接要求和最终处理范围。",
-    "标题骨架中的 Markdown 标题行必须保持可验证；未纳入处理范围的章节 action 使用 keep。",
+    ...creationRules,
   ].join("\n");
   const prefix = "请根据以下输入生成目录规划：";
   const prepared = prepareLongWritingPayload({
@@ -597,10 +614,11 @@ export async function createOutlinePlan(
     userPrefix: prefix,
     tool: outlineTool,
   });
-  return callForcedTool(outlineTool, [
+  const plan = await callForcedTool(outlineTool, [
     { role: "system", content: systemPrompt },
     { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
   ], config, signal, parseOutlinePlan, 6000, true);
+  return input.mode === "create" ? validateCreateOutlinePlan(plan, input.documentTitle) : plan;
 }
 
 export async function createChapterDraft(

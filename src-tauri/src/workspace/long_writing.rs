@@ -14,7 +14,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 const DB_FILENAME: &str = "workspace.db";
-const TASK_MODES: &[&str] = &["fill", "rewrite", "targeted"];
+const TASK_MODES: &[&str] = &["fill", "rewrite", "targeted", "create"];
 const TASK_STATUSES: &[&str] = &[
     "preparing",
     "awaiting_outline",
