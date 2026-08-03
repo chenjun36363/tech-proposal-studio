@@ -17,6 +17,8 @@ export interface AgentSettings {
   customInstructions: string;
   knowledgeToolsEnabled: boolean;
   memoryEnabled: boolean;
+  /** 新会话是否默认启用联网搜索（仅作默认开关，单会话可在发送框上方覆盖）。 */
+  webSearchEnabled: boolean;
   memoryIndexLimit: number;
   autoRemember: boolean;
   planningEnabled: boolean;
@@ -36,8 +38,9 @@ export const defaultAgentSettings: AgentSettings = {
   responseStyle: "balanced",
   citationMode: "preferred",
   customInstructions: "",
-  knowledgeToolsEnabled: true,
-  memoryEnabled: true,
+  knowledgeToolsEnabled: false,
+  memoryEnabled: false,
+  webSearchEnabled: false,
   memoryIndexLimit: 20,
   autoRemember: true,
   planningEnabled: true,
@@ -65,8 +68,9 @@ export function normalizeAgentSettings(value: Partial<AgentSettings> | null | un
     responseStyle: ["concise", "balanced", "detailed"].includes(source.responseStyle ?? "") ? source.responseStyle! : defaultAgentSettings.responseStyle,
     citationMode: ["required", "preferred", "off"].includes(source.citationMode ?? "") ? source.citationMode! : defaultAgentSettings.citationMode,
     customInstructions: typeof source.customInstructions === "string" ? source.customInstructions.slice(0, 4000) : "",
-    knowledgeToolsEnabled: typeof source.knowledgeToolsEnabled === "boolean" ? source.knowledgeToolsEnabled : true,
-    memoryEnabled: typeof source.memoryEnabled === "boolean" ? source.memoryEnabled : true,
+    knowledgeToolsEnabled: typeof source.knowledgeToolsEnabled === "boolean" ? source.knowledgeToolsEnabled : false,
+    memoryEnabled: typeof source.memoryEnabled === "boolean" ? source.memoryEnabled : false,
+    webSearchEnabled: typeof source.webSearchEnabled === "boolean" ? source.webSearchEnabled : false,
     memoryIndexLimit: Math.round(numberInRange(source.memoryIndexLimit, defaultAgentSettings.memoryIndexLimit, 5, 100)),
     autoRemember: typeof source.autoRemember === "boolean" ? source.autoRemember : true,
     planningEnabled: typeof source.planningEnabled === "boolean" ? source.planningEnabled : true,

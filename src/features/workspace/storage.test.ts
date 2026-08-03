@@ -43,7 +43,9 @@ describe("project persistence", () => {
     delete project.agent;
     localStorage.setItem("tech-proposal-studio.project.v1", JSON.stringify(project));
     expect(loadProject().agent.contextCompressionTokens).toBe(98000);
-    expect(loadProject().agent.memoryEnabled).toBe(true);
+    expect(loadProject().agent.memoryEnabled).toBe(false);
+    expect(loadProject().agent.knowledgeToolsEnabled).toBe(false);
+    expect(loadProject().agent.webSearchEnabled).toBe(false);
     expect(loadProject().agent.longWritingContextWindowTokens).toBe(32768);
   });
   it("adds default Word export settings to legacy projects and persists custom values", () => {

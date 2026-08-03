@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Bot, Check, ChevronDown, Database, FileSearch, GitBranch, Globe2, Maximize2, MessageSquarePlus, Send, ShieldAlert, Sparkles, Square, Trash2, Wrench, X } from "lucide-react";
+import { Archive, BookOpen, Bot, Brain, Check, Database, FileSearch, Gauge, GitBranch, Globe2, Maximize2, MessageSquarePlus, Send, ShieldAlert, Sparkles, Square, Trash2, X } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
-import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, compactAgentConversation, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch } from "../agent/conversationStore";
+import { AGENT_CONVERSATIONS_CHANGED, agentConversationMessageCount, applyAgentConversationChange, compactAgentConversation, compactAgentConversationToBudget, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, pruneEmptyAgentConversations, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch, type ConversationDefaults } from "../agent/conversationStore";
 import { buildEditorSelectionPrompt, createProposalToolRegistry, proposalAgentSystemPrompt, type AgentSearchHighlight, type AgentWorkspaceRuntime } from "../agent/proposalTools";
 import type { AgentDraft, AgentEditorSelection, AgentEvent, AgentGitApprovalRequest, AgentRunStatus, AgentUserQuestion, AgentUserQuestionAnswer, AgentUserQuestionChoice, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
-import { buildAgentPreferencePrompt, normalizeAgentSettings } from "../agent/settings";
+import { buildAgentPreferencePrompt, normalizeAgentSettings, type AgentSettings } from "../agent/settings";
+import { estimateAgentContextTokens, estimateAgentTextTokens } from "../agent/contextCompaction";
 import { listProjectMemories } from "../agent/memoryService";
 import type { DocumentBlock, Project, SelectedModel } from "../core/types";
 import { resolveActiveModelConfig } from "../services/llm/resolve";
@@ -34,6 +35,37 @@ function draftCopy(draft: AgentDraft) {
   if (draft.operation === "insert_section") return { title: "章节插入待确认", before: "插入位置", after: "待插入章节" };
   if (draft.operation === "delete_section") return { title: "章节删除待确认", before: "待删除章节", after: "删除后" };
   return { title: "章节修改待确认", before: "章节原文", after: "修改稿" };
+}
+
+/**
+ * 组装发送给模型的 system prompt 各段（不含运行时注入的 summary / 记忆目录 / 钉住资料）。
+ * send() 与上下文 meter 共用，保证 meter 的 token 估算与真实发送内容一致口径。
+ */
+function buildAgentSystemPromptParts(params: {
+  agentSettings: AgentSettings;
+  enabledSkills: SkillSummary[];
+  webSearchEnabled: boolean;
+  knowledgeSearchEnabled: boolean;
+  memorySearchEnabled: boolean;
+  pinnedContextOnly: boolean;
+  fullAccessEnabled: boolean;
+  planningEnabled: boolean;
+  capturedSelection?: AgentEditorSelection;
+}): string[] {
+  const parts = [proposalAgentSystemPrompt, buildAgentPreferencePrompt(params.agentSettings)];
+  const skillsPrompt = buildSkillsSystemPrompt(params.enabledSkills);
+  if (skillsPrompt) parts.push(skillsPrompt);
+  if (params.pinnedContextOnly) parts.push("本轮只能使用用户明确加入的引用资料和当前方案内容，不得检索或引入其他知识库资料。");
+  if (!params.knowledgeSearchEnabled) parts.push("知识库检索当前已停用。不得调用 search_knowledge 或 read_knowledge，也不得声称已执行知识库检索。");
+  if (!params.webSearchEnabled) parts.push("联网搜索当前已停用。不得调用 web_search 或 read_web_page。");
+  else parts.push(`本轮最多执行 ${params.agentSettings.webSearchMaxCalls} 次联网搜索，达到上限后不得再次调用 web_search。`);
+  if (!params.memorySearchEnabled) parts.push("长期记忆检索当前已停用。不得调用 search_memory 或 read_memory；如需记录事实，请明确告知用户当前未启用记忆引用。");
+  if (params.capturedSelection) parts.push(buildEditorSelectionPrompt(params.capturedSelection));
+  parts.push(params.fullAccessEnabled
+    ? "本会话已开启完全访问。所有已提供的写入和系统工具均可直接执行，无需请求逐项确认；必须如实报告成功、失败和实际目标。"
+    : "本会话未开启完全访问。文档修改必须提交审核提案，且不得尝试系统级文件或命令操作。");
+  if (params.planningEnabled) parts.push("首轮必须先调用 write_todo 制定本次任务的执行计划，再执行读取、检索或修改操作。");
+  return parts;
 }
 
 export function AgentConversationPanel({ project, block, pinnedContext, editorSelection, clearEditorSelection, applyDraft, workspaceRuntime, onDocumentSearch, notify }: {
@@ -74,6 +106,12 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const aiEnabled = project.model?.enabled !== false;
   const running = runStatus === "running" || runStatus === "waiting_approval" || runStatus === "waiting_user";
   const workspaceRoot = project.workspace?.root;
+  const conversationDefaults = (): ConversationDefaults => ({
+    pinnedContextOnly: agentSettings.defaultPinnedContextOnly,
+    webSearchEnabled: agentSettings.webSearchEnabled,
+    knowledgeSearchEnabled: agentSettings.knowledgeToolsEnabled,
+    memorySearchEnabled: agentSettings.memoryEnabled,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -87,12 +125,15 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       try {
         const loaded = await listAgentConversations(project.id, workspaceRoot);
         if (cancelled) return;
-        const preferred = loaded.find(item => item.id === activeId) ?? loaded[0];
+        // 清理历史中“新建后未发送消息”的空会话（0 条对话），不在历史里保留它们。
+        void pruneEmptyAgentConversations(project.id, workspaceRoot).catch(() => undefined);
+        const nonEmpty = loaded.filter(item => agentConversationMessageCount(item) > 0);
+        const preferred = nonEmpty.find(item => item.id === activeId) ?? nonEmpty[0];
         const initial = preferred
           ? (preferred.messagesLoaded ? preferred : await getAgentConversation(preferred.id, workspaceRoot))
-          : createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
+          : createAgentConversation(project.id, conversationDefaults());
         if (cancelled) return;
-        setConversations(loaded.length ? applyAgentConversationChange(loaded, { projectId: project.id, type: "saved", conversation: initial }) : [initial]);
+        setConversations(nonEmpty.length ? applyAgentConversationChange(nonEmpty, { projectId: project.id, type: "saved", conversation: initial }) : [initial]);
         setActiveId(initial.id);
       } catch (error) {
         if (!cancelled) notify(error instanceof Error ? error.message : "历史会话加载失败");
@@ -108,7 +149,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     void load();
     window.addEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged);
     return () => { cancelled = true; window.removeEventListener(AGENT_CONVERSATIONS_CHANGED, onChanged); };
-  }, [project.id, workspaceRoot, agentSettings.defaultPinnedContextOnly]);
+  }, [project.id, workspaceRoot, agentSettings.defaultPinnedContextOnly, agentSettings.webSearchEnabled, agentSettings.knowledgeToolsEnabled, agentSettings.memoryEnabled]);
 
   useEffect(() => { if (!draft) setReviewOpen(false); }, [draft]);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -117,6 +158,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const pinnedContextOnly = Boolean(active?.pinnedContextOnly && pinnedContext.length > 0);
   const webSearchEnabled = active?.webSearchEnabled === true;
   const knowledgeSearchEnabled = active?.knowledgeSearchEnabled !== false;
+  const memorySearchEnabled = active?.memorySearchEnabled === true;
   const fullAccessEnabled = active?.fullAccessEnabled === true;
   const enabledSkills = resolveEnabledSkills(agentSettings.enabledSkills, availableSkills);
   const slashQuery = skillSuggestionsDismissed ? null : skillSlashQuery(input, composerCursor);
@@ -124,6 +166,47 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     ? fuzzyFilter(enabledSkills.filter(skill => skill.available), slashQuery.query, skill => `${skill.name} ${skill.description}`).slice(0, 7)
     : [], [enabledSkills, slashQuery?.query, slashQuery?.start, skillSuggestionsDismissed]);
   useEffect(() => { setSkillSuggestionIndex(0); }, [slashQuery?.query, slashQuery?.start]);
+
+  // 真实「累计上下文」估算 = system prompt（不含摘要） + 工具定义 + 钉住资料 + 历史检查点(summary) + 会话消息。
+  // 与运行期自动压缩（compactAgentRunContext）使用同一套 estimate，使 meter 数字 / 阈值警告与真实发送量一致。
+  const systemPromptTokens = useMemo(
+    () => estimateAgentTextTokens(buildAgentSystemPromptParts({
+      agentSettings, enabledSkills, webSearchEnabled, knowledgeSearchEnabled, memorySearchEnabled,
+      pinnedContextOnly, fullAccessEnabled,
+      planningEnabled: agentSettings.planningEnabled && !agentSettings.disabledTools.includes("write_todo"),
+      capturedSelection: editorSelection,
+    }).join("\n\n")),
+    [agentSettings, enabledSkills, webSearchEnabled, knowledgeSearchEnabled, memorySearchEnabled, pinnedContextOnly, fullAccessEnabled, editorSelection],
+  );
+  // 工具定义为常量开销：构造注册表仅读取 definitions（execute 不会在构造期被调用），失败时回退 0。
+  // 用签名隔离依赖，避免 agentSettings 每次渲染都重建注册表（只在影响工具集的开关变化时重算）。
+  const toolSignature = JSON.stringify([
+    fullAccessEnabled, knowledgeSearchEnabled, memorySearchEnabled, webSearchEnabled,
+    agentSettings.planningEnabled,
+    agentSettings.disabledTools, enabledSkills.map(skill => skill.name),
+  ]);
+  const toolContextTokens = useMemo(() => {
+    try {
+      const registry = createProposalToolRegistry({
+        project, modelConfig: undefined, block, selection: undefined,
+        reviewDraft: () => true, onTodos: () => {}, askUser: undefined,
+        fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime: undefined,
+        reviewGitOperation: async () => true, onDocumentSearch: () => {},
+      });
+      return estimateAgentTextTokens(JSON.stringify(registry.definitions()));
+    } catch { return 0; }
+  }, [toolSignature, project, block, workspaceRuntime]);
+  const pinnedContextTokens = useMemo(() => estimateAgentTextTokens(pinnedContext.map(item => item.content).join("\n\n")), [pinnedContext]);
+  const contextThreshold = agentSettings.contextCompressionTokens;
+  const summaryTokens = useMemo(() => estimateAgentTextTokens(active?.summary ?? ""), [active?.summary]);
+  const contextTokens = useMemo(
+    () => systemPromptTokens + toolContextTokens + pinnedContextTokens + summaryTokens + estimateAgentContextTokens(messages, []),
+    [systemPromptTokens, toolContextTokens, pinnedContextTokens, summaryTokens, messages],
+  );
+  const contextPct = contextThreshold > 0 ? Math.min(100, Math.max(1, Math.round((contextTokens / contextThreshold) * 100))) : 0;
+  const contextMessageCount = agentConversationMessageCount(active);
+  const minKeepMessages = Math.max(4, Math.round(agentSettings.recentMessages));
+  const canCompact = !running && messages.length > minKeepMessages;
   const pendingDraftCopy = draft ? draftCopy(draft) : null;
   const pendingRevisedContent = draft?.operation === "move_section" ? draft.target.destinationSnapshot ?? "" : draft?.after ?? "";
 
@@ -154,15 +237,38 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     return saved;
   };
 
+  // 主动压缩：复用本地结构化检查点（buildAgentCheckpoint，无需调用 LLM，免费且即时）。
+  // 预算感知——与运行期自动压缩同一口径：把固定开销（system + 工具 + 钉住资料）计入预算，
+  // 逐步减少保留条数，确保压完后累计上下文真正回落到阈值以内，而非只按消息条数裁剪。
+  const manualCompact = async () => {
+    if (!active || !canCompact) return;
+    const before = contextTokens;
+    const compacted = compactAgentConversationToBudget(active, {
+      keepRecent: agentSettings.recentMessages,
+      thresholdTokens: agentSettings.contextCompressionTokens,
+      fixedOverheadTokens: systemPromptTokens + toolContextTokens + pinnedContextTokens,
+    });
+    if (compacted === active) { notify("当前上下文较短，暂无需压缩"); return; }
+    try {
+      const saved = await saveAgentConversation(compacted, workspaceRoot);
+      setConversations(current => applyAgentConversationChange(current, { projectId: project.id, type: "saved", conversation: saved }));
+      const afterSummary = estimateAgentTextTokens(saved.summary ?? "");
+      const after = systemPromptTokens + toolContextTokens + pinnedContextTokens + afterSummary + estimateAgentContextTokens(saved.messages, []);
+      const removed = messages.length - saved.messages.length;
+      setEvents(current => [...current, { id: crypto.randomUUID(), type: "context_compacted", at: Date.now(), round: -1, beforeTokens: before, afterTokens: after, removedMessages: removed }]);
+      notify(`已主动压缩上下文：${before.toLocaleString()} → ${after.toLocaleString()} tokens（移除 ${removed} 条较早消息）`);
+    } catch (error) {
+      notify(`上下文压缩失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   const createConversation = () => {
-    void (async () => {
-      try {
-        const created = await saveAgentConversation(createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly), workspaceRoot);
-        await activateConversation(created);
-      } catch (error) {
-        notify(error instanceof Error ? error.message : "新建会话失败");
-      }
-    })();
+    if (running) return;
+    // 新建会话先只放进内存，不立即落盘——
+    // 只有用户真正发送消息（产生对话）后才会在 commitConversation 中持久化。
+    // 这样“新建后未发送消息”的空会话就不会被保留在历史里。
+    const created = createAgentConversation(project.id, conversationDefaults());
+    void activateConversation(created);
   };
 
   const removeConversation = () => {
@@ -171,7 +277,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       try {
         const remaining = conversations.filter(item => item.id !== active.id);
         await deleteAgentConversation(active.id, project.id, workspaceRoot);
-        const next = remaining[0] ?? createAgentConversation(project.id, agentSettings.defaultPinnedContextOnly);
+        const next = remaining[0] ?? createAgentConversation(project.id, conversationDefaults());
         if (!remaining.length) setConversations([next]);
         await activateConversation(next);
       } catch (error) {
@@ -183,6 +289,8 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     if (!active) return;
     const previous = active;
     setConversations(current => current.map(item => item.id === active.id ? { ...item, ...patch } : item));
+    // 空会话（0 条对话消息）不落盘：避免用户只是切换开关就生成一个无内容的空记录。
+    if (!agentConversationMessageCount(active)) return;
     if ((active.revision ?? 0) === 0) {
       void saveAgentConversation({ ...active, ...patch }, workspaceRoot)
         .then(saved => setConversations(current => applyAgentConversationChange(current, { projectId: project.id, type: "saved", conversation: saved })))
@@ -206,6 +314,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const setPinnedContextOnly = (value: boolean) => updateActiveConversationRuntime({ pinnedContextOnly: value });
   const setWebSearchEnabled = (value: boolean) => updateActiveConversationRuntime({ webSearchEnabled: value });
   const setKnowledgeSearchEnabled = (value: boolean) => updateActiveConversationRuntime({ knowledgeSearchEnabled: value });
+  const setMemorySearchEnabled = (value: boolean) => updateActiveConversationRuntime({ memorySearchEnabled: value });
   const setFullAccessEnabled = (value: boolean) => {
     if (!active) return;
     if (!value) return updateActiveConversationRuntime({ fullAccessEnabled: false });
@@ -379,30 +488,29 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     });
     for (const toolName of agentSettings.disabledTools) registry.unregister(toolName);
     if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
-    if (pinnedContextOnly || !agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
-    if (!agentSettings.memoryEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
+    if (pinnedContextOnly || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
+    if (!memorySearchEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
     else if (!agentSettings.autoRemember) registry.unregister("remember_project_fact");
     if (!agentSettings.planningEnabled) registry.unregister("write_todo");
-    const promptParts = [proposalAgentSystemPrompt, buildAgentPreferencePrompt(agentSettings)];
-    const skillsPrompt = buildSkillsSystemPrompt(enabledSkills);
-    if (skillsPrompt) promptParts.push(skillsPrompt);
-    if (pinnedContextOnly) promptParts.push("本轮只能使用用户明确加入的引用资料和当前方案内容，不得检索或引入其他知识库资料。");
-    if (!agentSettings.knowledgeToolsEnabled || !knowledgeSearchEnabled) promptParts.push("知识库检索当前已停用。不得调用 search_knowledge 或 read_knowledge，也不得声称已执行知识库检索。");
-    if (!webSearchEnabled) promptParts.push("联网搜索当前已停用。不得调用 web_search 或 read_web_page。");
-    else promptParts.push(`本轮最多执行 ${agentSettings.webSearchMaxCalls} 次联网搜索，达到上限后不得再次调用 web_search。`);
-    if (capturedSelection) promptParts.push(buildEditorSelectionPrompt(capturedSelection));
-    promptParts.push(fullAccessEnabled
-      ? "本会话已开启完全访问。所有已提供的写入和系统工具均可直接执行，无需请求逐项确认；必须如实报告成功、失败和实际目标。"
-      : "本会话未开启完全访问。文档修改必须提交审核提案，且不得尝试系统级文件或命令操作。");
-    const planningToolEnabled = agentSettings.planningEnabled && registry.has("write_todo");
-    if (planningToolEnabled) promptParts.push("首轮必须先调用 write_todo 制定本次任务的执行计划，再执行读取、检索或修改操作。");
-    const memories = agentSettings.memoryEnabled ? await listProjectMemories(project, false) : [];
+    const planningToolEnabled = agentSettings.planningEnabled && !agentSettings.disabledTools.includes("write_todo");
+    const promptParts = buildAgentSystemPromptParts({
+      agentSettings,
+      enabledSkills,
+      webSearchEnabled,
+      knowledgeSearchEnabled,
+      memorySearchEnabled,
+      pinnedContextOnly,
+      fullAccessEnabled,
+      planningEnabled: planningToolEnabled,
+      capturedSelection,
+    });
+    const memories = memorySearchEnabled ? await listProjectMemories(project, false) : [];
     const requestMessages = buildProposalAgentMessages({
       systemPrompt: promptParts.join("\n\n"),
       conversation: active,
       pinnedContext,
       pinnedContextChars: agentSettings.pinnedContextChars,
-      memoryEnabled: agentSettings.memoryEnabled,
+      memoryEnabled: memorySearchEnabled,
       memories,
       memoryIndexLimit: agentSettings.memoryIndexLimit,
     });
@@ -494,19 +602,18 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     </section>}
 
     <div className="agent-tool-toggles">
-      <details className="agent-capability-menu">
-        <summary><Wrench size={13} /><span>Tools</span><small>{Number(knowledgeSearchEnabled) + Number(webSearchEnabled)}/2</small><ChevronDown size={12} /></summary>
-        <div className="agent-capability-popover">
-          <label title="允许 Agent 检索和阅读工作区知识库">
-            <span><Database size={14} /><span><b>知识检索</b><small>检索和阅读工作区知识库</small></span></span>
-            <input type="checkbox" role="switch" checked={knowledgeSearchEnabled} disabled={running || pinnedContextOnly || !agentSettings.knowledgeToolsEnabled} onChange={event => setKnowledgeSearchEnabled(event.target.checked)} />
-          </label>
-          <label title="允许 Agent 在需要最新外部信息时请求联网搜索">
-            <span><Globe2 size={14} /><span><b>联网搜索</b><small>搜索互联网并读取网页正文</small></span></span>
-            <input type="checkbox" role="switch" checked={webSearchEnabled} disabled={running} onChange={event => setWebSearchEnabled(event.target.checked)} />
-          </label>
-        </div>
-      </details>
+      <label className={`agent-compact-toggle ${memorySearchEnabled ? "active" : ""}`} title={memorySearchEnabled ? "引用记忆：已启用（点击关闭）" : "引用记忆：已关闭（点击启用）"} aria-label="引用记忆">
+        <input type="checkbox" checked={memorySearchEnabled} disabled={running} onChange={event => setMemorySearchEnabled(event.target.checked)} />
+        <Brain size={14} />
+      </label>
+      <label className={`agent-compact-toggle ${knowledgeSearchEnabled ? "active" : ""}`} title={knowledgeSearchEnabled ? "知识检索：已启用（点击关闭）" : "知识检索：已关闭（点击启用）"} aria-label="知识检索">
+        <input type="checkbox" checked={knowledgeSearchEnabled} disabled={running || pinnedContextOnly} onChange={event => setKnowledgeSearchEnabled(event.target.checked)} />
+        <Database size={14} />
+      </label>
+      <label className={`agent-compact-toggle ${webSearchEnabled ? "active" : ""}`} title={webSearchEnabled ? "联网搜索：已启用（点击关闭）" : "联网搜索：已关闭（点击启用）"} aria-label="联网搜索">
+        <input type="checkbox" checked={webSearchEnabled} disabled={running} onChange={event => setWebSearchEnabled(event.target.checked)} />
+        <Globe2 size={14} />
+      </label>
       <label className={`agent-compact-toggle ${pinnedContextOnly ? "active" : ""}`} title={`仅使用已引用资料，共 ${pinnedContext.length} 条`} aria-label={`仅使用已引用资料，共 ${pinnedContext.length} 条`}>
         <input type="checkbox" checked={pinnedContextOnly} disabled={!pinnedContext.length || running} onChange={event => setPinnedContextOnly(event.target.checked)} />
         <BookOpen size={14} /><small>{pinnedContext.length}</small>
@@ -541,6 +648,13 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
         ? <button type="button" title="停止" className="agent-stop" onClick={stopRun}><Square size={14} /></button>
         : <button type="button" title="发送" className="primary" onClick={() => void send()} disabled={!input.trim()}><Send size={15} /></button>}
     </div>
+    <button type="button" className={`agent-context-meter ${contextPct >= 85 ? "critical" : contextPct >= 60 ? "warning" : ""} ${canCompact ? "compactable" : ""}`} onClick={manualCompact} disabled={!canCompact} title={canCompact ? `当前累计上下文约 ${contextTokens.toLocaleString()} tokens（压缩阈值 ${contextThreshold.toLocaleString()}）。点击主动压缩：将较早消息汇总为结构化检查点，按 token 预算保留近期消息，使总量回落到阈值以内` : `当前累计上下文较短（约 ${contextTokens.toLocaleString()} tokens），暂无需压缩`}>
+      <Gauge size={13} />
+      <span className="agent-context-meter-value">{contextTokens >= 1000 ? `${(contextTokens / 1000).toFixed(1)}k` : contextTokens} tokens</span>
+      <small>{contextMessageCount} 条</small>
+      <span className="agent-context-meter-bar" aria-hidden="true"><i style={{ width: `${contextPct}%` }} /></span>
+      {canCompact && <Archive size={13} className="agent-context-meter-action" />}
+    </button>
     {draft && reviewOpen && <AgentDraftReviewModal draft={draft} close={() => setReviewOpen(false)} reject={rejectDraft} accept={acceptDraft} />}
   </div>;
 }

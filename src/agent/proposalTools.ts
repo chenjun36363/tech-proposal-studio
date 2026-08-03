@@ -69,6 +69,10 @@ export interface AgentWorkspaceRuntime {
   reload: (path?: string) => Promise<AgentDocumentState>;
   rename: (name: string, path?: string) => Promise<AgentDocumentState>;
   delete: (path: string, mode: "trash" | "permanent", currentPath?: string) => Promise<AgentDocumentState | null>;
+  // Re-sync the document-safety baseline after this runtime's unchecked writers
+  // (system_file_operation / run_powershell) touch the open file. Optional because
+  // bare test mocks may not provide it.
+  reconcileDocument?: (path?: string) => Promise<void> | void;
 }
 
 const KNOWLEDGE_ITEM_MAX_CHARS = 2500;
@@ -579,11 +583,11 @@ export function createProposalToolRegistry(params: {
     registry
       .register({
         definition: { type: "function", function: { name: "system_file_operation", description: "以系统级权限查询、读取、写入、创建、复制、移动、重命名或删除任意文件和目录。", parameters: objectSchema({ operation: { type: "string", enum: ["stat","list","read_text","write_text","create_directory","copy","move","rename","delete"] }, path: { type: "string" }, destination: { type: "string" }, content: { type: "string" }, delete_mode: { type: "string", enum: ["trash","permanent"] } }, ["operation","path"]) } },
-        execute: async args => { const result=await privilegedFileOperation({ operation:text(args.operation,"operation") as any,path:text(args.path,"path"),destination:typeof args.destination==="string"?args.destination:undefined,content:typeof args.content==="string"?args.content:undefined,deleteMode:args.delete_mode==="trash"?"trash":"permanent" }); return {content:JSON.stringify(result,null,2),data:{operation:result.operation,path:result.path,destination:result.destination,size:result.size,entryCount:result.entries?.length,sensitive:true,persistedSummary:`[系统文件操作] ${result.operation}: ${result.path}`},isError:false}; },
+        execute: async args => { const operation=text(args.operation,"operation"); const path=text(args.path,"path"); const result=await privilegedFileOperation({ operation:operation as any,path,destination:typeof args.destination==="string"?args.destination:undefined,content:typeof args.content==="string"?args.content:undefined,deleteMode:args.delete_mode==="trash"?"trash":"permanent" }); if (["write_text","move","rename","copy","delete"].includes(operation)) await params.workspaceRuntime?.reconcileDocument?.(path); return {content:JSON.stringify(result,null,2),data:{operation:result.operation,path:result.path,destination:result.destination,size:result.size,entryCount:result.entries?.length,sensitive:true,persistedSummary:`[系统文件操作] ${result.operation}: ${result.path}`},isError:false}; },
       })
       .register({
         definition: { type: "function", function: { name: "run_powershell", description: "执行任意 PowerShell 脚本，不设超时。完整输出写入临时日志，返回末尾 64KB。", parameters: objectSchema({ script: { type: "string" }, cwd: { type: "string" } }, ["script"]) } },
-        execute: async (args,signal) => { const result=await runPrivilegedPowerShell(text(args.script,"script"),typeof args.cwd==="string"?args.cwd:project.workspace?.root,signal); return {content:`退出码：${result.exitCode}\n日志：${result.logPath}\n\n${result.outputTail}`,data:{runId:result.runId,exitCode:result.exitCode,logPath:result.logPath,sensitive:true,persistedSummary:`[PowerShell] 退出码 ${result.exitCode}，日志：${result.logPath}`},isError:result.exitCode!==0}; },
+        execute: async (args,signal) => { const result=await runPrivilegedPowerShell(text(args.script,"script"),typeof args.cwd==="string"?args.cwd:project.workspace?.root,signal); await params.workspaceRuntime?.reconcileDocument?.(); return {content:`退出码：${result.exitCode}\n日志：${result.logPath}\n\n${result.outputTail}`,data:{runId:result.runId,exitCode:result.exitCode,logPath:result.logPath,sensitive:true,persistedSummary:`[PowerShell] 退出码 ${result.exitCode}，日志：${result.logPath}`},isError:result.exitCode!==0}; },
       });
   }
 

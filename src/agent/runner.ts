@@ -77,7 +77,7 @@ function completedMessages(messages: AgentMessage[]): AgentMessage[] {
 function isForcedToolChoiceRejected(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") return false;
   const message = error instanceof Error ? error.message : String(error);
-  return /(?:^|\D)400(?:\D|$)/.test(message);
+  return /tool[_\s-]*choice|ToolChoiceFunction|field\s+function|invalid_request_error/i.test(message);
 }
 
 type TrackedTodo = { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string };

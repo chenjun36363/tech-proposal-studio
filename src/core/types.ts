@@ -79,6 +79,10 @@ export interface WordExportPreferences {
   companyEmail: string;
   headerTitle: string;
   showFooterPageNumbers: boolean;
+  /** 标题多级编号方案 id（对应 headingNumbering.ts 的 HEADING_NUMBERING_SCHEMES）；"none" 表示不加编号。 */
+  headingNumbering: string;
+  /** 从第几级标题开始编号（1..6，默认 1）。 */
+  headingNumberingStart: number;
 }
 export interface WorkspacePaths {
   root: string;

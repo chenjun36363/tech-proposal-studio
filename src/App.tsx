@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
@@ -7,6 +7,7 @@ import { isDesktop } from "./services/runtime";
 import { privilegedFileOperation } from "./services/privileged";
 import { openWorkspaceDirectory, saveMarkdown } from "./services/system";
 import { findMatches, replaceAllMatches, replaceMatch, type FindMatch } from "./features/editor/findReplace";
+import { applyInlineFormat } from "./features/editor/inlineFormat";
 import { MarkdownPreview, MarkdownSourceEditor, type MarkdownSourceEditorHandle } from "./features/editor/MarkdownEditor";
 import { useSynchronizedScroll } from "./features/editor/scrollSync";
 import {
@@ -19,6 +20,7 @@ import {
   deleteSection,
   fileNameFromTitle,
   insertSection,
+  moveSection,
   parseMarkdownHeadings,
   remapHeadingAfterMarkdownChange,
   renumberHeadings,
@@ -29,6 +31,7 @@ import {
   titleFromMarkdown,
   type HeadingNode,
   type HeadingNumberingStyle,
+  type MdHeading,
 } from "./features/editor/markdownDoc";
 import type { AgentDraft, AgentEditorSelection } from "./agent/protocol";
 import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "./agent/proposalTools";
@@ -65,10 +68,12 @@ import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
 import { SkillsSettingsSection } from "./features/settings/SkillsSettingsSection";
 import { AppUpdateSettings } from "./features/settings/AppUpdateSettings";
 import { WordExportSettingsSection } from "./features/settings/WordExportSettingsSection";
+import { ApiKeyField } from "./components/ApiKeyField";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useDocumentSafety } from "./hooks/useDocumentSafety";
 import { useProposalFileActions, type ConflictChoice, type UnsafeDocumentAction } from "./hooks/useProposalFileActions";
 import { useWorkspaceSession } from "./hooks/useWorkspaceSession";
+import { WorkspaceSetupGate } from "./components/WorkspaceSetupGate";
 import { useSourcePreview } from "./hooks/useSourcePreview";
 import { useEnvironmentTools } from "./hooks/useEnvironmentTools";
 import { KnowledgeManagerModal } from "./features/knowledge/KnowledgeManagerModal";
@@ -92,6 +97,7 @@ const appIcon = new URL("../src-tauri/icons/128x128.png", import.meta.url).href;
 type EditorMode = "section" | "full";
 type WorkspaceImportKind = "document";
 type HeadingContextMenu = { x: number; y: number; node: HeadingNode };
+type HeadingMoveTarget = { x: number; y: number; source: HeadingNode } | null;
 type WorkspaceContextMenu =
   | { kind: "list"; x: number; y: number }
   | { kind: "document"; x: number; y: number; doc: WorkspaceMarkdownFile };
@@ -198,6 +204,7 @@ export default function App() {
   const [findIndex, setFindIndex] = useState(0);
   const [collapsedHeadings, setCollapsedHeadings] = useState<Set<string>>(new Set());
   const [headingContextMenu, setHeadingContextMenu] = useState<HeadingContextMenu | null>(null);
+  const [headingMoveTarget, setHeadingMoveTarget] = useState<HeadingMoveTarget>(null);
   const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenu | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [workspaceDocsCollapsed, setWorkspaceDocsCollapsed] = useState(false);
@@ -269,6 +276,14 @@ export default function App() {
   const selectedHeading = headings.find(h => h.id === selectedHeadingId) ?? headings[0] ?? null;
   const activeBody = selectedHeading && editorMode === "section" ? sectionBody(markdown, selectedHeading) : markdown;
   const activeWordCount = useMemo(() => countMarkdownWords(activeBody), [activeBody]);
+  // 行内格式化按钮的可用性与提示文案
+  const formatDisabled = longWritingLocked || safety.status === "checking" || viewMode === "preview";
+  const formatTitle = (label: string, shortcut?: string) =>
+    formatDisabled
+      ? (viewMode === "preview" ? "预览模式不可用，请切换到源码或分栏"
+        : longWritingLocked ? "长任务运行期间不能修改正文"
+        : "正在检查磁盘文件，请稍候")
+      : (shortcut ? `${label} (${shortcut})` : label);
   const activeBlock = useMemo(
     () => syntheticBlock(project, activeBody, selectedHeading?.id, selectedHeading?.title, selectedHeading?.level),
     [project, activeBody, selectedHeading],
@@ -326,7 +341,7 @@ export default function App() {
   }, [editorFontScale, previewIndent, syncScroll]);
   useEffect(() => setHeadingNumberingStyle(detectHeadingNumberingStyle(project.markdown ?? "")), [project.filePath]);
 
-  const { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace } = useWorkspaceSession({
+  const { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace, ready: workspaceReady } = useWorkspaceSession({
     project, desktop, setProject, notify,
   });
   const {
@@ -464,6 +479,7 @@ export default function App() {
         }
         return null;
       },
+      reconcileDocument: (path?: string) => safety.reconcileDocument(path),
     };
   }, [desktop, workspace?.root, workspaceDocs, refreshWorkspaceDocs, resetHistory, setProject, beforeDocumentChange, safety, saveWorkspaceContent, longWritingLocked]);
   const {
@@ -489,23 +505,28 @@ export default function App() {
     }
   };
 
-  const wrapSelection = (before: string, after: string) => {
+  const wrapSelection = (before: string, after: string = before, placeholder = "") => {
     if (viewMode === "preview") {
-      notify("请切换到源码或分栏后使用样式");
+      notify("预览模式下不能编辑，请切换到源码或分栏后使用样式");
       return;
     }
     const sel = sourceEditorRef.current?.getSelection() ?? { start: 0, end: 0 };
-    const selected = activeBody.slice(sel.start, sel.end);
-    const wrapped = before + selected + after;
-    const next = activeBody.slice(0, sel.start) + wrapped + activeBody.slice(sel.end);
-    setActiveContent(next);
+    const { text, selectionStart, selectionEnd } = applyInlineFormat(
+      activeBody,
+      sel.start,
+      sel.end,
+      before,
+      after,
+      placeholder,
+    );
+    setActiveContent(text);
     requestAnimationFrame(() => {
-      sourceEditorRef.current?.setSelection(
-        sel.start + before.length,
-        sel.start + before.length + selected.length,
-      );
+      sourceEditorRef.current?.setSelection(selectionStart, selectionEnd);
     });
   };
+  // 供全局键盘快捷键引用最新版 wrapSelection，避免 useEffect 闭包拿到过期引用
+  const wrapSelectionRef = useRef(wrapSelection);
+  wrapSelectionRef.current = wrapSelection;
 
   const toggleCollapse = (id: string) => {
     setCollapsedHeadings(prev => {
@@ -528,7 +549,7 @@ export default function App() {
   const openHeadingContextMenu = (event: React.MouseEvent, node: HeadingNode) => {
     event.preventDefault();
     const menuWidth = 224;
-    const menuHeight = 248;
+    const menuHeight = 300;
     setSelectedHeadingId(node.heading.id);
     setEditorMode("section");
     setHeadingContextMenu({
@@ -857,6 +878,43 @@ export default function App() {
     }
   };
 
+  const openHeadingMove = (headingNode: HeadingNode) => {
+    const menuWidth = 440;
+    const menuHeight = 460;
+    setHeadingContextMenu(null);
+    setHeadingMoveTarget({
+      x: Math.max(8, Math.min(window.innerWidth / 2 - menuWidth / 2, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(window.innerHeight / 2 - menuHeight / 2, window.innerHeight - menuHeight - 8)),
+      source: headingNode,
+    });
+  };
+
+  const confirmMoveHeading = (source: HeadingNode, target: MdHeading, position: "before" | "after") => {
+    setHeadingMoveTarget(null);
+    if (!ensureDocumentEditable()) return;
+    if (source.heading.level <= 1) return notify("不能移动文档 H1 标题");
+    try {
+      const moved = moveSection(markdown, source.heading, target, position);
+      if (moved === markdown) {
+        notify("章节已在目标位置，无需移动");
+        return;
+      }
+      const next = renumberHeadings(moved, headingNumberingStyle);
+      setMarkdown(next);
+      const sourceName = stripHeadingPrefix(source.heading.title);
+      const movedHeading = parseMarkdownHeadings(next).find(heading =>
+        heading.level === source.heading.level && stripHeadingPrefix(heading.title) === sourceName,
+      );
+      if (movedHeading) {
+        setSelectedHeadingId(movedHeading.id);
+        setEditorMode("section");
+      }
+      notify(`已移动章节：${source.heading.title}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "移动章节失败");
+    }
+  };
+
   const showAgentDocumentSearch = ({ query, caseSensitive, scope, headingId }: AgentSearchHighlight) => {
     setFindQuery(query);
     setFindCaseSensitive(caseSensitive);
@@ -882,9 +940,17 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      const key = e.key.toLowerCase();
-      if (mod && key === "s") {
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    // 行内格式化快捷键（仅当焦点位于编辑器文本框内，避免误触搜索框等输入控件）
+    const inEditor = !!document.activeElement?.classList?.contains("md-source");
+    if (mod && !e.isComposing && inEditor && viewMode !== "preview") {
+      if (key === "b") { e.preventDefault(); wrapSelectionRef.current("**", "**", "粗体"); return; }
+      if (key === "i") { e.preventDefault(); wrapSelectionRef.current("*", "*", "斜体"); return; }
+      if (key === "e") { e.preventDefault(); wrapSelectionRef.current("`", "`", "代码"); return; }
+      if (key === "s" && e.shiftKey) { e.preventDefault(); wrapSelectionRef.current("~~", "~~", "删除"); return; }
+    }
+    if (mod && key === "s") {
         e.preventDefault();
         void saveCurrentDocument();
         return;
@@ -1109,20 +1175,54 @@ export default function App() {
     ? { gridTemplateColumns: `${leftWidth}px 5px 1fr 5px ${rightWidth}px`, gridTemplateRows: "minmax(0, 1fr)" }
     : { gridTemplateColumns: `${leftWidth}px 5px 1fr 36px`, gridTemplateRows: "minmax(0, 1fr)" };
 
+  // 桌面端必须配置工作目录后才能进入：初始化未完成时先等待；确认无目录则引导设置。
+  const root = project.workspace?.root ?? "";
+  const needsWorkspaceSetup = desktop && workspaceReady && !root.trim();
+  const handleWorkspaceSetup = useCallback(async (setupRoot: string) => {
+    await applyWorkspace(
+      { root: setupRoot, historyDir: defaultWorkspaceFromRoot(setupRoot).historyDir },
+      { loadConnections: true },
+    );
+  }, [applyWorkspace]);
+
+  if (desktop && !workspaceReady) {
+    return (
+      <div className="workspace-setup-gate">
+        <div className="workspace-setup-card">
+          <div className="workspace-setup-icon spinning"><FolderOpen size={28} /></div>
+          <p className="muted">正在初始化工作区…</p>
+        </div>
+      </div>
+    );
+  }
+  if (needsWorkspaceSetup) {
+    return <WorkspaceSetupGate onSetup={handleWorkspaceSetup} notify={notify} />;
+  }
+
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand-mark"><img src={appIcon} alt="" /><span>TechProposal Studio</span></div>
       <div className="project-identity">
         <input disabled={longWritingLocked || safety.status === "checking"} className={safety.isDirty ? "document-name-dirty" : ""} value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }), false)} />
-        <span className={`document-status status-${safety.status}`}>{safety.status === "checking"
-          ? "检查磁盘与草稿中…"
-          : safety.status === "conflict"
-            ? `⚠ 磁盘已在外部修改${project.filePath ? ` · ${project.filePath}` : ""}${safety.otherDraftCount ? ` · 另有 ${safety.otherDraftCount} 份草稿` : ""}`
-            : safety.status === "recovered"
-              ? `已恢复草稿 · 尚未写入磁盘${safety.otherDraftCount ? ` · 另有 ${safety.otherDraftCount} 份草稿` : ""}`
-              : safety.status === "saved"
-                ? `已保存 · ${project.filePath ?? "浏览器缓存"}`
-                : `● 未保存 · ${project.filePath ?? "尚未关联磁盘文件"}`}</span>
+        <div className="document-status-row">
+          <span className={`document-status status-${safety.status}`}>{safety.status === "checking"
+            ? "检查磁盘与草稿中…"
+            : safety.status === "conflict"
+              ? `⚠ 磁盘已在外部修改${project.filePath ? ` · ${project.filePath}` : ""}${safety.otherDraftCount ? ` · 另有 ${safety.otherDraftCount} 份草稿` : ""}`
+              : safety.status === "recovered"
+                ? `已恢复草稿 · 尚未写入磁盘${safety.otherDraftCount ? ` · 另有 ${safety.otherDraftCount} 份草稿` : ""}`
+                : safety.status === "saved"
+                  ? `已保存 · ${project.filePath ?? "浏览器缓存"}`
+                  : `● 未保存 · ${project.filePath ?? "尚未关联磁盘文件"}`}</span>
+          {project.filePath && (
+            <button
+              type="button"
+              className="copy-path-btn"
+              title="复制文件路径"
+              onClick={() => void navigator.clipboard.writeText(project.filePath!).then(() => notify("已复制文件路径")).catch(() => notify("复制失败"))}
+            ><Copy size={11} /></button>
+          )}
+        </div>
       </div>
       <div className="top-actions">
         <button className="text-button" disabled={!desktop} title={desktop ? "管理知识文档与索引" : "知识管理仅在桌面端可用"} onClick={() => setKnowledgeManagerOpen(true)}><BookOpen size={16} />知识管理</button>
@@ -1268,6 +1368,12 @@ export default function App() {
             {!gitDiffActive && <span className="editor-word-count" aria-live="polite">{editorMode === "full" ? "全文" : "本章"} {activeWordCount.toLocaleString()} 字</span>}
             {!gitDiffActive && <button
               type="button"
+              className="editor-toggle"
+              title={editorMode === "section" ? "复制当前章节全文" : "复制全文 Markdown"}
+              onClick={() => void navigator.clipboard.writeText(activeBody).then(() => notify(`已复制${editorMode === "section" ? "当前章节" : "全文"}内容`)).catch(() => notify("复制失败"))}
+            ><Copy size={13} />复制</button>}
+            {!gitDiffActive && <button
+              type="button"
               className={`editor-toggle${previewIndent ? " active" : ""}`}
               title={previewIndent ? "已启用段落首行缩进（点击关闭）" : "已关闭段落首行缩进（点击启用）"}
               onClick={() => setPreviewIndent(v => !v)}
@@ -1328,11 +1434,11 @@ export default function App() {
               <IconButton title="重做 (Ctrl+Y / Ctrl+Shift+Z)" disabled={longWritingLocked || safety.status === "checking"} onClick={redo}><Redo2 size={16} /></IconButton>
             </div>
             <span className="format-divider" />
-            <button type="button" className="format-btn" onClick={() => wrapSelection("**", "**")} title="加粗 (Ctrl+B)"><Bold size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("*", "*")} title="斜体 (Ctrl+I)"><Italic size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("~~", "~~")} title="删除线"><Strikethrough size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("`", "`")} title="行内代码"><Code2 size={14} /></button>
-            <button type="button" className="format-btn" onClick={() => wrapSelection("==", "==")} title="标黄高亮"><Highlighter size={14} /></button>
+            <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("**", "**", "粗体")} title={formatTitle("加粗", "Ctrl+B")}><Bold size={14} /></button>
+            <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("*", "*", "斜体")} title={formatTitle("斜体", "Ctrl+I")}><Italic size={14} /></button>
+            <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("~~", "~~", "删除")} title={formatTitle("删除线", "Ctrl+Shift+S")}><Strikethrough size={14} /></button>
+            <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("`", "`", "代码")} title={formatTitle("行内代码", "Ctrl+E")}><Code2 size={14} /></button>
+            <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("==", "==", "高亮")} title={formatTitle("标黄高亮")}><Highlighter size={14} /></button>
             <span className="heading-toolbar-spacer" />
             <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(false)} title="查找 (Ctrl+F)">
               <Search size={14} /> 查找
@@ -1468,8 +1574,50 @@ export default function App() {
       <button type="button" role="menuitem" disabled={headingContextMenu.node.heading.level === 1} onClick={() => shiftHeadingTree(headingContextMenu.node, "promote")}><IndentDecrease size={14} />升级标题</button>
       <button type="button" role="menuitem" disabled={headingTreeHasH6(headingContextMenu.node)} onClick={() => shiftHeadingTree(headingContextMenu.node, "demote")}><IndentIncrease size={14} />降级标题</button>
       <div className="toc-context-menu-separator" />
+      <button type="button" role="menuitem" disabled={headingContextMenu.node.heading.level === 1} onClick={() => openHeadingMove(headingContextMenu.node)}><MoveVertical size={14} />移动到…</button>
+      <div className="toc-context-menu-separator" />
       <button type="button" role="menuitem" className="danger" disabled={headingContextMenu.node.heading.level === 1} onClick={() => void deleteHeadingSection(headingContextMenu.node)}><Trash2 size={14} />删除章节</button>
     </div>}
+    {headingMoveTarget && (() => {
+      const source = headingMoveTarget.source.heading;
+      const destinations = headings.filter(target =>
+        target.id !== source.id
+        && !(target.start > source.start && target.start < source.end),
+      );
+      return <div
+        className="toc-move-overlay"
+        onPointerDown={event => event.stopPropagation()}
+        onMouseDown={event => event.stopPropagation()}
+        onClick={() => setHeadingMoveTarget(null)}
+      >
+        <div className="toc-move-panel" role="dialog" aria-label="移动到指定标题" onClick={event => event.stopPropagation()}>
+          <div className="toc-move-head">
+            <span className="toc-move-title">移动「{headingMoveTarget.source.heading.title}」到指定位置</span>
+            <button type="button" className="toc-move-close" onClick={() => setHeadingMoveTarget(null)}><X size={15} /></button>
+          </div>
+          <div className="toc-move-recipient">
+            {destinations.length === 0
+              ? <p className="muted toc-move-empty">文中没有其他可作为目标位置的标题</p>
+              : destinations.map(target => {
+                const beforeNoop = target.start === source.end;
+                const afterNoop = target.end === source.start;
+                return (
+                  <div className="toc-move-row" key={target.id}>
+                    <span className={`toc-move-name level-${target.level}`} title={target.title}>
+                      <span className="toc-move-level">H{target.level}</span>
+                      <InlineMarkdown className="toc-move-label" children={target.title} />
+                    </span>
+                    <span className="toc-move-actions">
+                      <button type="button" disabled={beforeNoop} onClick={() => confirmMoveHeading(headingMoveTarget.source, target, "before")} title={`移动到「${target.title}」之前`}>之前</button>
+                      <button type="button" disabled={afterNoop} onClick={() => confirmMoveHeading(headingMoveTarget.source, target, "after")} title={`移动到「${target.title}」之后`}>之后</button>
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      </div>;
+    })()}
     {workspaceContextMenu && <div
       className="toc-context-menu workspace-doc-context-menu"
       role="menu"
@@ -1569,6 +1717,10 @@ export default function App() {
         try {
           const nextRoot = next.workspace?.root;
           const switchingWorkspace = !sameWorkspaceRoot(project.workspace?.root, nextRoot);
+          if (switchingWorkspace && !nextRoot?.trim()) {
+            notify("请先设置工作目录，否则模型密钥等连接配置不会被保存");
+            return;
+          }
           if (switchingWorkspace && !(await beforeDocumentChange("workspace"))) return;
           let projectToSave = switchingWorkspace
             ? { ...next, id: makeId(), name: "未命名文档", markdown: defaultProposalMarkdown("未命名文档"), filePath: undefined, contextSourceRefs: [], updatedAt: new Date().toISOString() }
@@ -1793,7 +1945,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
             </label>;
           })}
         </fieldset>}
-        <label className="wide">搜索 API Key<input type="password" value={draft.search.apiKey} placeholder="写入工作区 .gouan/connections.json" onChange={e => setDraft({ ...draft, search: { ...draft.search, apiKey: e.target.value } })} /></label>
+        <label className="wide">搜索 API Key<ApiKeyField value={draft.search.apiKey} placeholder="写入工作区 .gouan/connections.json" onChange={v => setDraft({ ...draft, search: { ...draft.search, apiKey: v } })} /></label>
       </div>
       </div>}
       {section === "agent" && <div className="settings-section-content agent-runtime-settings">
@@ -1811,8 +1963,9 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
           <label>回复风格<select value={draft.agent.responseStyle} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, responseStyle: e.target.value as Project["agent"]["responseStyle"] } })}><option value="concise">简洁</option><option value="balanced">均衡</option><option value="detailed">详细</option></select></label>
           <label>引用要求<select value={draft.agent.citationMode} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, citationMode: e.target.value as Project["agent"]["citationMode"] } })}><option value="required">必须标注来源</option><option value="preferred">尽量标注来源</option><option value="off">不强制标注</option></select></label>
           <div className="wide agent-capability-options">
-            <label><input type="checkbox" checked={draft.agent.knowledgeToolsEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, knowledgeToolsEnabled: e.target.checked } })} /><span>允许知识库检索</span></label>
-            <label><input type="checkbox" checked={draft.agent.memoryEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, memoryEnabled: e.target.checked } })} /><span>启用长期记忆</span></label>
+            <label><input type="checkbox" checked={draft.agent.memoryEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, memoryEnabled: e.target.checked } })} /><span>新会话默认引用记忆</span></label>
+            <label><input type="checkbox" checked={draft.agent.knowledgeToolsEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, knowledgeToolsEnabled: e.target.checked } })} /><span>新会话默认知识检索</span></label>
+            <label><input type="checkbox" checked={draft.agent.webSearchEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, webSearchEnabled: e.target.checked } })} /><span>新会话默认联网搜索</span></label>
             <label><input type="checkbox" checked={draft.agent.autoRemember} disabled={!draft.agent.memoryEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, autoRemember: e.target.checked } })} /><span>允许写入记忆</span></label>
             <label><input type="checkbox" checked={draft.agent.planningEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, planningEnabled: e.target.checked } })} /><span>复杂任务使用计划</span></label>
             <label><input type="checkbox" checked={draft.agent.defaultPinnedContextOnly} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, defaultPinnedContextOnly: e.target.checked } })} /><span>新会话默认仅用已引用资料</span></label>
@@ -1836,7 +1989,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
         <p className="muted">将 Word/PDF 转为 Markdown 时调用 MinerU 云端 API（默认 https://mineru.net）。API Key 写入工作区 <code>.gouan/connections.json</code>。</p>
         <div className="form-grid">
           <label className="wide">API 地址<input value={draft.mineru.baseUrl} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, baseUrl: e.target.value } })} placeholder="https://mineru.net" /></label>
-          <label className="wide">API Key<input type="password" value={draft.mineru.apiKey} placeholder="MinerU Token" onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, apiKey: e.target.value } })} /></label>
+          <label className="wide">API Key<ApiKeyField value={draft.mineru.apiKey} placeholder="MinerU Token" onChange={v => setDraft({ ...draft, mineru: { ...draft.mineru, apiKey: v } })} /></label>
           <label>模型版本
             <select value={draft.mineru.modelVersion} onChange={e => setDraft({ ...draft, mineru: { ...draft.mineru, modelVersion: e.target.value } })}>
               <option value="vlm">VLM 精准模型</option>

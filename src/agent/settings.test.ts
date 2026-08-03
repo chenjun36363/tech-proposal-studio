@@ -10,7 +10,9 @@ describe("agent settings", () => {
     expect(settings.longWritingContextWindowTokens).toBe(32768);
     expect(settings.recentMessages).toBe(4);
     expect(settings.temperature).toBe(0);
-    expect(settings.knowledgeToolsEnabled).toBe(true);
+    expect(settings.knowledgeToolsEnabled).toBe(false);
+    expect(settings.webSearchEnabled).toBe(false);
+    expect(settings.memoryEnabled).toBe(false);
     expect(settings.disabledTools).toEqual([]);
   });
 

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { ImagePlus, Trash2 } from "lucide-react";
 import type { WordExportPreferences } from "../../core/types";
+import { HEADING_NUMBERING_SCHEMES } from "../export/headingNumbering";
 
 const MAX_LOGO_BYTES = 1_500_000;
 
@@ -10,7 +11,7 @@ export function WordExportSettingsSection({ value, onChange }: {
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [logoError, setLogoError] = useState("");
-  const update = (key: keyof WordExportPreferences, nextValue: string | boolean) => {
+  const update = (key: keyof WordExportPreferences, nextValue: string | boolean | number) => {
     onChange({ ...value, [key]: nextValue });
   };
 
@@ -62,6 +63,30 @@ export function WordExportSettingsSection({ value, onChange }: {
     <div className="form-grid">
       <label className="wide">页眉标题<input value={value.headerTitle} onChange={e => update("headerTitle", e.target.value)} placeholder="例如：项目名称技术方案" /></label>
       <label className="wide word-page-number-option"><input type="checkbox" checked={value.showFooterPageNumbers} onChange={e => update("showFooterPageNumbers", e.target.checked)} /><span>在右下页脚显示“第 X 页 / 共 Y 页”</span></label>
+    </div>
+
+    <div className="word-export-subtitle">标题编号样式</div>
+    <p className="muted">为标题（H1–H6）添加多级项目编号，例如“第一章 / 1.1 / 1.1.1”。编号会与内置标题样式联动，并自动出现在目录中。需要更多风格可在 headingNumbering 方案注册表中扩展。</p>
+    <div className="form-grid">
+      <label className="wide">编号方案
+        <select value={value.headingNumbering} onChange={e => update("headingNumbering", e.target.value)}>
+          <option value="none">无编号（默认）</option>
+          {HEADING_NUMBERING_SCHEMES.map((scheme) => (
+            <option key={scheme.id} value={scheme.id}>{scheme.label} — {scheme.description}</option>
+          ))}
+        </select>
+      </label>
+      <label>起始级别
+        <select
+          value={String(value.headingNumberingStart)}
+          onChange={e => update("headingNumberingStart", Number(e.target.value))}
+          disabled={value.headingNumbering === "none"}
+        >
+          {[1, 2, 3, 4, 5, 6].map((lv) => (
+            <option key={lv} value={String(lv)}>从第 {lv} 级起</option>
+          ))}
+        </select>
+      </label>
     </div>
   </div>;
 }

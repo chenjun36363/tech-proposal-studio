@@ -19,9 +19,14 @@ import {
   TextRun,
   WidthType,
   type FileChild,
+  type ILevelsOptions,
   type IImageOptions,
 } from "docx";
 import type { Project, WordExportPreferences } from "../../core/types";
+import {
+  HEADING_NUMBERING_REF,
+  buildHeadingNumberingLevels,
+} from "./headingNumbering";
 import { exportMarkdown } from "../workspace/storage";
 import { isDesktop } from "../../services/runtime";
 import { DEFAULT_WORD_EXPORT_PREFERENCES } from "../../core/data";
@@ -655,14 +660,29 @@ function coverContactParagraph(text: string, before = 0, options: { font?: strin
   });
 }
 
-function headingParagraph(level: number, title: string): Paragraph {
-  return new Paragraph({
-    // Keep heading formatting in the built-in Word style instead of applying
-    // direct run/paragraph formatting. This lets users insert another heading
-    // from Word's style gallery and get exactly the same appearance.
+interface HeadingNumberingRef {
+  reference: string;
+  startLevel: number;
+}
+
+function headingParagraph(level: number, title: string, numbering: HeadingNumberingRef | null): Paragraph {
+  const clamped = Math.min(Math.max(level, 1), 6);
+  // Keep heading formatting in the built-in Word style instead of applying
+  // direct run/paragraph formatting. This lets users insert another heading
+  // from Word's style gallery and get exactly the same appearance.
+  const base = {
     children: [new TextRun({ text: title })],
-    heading: HEADING_LEVELS[Math.min(Math.max(level, 1), 6) - 1],
-  });
+    heading: HEADING_LEVELS[clamped - 1],
+  } as const;
+  if (numbering && level >= numbering.startLevel) {
+    // 挂上多级项目编号：编号数字由文档 numbering 定义生成（含第一章/1.1 等），
+    // 标题文字与样式仍由内置 Heading 样式提供，目录也会带上编号。
+    return new Paragraph({
+      ...base,
+      numbering: { reference: numbering.reference, level: level - numbering.startLevel },
+    });
+  }
+  return new Paragraph(base);
 }
 
 function builtInHeadingStyle(index: number, settings: DocxExportSettings) {
@@ -704,6 +724,21 @@ export async function buildDocx(project: Project, configuredSettings?: DocxExpor
     headingBefore: [...(configuredSettings?.headingBefore ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingBefore)] as DocxExportSettings["headingBefore"],
     headingAfter: [...(configuredSettings?.headingAfter ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingAfter)] as DocxExportSettings["headingAfter"],
   };
+  const headingNumberingStart = Math.min(Math.max(settings.headingNumberingStart ?? 1, 1), 6);
+  const headingNumberingLevels: ILevelsOptions[] | null =
+    settings.headingNumbering && settings.headingNumbering !== "none"
+      ? buildHeadingNumberingLevels(settings.headingNumbering, headingNumberingStart, {
+          headingFont: settings.headingFont,
+          headingSizes: settings.headingSizes,
+          lineSpacing: settings.lineSpacing,
+          headingBefore: settings.headingBefore,
+          headingAfter: settings.headingAfter,
+        })
+      : null;
+  const headingNumberingRef = headingNumberingLevels
+    ? { reference: HEADING_NUMBERING_REF, startLevel: headingNumberingStart }
+    : null;
+
   const markdown = exportMarkdown(project);
   const children: FileChild[] = [];
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
@@ -791,7 +826,7 @@ export async function buildDocx(project: Project, configuredSettings?: DocxExpor
           continue;
         }
       }
-      children.push(headingParagraph(level, title));
+      children.push(headingParagraph(level, title, headingNumberingRef));
       i += 1;
       continue;
     }
@@ -911,10 +946,15 @@ export async function buildDocx(project: Project, configuredSettings?: DocxExpor
     // DOCX 本身不排版、无法在导出时计算页码；由 Word 打开文档时更新 TOC 域。
     features: { updateFields: true },
     numbering: {
-      config: [{
-        reference: ORDERED_LIST_REFERENCE,
-        levels: orderedListLevels(settings),
-      }],
+      config: [
+        {
+          reference: ORDERED_LIST_REFERENCE,
+          levels: orderedListLevels(settings),
+        },
+        ...(headingNumberingLevels
+          ? [{ reference: HEADING_NUMBERING_REF, levels: headingNumberingLevels }]
+          : []),
+      ],
     },
     styles: {
       default: {

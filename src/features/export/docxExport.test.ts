@@ -1,6 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { inflateRawSync } from "node:zlib";
 import { createProject } from "../../core/data";
 import { buildDocx, buildDocxBytes, extractMarkdownImages, readImageSize, resolveLocalImagePath } from "./docxExport";
+
+/** 从 docx（zip）中解压出指定文件名的内容，用于断言编号等底层 XML。 */
+function unzipEntry(bytes: Uint8Array, target: string): string | null {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= 0; i -= 1) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const cdOffset = dv.getUint32(eocd + 16, true);
+  const cdCount = dv.getUint16(eocd + 10, true);
+  let p = cdOffset;
+  for (let n = 0; n < cdCount; n += 1) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const compSize = dv.getUint32(p + 20, true);
+    const fnameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    const localOffset = dv.getUint32(p + 42, true);
+    const fname = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + fnameLen));
+    if (fname === target) {
+      const method = dv.getUint16(localOffset + 8, true);
+      const lfnameLen = dv.getUint16(localOffset + 26, true);
+      const lextraLen = dv.getUint16(localOffset + 28, true);
+      const dataStart = localOffset + 30 + lfnameLen + lextraLen;
+      const comp = bytes.subarray(dataStart, dataStart + compSize);
+      if (method === 0) return new TextDecoder().decode(comp);
+      if (method === 8) return new TextDecoder().decode(inflateRawSync(Buffer.from(comp)));
+      return null;
+    }
+    p += 46 + fnameLen + extraLen + commentLen;
+  }
+  return null;
+}
 
 // Minimal 1x1 PNG
 const PNG_1x1 = Uint8Array.from([
@@ -60,6 +95,61 @@ describe("Word export", () => {
     // One reference is the numbering definition; the remaining references are
     // the list-item paragraphs that use it.
     expect(numberingReferences.length).toBeGreaterThan(1);
+  });
+
+  it("adds no heading numbering by default (none scheme)", async () => {
+    const project = createProject();
+    project.name = "标题编号默认";
+    project.markdown = "# 标题编号默认\n\n## 小节\n\n正文\n";
+
+    const bytes = await buildDocxBytes(project);
+    const numbering = unzipEntry(bytes, "word/numbering.xml") ?? "";
+    const document = unzipEntry(bytes, "word/document.xml") ?? "";
+
+    // 默认不生成任何标题编号定义（编号里不应出现标题样式链接与章节文本）
+    expect(numbering).not.toContain('w:val="Heading1"');
+    expect(numbering).not.toContain("第%1章");
+    // 正文标题段落不带编号
+    expect((document.match(/<w:numPr>/g) ?? []).length).toBe(0);
+  });
+
+  it("applies multi-level heading numbering (第一章 / 1.1 / 1.1.1)", async () => {
+    const project = createProject();
+    project.name = "标题编号方案";
+    project.wordExport.headingNumbering = "chapter";
+    project.wordExport.headingNumberingStart = 1;
+    project.markdown = "# 标题编号方案\n\n## 小节一\n\n### 子节一\n\n正文\n";
+
+    const bytes = await buildDocxBytes(project);
+    const numbering = unzipEntry(bytes, "word/numbering.xml") ?? "";
+    const document = unzipEntry(bytes, "word/document.xml") ?? "";
+
+    // 编号定义包含"第一章"与"1.1"文本模板，并挂到内置标题样式
+    expect(numbering).toContain('<w:pStyle w:val="Heading1"/>');
+    expect(numbering).toContain('w:val="第%1章"');
+    expect(numbering).toContain('w:val="%1.%2"');
+    expect(numbering).toContain('w:val="%1.%2.%3"');
+    // 正文标题段落带上了编号引用（H2、H3 各一次；H1 因与项目名相同被封面吞掉）
+    expect((document.match(/<w:numPr>/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("skips numbering for levels above the start level", async () => {
+    const project = createProject();
+    project.name = "从二级开始";
+    project.wordExport.headingNumbering = "decimal";
+    project.wordExport.headingNumberingStart = 2;
+    project.markdown = "# 顶级标题\n\n## 小节一\n\n### 子节一\n\n正文\n";
+
+    const bytes = await buildDocxBytes(project);
+    const numbering = unzipEntry(bytes, "word/numbering.xml") ?? "";
+    const document = unzipEntry(bytes, "word/document.xml") ?? "";
+
+    // 第2级起：顶层应为单计数器 "1"，链接到 Heading2，不含"第一章"
+    expect(numbering).toContain('<w:pStyle w:val="Heading2"/>');
+    expect(numbering).toContain('w:val="%1"');
+    expect(numbering).not.toContain("第");
+    // H1 不编号，H2、H3 带编号
+    expect((document.match(/<w:numPr>/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
   it("aligns unordered-list text with the first line of ordinary body paragraphs", async () => {

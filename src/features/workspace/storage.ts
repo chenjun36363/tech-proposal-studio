@@ -34,7 +34,7 @@ function ensureMarkdown(project: StoredProject): StoredProject {
 function ensureWordExport(project: Project): Project {
   const stored = project.wordExport as Partial<WordExportPreferences> | undefined;
   const value: Partial<WordExportPreferences> = stored && typeof stored === "object" ? stored : {};
-  const text = (key: keyof Omit<WordExportPreferences, "showFooterPageNumbers">) =>
+  const text = (key: keyof Omit<WordExportPreferences, "showFooterPageNumbers" | "headingNumberingStart">) =>
     typeof value[key] === "string" ? value[key] : DEFAULT_WORD_EXPORT_PREFERENCES[key];
   return {
     ...project,
@@ -48,6 +48,12 @@ function ensureWordExport(project: Project): Project {
       companyWebsite: text("companyWebsite"),
       companyEmail: text("companyEmail"),
       headerTitle: text("headerTitle"),
+      headingNumbering: typeof value.headingNumbering === "string"
+        ? value.headingNumbering
+        : DEFAULT_WORD_EXPORT_PREFERENCES.headingNumbering,
+      headingNumberingStart: typeof value.headingNumberingStart === "number"
+        ? value.headingNumberingStart
+        : DEFAULT_WORD_EXPORT_PREFERENCES.headingNumberingStart,
       showFooterPageNumbers: typeof value.showFooterPageNumbers === "boolean"
         ? value.showFooterPageNumbers
         : DEFAULT_WORD_EXPORT_PREFERENCES.showFooterPageNumbers,

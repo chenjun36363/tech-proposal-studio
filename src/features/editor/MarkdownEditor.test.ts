@@ -3,7 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { decodeLocalImagePath, highlightPreviewHtml, MarkdownSourceEditor } from "./MarkdownEditor";
+import { decodeLocalImagePath, highlightPreviewHtml, MarkdownPreview, MarkdownSourceEditor } from "./MarkdownEditor";
 
 describe("local Markdown image paths", () => {
   it("decodes paths encoded by marked before filesystem resolution", () => {
@@ -113,5 +113,32 @@ describe("Markdown preview search highlighting", () => {
     host.innerHTML = html;
     expect(host.querySelector("p")?.getAttribute("title")).toBe("LIMS");
     expect(host.querySelectorAll("mark.md-search-match")).toHaveLength(2);
+  });
+});
+
+describe("Markdown preview syntax highlighting", () => {
+  it("emits highlight.js token classes on fenced code blocks", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const markdown = "```ts\nconst x: number = 1;\nfunction f() { return x; }\n```";
+    act(() => root.render(createElement(MarkdownPreview, { markdown })));
+    const code = host.querySelector<HTMLElement>(".md-preview pre code")!;
+    expect(code.className).toContain("hljs");
+    expect(code.className).toContain("language-ts");
+    expect(code.querySelector(".hljs-keyword, .hljs-title, .hljs-number, .hljs-variable")).not.toBeNull();
+    act(() => root.unmount());
+  });
+
+  it("renders ==text== from the highlight button as a mark element", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    act(() => root.render(createElement(MarkdownPreview, { markdown: "这是 ==重点内容== 需要标黄" })));
+    const mark = host.querySelector<HTMLElement>(".md-preview mark.md-mark");
+    expect(mark).not.toBeNull();
+    expect(mark?.textContent).toBe("重点内容");
+    expect(host.textContent).not.toContain("==");
+    act(() => root.unmount());
   });
 });

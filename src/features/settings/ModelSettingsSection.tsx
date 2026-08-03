@@ -6,6 +6,7 @@ import { LLM_PROTOCOL_LABELS, PROVIDER_PRESETS, createDefaultProvider } from "..
 import { deriveModelSnapshot, encodeModelValue, parseModelValue, repairSelectionForProviders, resolvedFromLegacy } from "../../services/llm/resolve";
 import type { ResolvedModelConfig } from "../../core/types";
 import { ModelSelect } from "../../components/ModelSelect";
+import { ApiKeyField } from "../../components/ApiKeyField";
 import { ccSwitchItemKey, isCcSwitchItemImportable, isCcSwitchItemImported, listCcSwitchProviders, mergeCcSwitchProviders, type CcSwitchProviderItem } from "./ccswitchImport";
 import { isDesktop } from "../../services/runtime";
 
@@ -211,7 +212,7 @@ function ProviderEditModal({
           </select>
         </label>
         <label className="wide">API 地址<input value={draft.baseUrl} onChange={e => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
-        <label className="wide">API Key<input type="password" value={draft.apiKey} onChange={e => setDraft({ ...draft, apiKey: e.target.value })} placeholder="写入工作区 .gouan/connections.json" /></label>
+        <label className="wide">API Key<ApiKeyField value={draft.apiKey} onChange={v => setDraft({ ...draft, apiKey: v })} placeholder="写入工作区 .gouan/connections.json" /></label>
         <label>超时（ms）<input type="number" min={5000} step={1000} value={draft.timeoutMs} onChange={e => setDraft({ ...draft, timeoutMs: Number(e.target.value) || 60000 })} /></label>
         <label className="checkbox-inline"><span>启用</span><input type="checkbox" checked={draft.enabled} onChange={e => setDraft({ ...draft, enabled: e.target.checked })} /></label>
         <div className="wide">

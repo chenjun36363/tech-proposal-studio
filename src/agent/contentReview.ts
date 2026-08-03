@@ -157,8 +157,7 @@ function normalizeReviewResult(args: JsonRecord, input: ReviewContentInput): Con
 function isForcedToolChoiceCompatibilityError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") return false;
   const message = error instanceof Error ? error.message : String(error);
-  return /(?:^|\D)400(?:\D|$)/.test(message)
-    && /tool[_\s-]*choice|ToolChoiceFunction|field\s+function/i.test(message);
+  return /tool[_\s-]*choice|ToolChoiceFunction|field\s+function|invalid_request_error/i.test(message);
 }
 
 async function requestReview(

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyAgentConversationChange, clearAgentConversations, compactAgentConversation, createAgentConversation, listAgentConversations, saveAgentConversation } from "./conversationStore";
+import { applyAgentConversationChange, clearAgentConversations, compactAgentConversation, compactAgentConversationToBudget, createAgentConversation, listAgentConversations, saveAgentConversation } from "./conversationStore";
 
 describe("agent conversation storage", () => {
   beforeEach(() => localStorage.clear());
@@ -20,7 +20,8 @@ describe("agent conversation storage", () => {
   it("starts new conversations with web search disabled", () => {
     const conversation = createAgentConversation("project-a");
     expect(conversation.webSearchEnabled).toBe(false);
-    expect(conversation.knowledgeSearchEnabled).toBe(true);
+    expect(conversation.knowledgeSearchEnabled).toBe(false);
+    expect(conversation.memorySearchEnabled).toBe(false);
     expect(conversation.fullAccessEnabled).toBe(false);
     expect(conversation.fullAccessAcknowledged).toBe(false);
   });
@@ -28,6 +29,7 @@ describe("agent conversation storage", () => {
     const first = createAgentConversation("project-a");
     const second = { ...createAgentConversation("project-a"), updatedAt: first.updatedAt + 1 };
     const other = createAgentConversation("project-b");
+    other.updatedAt = first.updatedAt - 1;
     const saved = applyAgentConversationChange([first, other], { projectId: "project-a", type: "saved", conversation: second });
     expect(saved.map(item => item.id)).toEqual([second.id, first.id, other.id]);
     const deleted = applyAgentConversationChange(saved, { projectId: "project-a", type: "deleted", conversationId: first.id });
@@ -43,6 +45,33 @@ describe("agent conversation storage", () => {
     expect(compacted.summary).toContain("自动上下文压缩检查点");
     expect(compacted.summary).toContain("message-0");
     expect(compacted.summary).not.toContain("message-29");
+  });
+
+  it("budget-aware compact shrinks kept messages until under threshold", () => {
+    const conversation = createAgentConversation("project-a");
+    // 制造大量消息，使消息正文本身就超过阈值。
+    conversation.messages = Array.from({ length: 60 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, content: `long-content-${index}-`.padEnd(400, "x") }));
+    const threshold = 4000;
+    const overhead = 0;
+    const compacted = compactAgentConversationToBudget(conversation, { keepRecent: 20, thresholdTokens: threshold, fixedOverheadTokens: overhead });
+
+    // 默认 keepRecent 下仍超阈值 → 应自动减少保留条数（低于 20）。
+    expect(compacted.messages.length).toBeLessThan(20);
+    expect(compacted.summary).toContain("自动上下文压缩检查点");
+
+    // 估算总上下文需落入阈值：固定开销 + 摘要 + 保留消息。
+    const total = overhead
+      + JSON.stringify(compacted.messages).length / 4
+      + compacted.summary.length / 4;
+    expect(total).toBeLessThanOrEqual(threshold);
+  });
+
+  it("budget-aware compact keeps recent messages when already under threshold", () => {
+    const conversation = createAgentConversation("project-a");
+    conversation.messages = Array.from({ length: 30 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, content: `message-${index}` }));
+    const compacted = compactAgentConversationToBudget(conversation, { keepRecent: 20, thresholdTokens: 1_000_000, fixedOverheadTokens: 0 });
+    expect(compacted.messages).toHaveLength(20);
+    expect(compacted.summary).toContain("message-0");
   });
 
   it("keeps complete tool chains and summarizes tool evidence", () => {

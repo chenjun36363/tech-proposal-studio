@@ -22,6 +22,7 @@ interface WorkspaceSessionOptions {
 
 export function useWorkspaceSession({ project, desktop, setProject, notify }: WorkspaceSessionOptions) {
   const [workspaceDocs, setWorkspaceDocs] = useState<WorkspaceMarkdownFile[]>([]);
+  const [ready, setReady] = useState(false);
   const workspace = project.workspace;
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function useWorkspaceSession({ project, desktop, setProject, notify }: Wo
         if (!desktop) {
           const browserConnections = await loadWorkspaceConnections();
           if (browserConnections) setProject(current => applyConnections(current, browserConnections));
+          setReady(true);
           return;
         }
         let paths = loadWorkspaceConfig();
@@ -37,15 +39,21 @@ export function useWorkspaceSession({ project, desktop, setProject, notify }: Wo
           const root = await getDefaultWorkspaceRoot();
           if (root) paths = defaultWorkspaceFromRoot(root);
         }
-        if (!paths?.root) return;
+        if (!paths?.root) {
+          // 没有任何可用工作目录（含默认目录创建失败），交给启动门禁引导用户手动设置。
+          setReady(true);
+          return;
+        }
         const ensured = await ensureWorkspace(paths);
         const connections = await loadWorkspaceConnections(ensured.root);
         setProject(current => applyConnections(withWorkspace(current, ensured), connections));
         const files = await listLibraryFiles(ensured.historyDir);
         setProject(current => mergeLibrarySources(withWorkspace(current, ensured), files));
         setWorkspaceDocs(await listWorkspaceMarkdown(ensured.root));
+        setReady(true);
       } catch (error) {
         notify(error instanceof Error ? error.message : "工作区初始化失败");
+        setReady(true);
       }
     })();
     // Workspace boot runs once when the runtime is known.
@@ -76,5 +84,5 @@ export function useWorkspaceSession({ project, desktop, setProject, notify }: Wo
     return ensured;
   };
 
-  return { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace };
+  return { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace, ready };
 }

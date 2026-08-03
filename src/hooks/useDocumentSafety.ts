@@ -205,6 +205,44 @@ export function useDocumentSafety({
     setRecoveryKind("conflict");
   }, []);
 
+  // Re-sync the baseline after an in-app writer (agent session, privileged file
+  // op, PowerShell, skill) modifies the open document through an unchecked channel
+  // that does not go through markSaved. Without this, the next user save compares a
+  // stale baseline hash against the new disk content and spuriously reports an
+  // "external modification" requiring force-overwrite.
+  const reconcileDocument = useCallback(async (targetPath?: string) => {
+    const current = projectRef.current;
+    const openPath = current.filePath;
+    if (!desktop || !openPath) return;
+    if (targetPath && !sameDocumentPath(targetPath, openPath)) return;
+    let snapshot: TextFileSnapshot | null = null;
+    try {
+      snapshot = await readTextFileSnapshot(openPath);
+    } catch {
+      return;
+    }
+    const base = baselineRef.current;
+    const localEdits = base ? current.markdown !== base.content : false;
+    const externalChanged = base ? snapshot.sha256 !== base.sha256 : true;
+    if (localEdits && externalChanged) {
+      // Both the user and an external writer diverged from the last known disk
+      // state: surface the same conflict flow the explicit save uses.
+      markConflict(snapshot);
+      return;
+    }
+    if (!localEdits && externalChanged) {
+      // No local edits: adopt whatever the in-app writer produced as the new truth
+      // so the editor and disk stay consistent.
+      setProject(prev => ({
+        ...prev,
+        markdown: snapshot!.content,
+        name: titleFromMarkdown(snapshot!.content, prev.name),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
+    await markSaved(snapshot);
+  }, [desktop, markSaved, markConflict]);
+
   const discardChanges = useCallback(() => {
     const currentBaseline = baselineRef.current;
     const current = projectRef.current;
@@ -288,11 +326,12 @@ export function useDocumentSafety({
     markSaved,
     markUnsaved,
     markConflict,
+    reconcileDocument,
     discardChanges,
     renameBaseline,
     getBaseline,
     suppressNextUnloadDraftFlush,
     flushDraft,
     clearHandledDrafts,
-  }), [baseline, isDirty, status, otherDraftCount, openWithRecovery, markSaved, markUnsaved, markConflict, discardChanges, renameBaseline, getBaseline, suppressNextUnloadDraftFlush, flushDraft, clearHandledDrafts]);
+  }), [baseline, isDirty, status, otherDraftCount, openWithRecovery, markSaved, markUnsaved, markConflict, reconcileDocument, discardChanges, renameBaseline, getBaseline, suppressNextUnloadDraftFlush, flushDraft, clearHandledDrafts]);
 }

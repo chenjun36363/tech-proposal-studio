@@ -17,6 +17,8 @@ export const DEFAULT_WORD_EXPORT_PREFERENCES: WordExportPreferences = {
   companyEmail: "E-mail:sinoyd@sinoyd.com",
   headerTitle: "",
   showFooterPageNumbers: true,
+  headingNumbering: "none",
+  headingNumberingStart: 1,
 };
 
 export function createProject(): Project {

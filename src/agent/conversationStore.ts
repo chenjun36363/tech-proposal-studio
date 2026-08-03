@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isDesktop } from "../services/runtime";
 import type { AgentMessage } from "./protocol";
 import { persistentAgentMessages, safeTurnSplitIndex } from "./messageUtils";
-import { buildAgentCheckpoint } from "./contextCompaction";
+import { buildAgentCheckpoint, estimateAgentContextTokens, estimateAgentTextTokens } from "./contextCompaction";
 
 const KEY = "tech-proposal-studio.agent-conversations.v1";
 const TAURI_CHANGE_EVENT = "agent-conversations:changed";
@@ -21,6 +21,8 @@ export interface AgentConversation {
   pinnedContextOnly?: boolean;
   webSearchEnabled?: boolean;
   knowledgeSearchEnabled?: boolean;
+  /** 本会话是否引用长期记忆（发送框上方的开关）；默认由 agent.memoryEnabled 决定。 */
+  memorySearchEnabled?: boolean;
   fullAccessEnabled?: boolean;
   fullAccessAcknowledged?: boolean;
   createdAt: number;
@@ -31,7 +33,7 @@ export interface AgentConversation {
   lastMessagePreview?: string;
 }
 
-export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged">>;
+export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "memorySearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged">>;
 
 export type AgentConversationChange =
   | { projectId: string; type: "saved"; conversation: AgentConversation }
@@ -126,6 +128,7 @@ async function upsertDesktopConversation(conversation: AgentConversation, worksp
           pinnedContextOnly: latest.pinnedContextOnly,
           webSearchEnabled: latest.webSearchEnabled,
           knowledgeSearchEnabled: latest.knowledgeSearchEnabled,
+          memorySearchEnabled: latest.memorySearchEnabled,
           fullAccessEnabled: latest.fullAccessEnabled,
           fullAccessAcknowledged: latest.fullAccessAcknowledged,
         };
@@ -161,9 +164,40 @@ export async function getAgentConversation(conversationId: string, workspaceRoot
   return { ...conversation, messagesLoaded: true };
 }
 
-export function createAgentConversation(projectId: string, pinnedContextOnly = false): AgentConversation {
+export function agentConversationMessageCount(conversation: AgentConversation | null | undefined): number {
+  if (!conversation) return 0;
+  return conversation.messageCount ?? conversation.messages.filter(item => item.role === "user" || item.role === "assistant").length;
+}
+
+/** 删除当前项目中所有“0 条对话消息”的会话（新建后未发送消息的空会话）。返回被清理的条数。 */
+export async function pruneEmptyAgentConversations(projectId: string, workspaceRoot?: string): Promise<number> {
+  const existing = await listAgentConversations(projectId, workspaceRoot);
+  const empties = existing.filter(item => agentConversationMessageCount(item) === 0);
+  if (!empties.length) return 0;
+  await Promise.all(empties.map(item => deleteAgentConversation(item.id, projectId, workspaceRoot).catch(() => undefined)));
+  return empties.length;
+}
+
+export interface ConversationDefaults {
+  /** 新会话默认仅使用已引用资料。 */
+  pinnedContextOnly?: boolean;
+  /** 新会话默认是否启用联网搜索。 */
+  webSearchEnabled?: boolean;
+  /** 新会话默认是否启用知识库检索。 */
+  knowledgeSearchEnabled?: boolean;
+  /** 新会话默认是否引用长期记忆。 */
+  memorySearchEnabled?: boolean;
+}
+
+export function createAgentConversation(projectId: string, defaults: ConversationDefaults = {}): AgentConversation {
+  const {
+    pinnedContextOnly = false,
+    webSearchEnabled = false,
+    knowledgeSearchEnabled = false,
+    memorySearchEnabled = false,
+  } = defaults;
   const now = Date.now();
-  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled: false, knowledgeSearchEnabled: true, fullAccessEnabled: false, fullAccessAcknowledged: false, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
+  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled, knowledgeSearchEnabled, memorySearchEnabled, fullAccessEnabled: false, fullAccessAcknowledged: false, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
 }
 
 export async function saveAgentConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {
@@ -231,4 +265,54 @@ export function compactAgentConversation(conversation: AgentConversation, recent
     summary: compacted,
     messages: conversation.messages.slice(splitAt),
   };
+}
+
+export interface AgentConversationCompactOptions {
+  /** 保留的最近消息条数下限（默认 20，最低 4）。 */
+  keepRecent?: number;
+  /** 预算感知：压缩后（固定开销 + 摘要 + 保留消息）需落入该阈值内。 */
+  thresholdTokens?: number;
+  /** 不随对话增长的固定 token 开销：system prompt（不含摘要） + 工具定义 + 钉住资料，约等于常量。 */
+  fixedOverheadTokens?: number;
+}
+
+/**
+ * 预算感知的会话级压缩：保留最近 keepRecent 条消息，将更早的消息汇总为结构化检查点写入 summary。
+ * 与运行期自动压缩（compactAgentRunContext）保持同一策略口径——若提供 thresholdTokens，
+ * 会逐步减少保留条数（最低 4 条）直到估算总上下文落入预算，确保手动压缩后真正回到阈值以内，
+ * 而不是像普通 compactAgentConversation 那样只按消息条数裁剪（可能仍超阈值）。
+ * 检查点由本地 buildAgentCheckpoint 生成，不调用 LLM，免费且即时。
+ */
+export function compactAgentConversationToBudget(
+  conversation: AgentConversation,
+  options: AgentConversationCompactOptions = {},
+): AgentConversation {
+  const keepRecent = Math.max(4, Math.round(options.keepRecent ?? 20));
+  if (conversation.messages.length <= keepRecent) return conversation;
+  const threshold = options.thresholdTokens && options.thresholdTokens > 0 ? Math.floor(options.thresholdTokens) : 0;
+  const overhead = Math.max(0, Math.floor(options.fixedOverheadTokens ?? 0));
+
+  const splitAndBuild = (keep: number) => {
+    const splitAt = safeTurnSplitIndex(conversation.messages, conversation.messages.length - keep);
+    const summary = buildAgentCheckpoint(conversation.messages.slice(0, splitAt), conversation.summary, 2400);
+    return { splitAt, summary, messages: conversation.messages.slice(splitAt) };
+  };
+
+  let keep = keepRecent;
+  let state = splitAndBuild(keep);
+  if (state.splitAt <= 0) return conversation;
+  if (!threshold) {
+    return { ...conversation, summary: state.summary, messages: state.messages };
+  }
+
+  const totalTokens = (snapshot: { summary: string; messages: AgentMessage[] }) =>
+    overhead + estimateAgentContextTokens(snapshot.messages, []) + estimateAgentTextTokens(snapshot.summary);
+
+  while (totalTokens(state) > threshold && keep > 4) {
+    keep = Math.max(4, keep - 2);
+    const next = splitAndBuild(keep);
+    if (next.splitAt <= 0) break;
+    state = next;
+  }
+  return { ...conversation, summary: state.summary, messages: state.messages };
 }

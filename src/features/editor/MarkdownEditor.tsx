@@ -1,11 +1,65 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { marked } from "marked";
+import { marked, Marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import mdLang from "highlight.js/lib/languages/markdown";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isDesktop } from "../../services/runtime";
 import { saveImageToWorkspace } from "../workspace/workspace";
 import type { FindMatch } from "./findReplace";
 
 marked.setOptions({ gfm: true, breaks: true });
+
+// Dedicated renderer for the preview pane: enables syntax highlighting on fenced
+// code blocks. The global `marked` instance is left untouched because
+// InlineMarkdown and other callers depend on it.
+Object.entries({ bash, css, html: xml, javascript, js: javascript, json, markdown: mdLang, md: mdLang, rust, sql, typescript, ts: typescript }).forEach(([name, language]) => hljs.registerLanguage(name, language));
+
+const previewMarked = new Marked({ gfm: true, breaks: true });
+previewMarked.use(markedHighlight({
+  langPrefix: "hljs language-",
+  highlight(code, language) {
+    if (language === "mermaid" || language === "mmd") return code;
+    return language && hljs.getLanguage(language)
+      ? hljs.highlight(code, { language }).value
+      : hljs.highlightAuto(code).value;
+  },
+}));
+
+// Inline `==text==` mark/highlight syntax produced by the "标黄高亮" toolbar button.
+function escapeHtmlForMark(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+const markExtension: any = {
+  name: "mark",
+  level: "inline",
+  start(src: string) { return src.indexOf("=="); },
+  tokenizer(src: string) {
+    const m = /^==([^=]+?)==/.exec(src);
+    if (m) {
+      const text = m[1];
+      const lexer = (this as { lexer?: { inlineTokens?: (t: string) => unknown[] } }).lexer;
+      const tokens = lexer?.inlineTokens ? lexer.inlineTokens(text) : [];
+      return { type: "mark", raw: m[0], text, tokens };
+    }
+    return undefined;
+  },
+  renderer(this: any, token: any) {
+    const inner = token.tokens?.length
+      ? this.parser.parseInline(token.tokens)
+      : escapeHtmlForMark(token.text ?? "");
+    return `<mark class="md-mark">${inner}</mark>`;
+  },
+};
+previewMarked.use({ extensions: [markExtension] });
 
 export type MarkdownSourceEditorHandle = {
   getSelection: () => { start: number; end: number };
@@ -119,7 +173,7 @@ export function MarkdownPreview({
   searchCaseSensitive?: boolean;
 }) {
   const html = useMemo(() => {
-    const raw = marked.parse(markdown || "") as string;
+    const raw = previewMarked.parse(markdown || "") as string;
     return highlightPreviewHtml(rewriteLocalImages(raw, filePath, workspaceRoot), searchQuery, searchCaseSensitive);
   }, [markdown, filePath, workspaceRoot, searchQuery, searchCaseSensitive]);
   return <div

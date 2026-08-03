@@ -252,99 +252,7 @@
 .agent-draft-rejected b { color:hsl(var(--foreground) / .82); font-size:9px; font-weight:600; }
 .agent-draft-rejected small { color:hsl(var(--muted-foreground)); font-size:8px; }
 .agent-draft-rejected > button { flex:none; min-height:28px; display:inline-flex; align-items:center; gap:5px; padding:0 8px; font-size:9px; }
-.agent-capability-menu {
-  position: relative;
-}
-
-.agent-capability-menu > summary {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 7px;
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--background));
-  cursor: pointer;
-  list-style: none;
-  font-size: 11px;
-}
-
-.agent-capability-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
-.agent-capability-menu > summary small {
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-}
-
-.agent-capability-menu[open] > summary {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--muted));
-}
-
-.agent-capability-menu[open] > summary > svg:last-child {
-  transform: rotate(180deg);
-}
-
-.agent-capability-popover {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
-  width: 290px;
-  padding: 5px;
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--popover));
-  box-shadow: 0 8px 24px hsl(220 20% 10% / 0.16);
-}
-
-.agent-skills-menu .agent-capability-popover {
-  max-height: 260px;
-  overflow: auto;
-}
-
-.agent-capability-popover > label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px;
-  cursor: pointer;
-}
-
-.agent-capability-popover > label:hover {
-  background: hsl(var(--muted));
-}
-
-.agent-capability-popover > label > span {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.agent-capability-popover > label > span > span {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.agent-capability-popover b {
-  font-size: 11px;
-}
-
-.agent-capability-popover small {
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-  line-height: 1.35;
-  white-space: normal;
-}
-
-.agent-capability-popover input {
-  flex: 0 0 auto;
-}
-
+/* 对话框上方的工具以图标 chip 形式呈现，复用 .agent-compact-toggle 样式。 */
 .agent-tool-toggles {
   flex-wrap: nowrap;
   gap: 5px;
@@ -391,6 +299,34 @@
   background: hsl(var(--destructive) / 0.08);
   color: hsl(var(--destructive));
 }
+
+/* 输入框下方的上下文计数指示器（可点击主动压缩，参考 LiveAgent 的 token 计量 UX） */
+.agent-context-meter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: -2px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  text-align: left;
+}
+.agent-context-meter:disabled { cursor: default; opacity: .55; }
+.agent-context-meter.compactable:hover { border-color: hsl(var(--primary) / .32); background: hsl(var(--primary) / .06); }
+.agent-context-meter.warning { color: hsl(var(--warning)); }
+.agent-context-meter.critical { color: hsl(var(--destructive)); }
+.agent-context-meter > svg:first-child { flex: none; }
+.agent-context-meter-value { font: 10px ui-monospace,Consolas,monospace; color: inherit; white-space: nowrap; }
+.agent-context-meter small { color: hsl(var(--muted-foreground)); font-size: 9px; white-space: nowrap; }
+.agent-context-meter-bar { flex: 1 1 auto; height: 4px; border-radius: 3px; background: hsl(var(--muted) / .5); overflow: hidden; min-width: 24px; }
+.agent-context-meter-bar > i { display: block; height: 100%; background: hsl(var(--success)); transition: width .25s ease; }
+.agent-context-meter.warning .agent-context-meter-bar > i { background: hsl(var(--warning)); }
+.agent-context-meter.critical .agent-context-meter-bar > i { background: hsl(var(--destructive)); }
+.agent-context-meter-action { flex: none; color: hsl(var(--primary)); }
 
 .agent-skill-command-approval pre {
   max-height: 120px;

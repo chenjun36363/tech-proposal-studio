@@ -54,7 +54,7 @@ describe("runProposalAgent", () => {
 
   it("falls back to auto when a gateway rejects forced tool choice", async () => {
     agentCompletion
-      .mockRejectedValueOnce(new Error("模型服务返回 400：Upstream request failed"))
+      .mockRejectedValueOnce(new Error("模型服务返回 429：Upstream request failed: [invalid_request_error] Failed to deserialize the JSON body into the target type: tool_choice: field 'function': invalid type: null, expected struct ToolChoiceFunction (free model rate limit)"))
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-fallback", type: "function", function: { name: "write_todo", arguments: '{"todos":[]}' } }] } }] })
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
     const registry = new AgentToolRegistry().register({
