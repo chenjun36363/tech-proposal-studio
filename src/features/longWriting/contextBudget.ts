@@ -7,9 +7,14 @@ export type LongWritingContextPhase = "chapter_summary" | "outline" | "chapter_d
 export interface LongWritingBudgetResult<T extends Record<string, unknown>> {
   payload: T;
   estimatedTokens: number;
+  /** Effective input budget after applying the requested cap and model-window reservation. */
   budgetTokens: number;
+  requestedBudgetTokens: number;
+  modelContextWindowTokens: number;
+  outputReserveTokens: number;
   truncatedSources: number;
   omittedSources: number;
+  sourceExcerptCount: number;
   compactedMarkdown: boolean;
 }
 
@@ -19,10 +24,19 @@ export class LongWritingContextBudgetError extends Error {
     public readonly estimatedTokens: number,
     public readonly budgetTokens: number,
   ) {
-    super(`长任务${phaseLabel(phase)}上下文预计 ${estimatedTokens} tokens，超过预算 ${budgetTokens} tokens；请减少当前章节、冻结计划或附加资料，或提高 Agent 上下文压缩阈值。`);
+    super(`长任务${phaseLabel(phase)}上下文预计 ${estimatedTokens} tokens，超过可用输入预算 ${budgetTokens} tokens；请减少当前章节或附加资料，或使用更大上下文窗口的模型。`);
     this.name = "LongWritingContextBudgetError";
   }
 }
+
+const PHASE_OUTPUT_RESERVES: Record<LongWritingContextPhase, number> = {
+  chapter_summary: 3000,
+  outline: 6000,
+  chapter_draft: 5000,
+  consistency: 5000,
+};
+const SAFETY_MARGIN_TOKENS = 1024;
+const MIN_INPUT_BUDGET_TOKENS = 1024;
 
 const phaseLabel = (phase: LongWritingContextPhase) => ({
   chapter_summary: "章节摘要",
@@ -31,10 +45,37 @@ const phaseLabel = (phase: LongWritingContextPhase) => ({
   consistency: "一致性检查",
 })[phase];
 
-function normalizeBudget(value: unknown): number {
+function normalizeRequestedBudget(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(8000, Math.min(200000, Math.floor(value)))
+    ? Math.max(MIN_INPUT_BUDGET_TOKENS, Math.min(500000, Math.floor(value)))
     : 48000;
+}
+
+function normalizeContextWindow(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(8192, Math.min(1000000, Math.floor(value)))
+    : 32768;
+}
+
+export function resolveLongWritingContextBudget(phase: LongWritingContextPhase, params: {
+  contextBudgetTokens?: number;
+  modelContextWindowTokens?: number;
+}): { requestedBudgetTokens: number; modelContextWindowTokens: number; outputReserveTokens: number; budgetTokens: number } {
+  const requestedBudgetTokens = normalizeRequestedBudget(params.contextBudgetTokens);
+  const modelContextWindowTokens = normalizeContextWindow(params.modelContextWindowTokens);
+  const outputReserveTokens = PHASE_OUTPUT_RESERVES[phase];
+  const windowInputBudget = Math.max(MIN_INPUT_BUDGET_TOKENS, modelContextWindowTokens - outputReserveTokens - SAFETY_MARGIN_TOKENS);
+  return {
+    requestedBudgetTokens,
+    modelContextWindowTokens,
+    outputReserveTokens,
+    budgetTokens: Math.min(requestedBudgetTokens, windowInputBudget),
+  };
+}
+
+export function longWritingPhaseOutputTokens(phase: LongWritingContextPhase, modelContextWindowTokens?: number): number {
+  const window = normalizeContextWindow(modelContextWindowTokens);
+  return Math.max(1024, Math.min(PHASE_OUTPUT_RESERVES[phase], window - MIN_INPUT_BUDGET_TOKENS - SAFETY_MARGIN_TOKENS));
 }
 
 function truncateToTokens(text: string, maxTokens: number): string {
@@ -98,6 +139,74 @@ function compactMarkdownOverview(markdown: string, maxTokens: number): string {
   return `${truncateToTokens(prefix, prefixBudget)}\n${sections.join("\n\n")}`.trim();
 }
 
+function queryTerms(text: string): string[] {
+  const normalized = text.toLocaleLowerCase();
+  const terms = new Set<string>();
+  for (const word of normalized.match(/[a-z0-9][a-z0-9_-]{1,}/g) ?? []) terms.add(word);
+  const cjk = (normalized.match(/[\u3400-\u9fff]/g) ?? []).join("");
+  for (let index = 0; index < cjk.length - 1 && terms.size < 80; index += 1) terms.add(cjk.slice(index, index + 2));
+  return [...terms].slice(0, 80);
+}
+
+function sourceChunks(source: string, maxChars = 6000): string[] {
+  const text = source.trim();
+  if (!text) return [];
+  const title = text.split(/\r?\n/, 1)[0]?.trim() || "附加资料";
+  const parts = text.split(/(?=^#{1,6}\s+)/m).filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  const push = () => {
+    if (current.trim()) chunks.push(`资料：${title}\n${current.trim()}`);
+    current = "";
+  };
+  for (const part of (parts.length ? parts : [text])) {
+    if (part.length > maxChars) {
+      push();
+      for (let start = 0; start < part.length; start += maxChars - 400) {
+        chunks.push(`资料：${title}\n${part.slice(start, start + maxChars).trim()}`);
+      }
+    } else if (current.length && current.length + part.length > maxChars) {
+      push();
+      current = part;
+    } else current += `${current ? "\n" : ""}${part}`;
+  }
+  push();
+  return chunks;
+}
+
+/** Select compact, relevant source excerpts instead of repeating every full attachment for every chapter Worker. */
+export function selectRelevantSourceExcerpts(sources: string[], query: string, maxExcerpts: number): string[] {
+  const terms = queryTerms(query);
+  const scored = sources.flatMap((source, sourceIndex) => sourceChunks(source).map((chunk, chunkIndex) => {
+    const lower = chunk.toLocaleLowerCase();
+    const heading = chunk.split(/\r?\n/, 3).join("\n").toLocaleLowerCase();
+    const score = terms.reduce((total, term) => total + (lower.includes(term) ? 1 : 0) + (heading.includes(term) ? 3 : 0), 0);
+    return { chunk, sourceIndex, chunkIndex, score };
+  }));
+  if (!scored.length) return [];
+  scored.sort((left, right) => right.score - left.score || left.sourceIndex - right.sourceIndex || left.chunkIndex - right.chunkIndex);
+  const selected = scored.slice(0, Math.max(1, maxExcerpts));
+  return selected.map(item => item.chunk);
+}
+
+function sourceQuery(payload: Record<string, unknown>): string {
+  const values: string[] = [];
+  for (const key of ["documentTitle", "instruction", "chapterGoal"]) {
+    const value = payload[key];
+    if (typeof value === "string") values.push(value);
+  }
+  const titlePath = payload.titlePath;
+  if (Array.isArray(titlePath)) values.push(titlePath.filter((value): value is string => typeof value === "string").join(" "));
+  const outlinePlan = payload.outlinePlan;
+  if (outlinePlan && typeof outlinePlan === "object") {
+    const plan = outlinePlan as { documentSummary?: unknown; fixedFacts?: unknown; terminology?: unknown };
+    if (typeof plan.documentSummary === "string") values.push(plan.documentSummary);
+    if (Array.isArray(plan.fixedFacts)) values.push(plan.fixedFacts.filter((value): value is string => typeof value === "string").join(" "));
+    if (Array.isArray(plan.terminology)) values.push(plan.terminology.map(value => typeof value === "object" && value ? `${String((value as { term?: unknown }).term ?? "")} ${String((value as { definition?: unknown }).definition ?? "")}` : "").join(" "));
+  }
+  return values.join("\n");
+}
+
 function fitSources(
   basePayload: Record<string, unknown>,
   sources: string[],
@@ -155,45 +264,48 @@ function fitSources(
 
 export function prepareLongWritingPayload<T extends Record<string, unknown>>(params: {
   phase: LongWritingContextPhase;
-  input: T & { contextBudgetTokens?: number; attachedSources?: string[]; markdown?: string };
+  input: T & { contextBudgetTokens?: number; modelContextWindowTokens?: number; attachedSources?: string[]; markdown?: string };
   systemPrompt: string;
   userPrefix: string;
   tool: AgentToolDefinition;
 }): LongWritingBudgetResult<T> {
-  const budgetTokens = normalizeBudget(params.input.contextBudgetTokens);
-  const { contextBudgetTokens: _budget, ...raw } = params.input;
+  const resolved = resolveLongWritingContextBudget(params.phase, params.input);
+  const { contextBudgetTokens: _budget, modelContextWindowTokens: _window, ...raw } = params.input;
   let payload = raw as Record<string, unknown>;
   let truncatedSources = 0;
   let omittedSources = 0;
   let compactedMarkdown = false;
-  const sources = Array.isArray(raw.attachedSources) ? raw.attachedSources.filter((value): value is string => typeof value === "string") : null;
+  const rawSources = Array.isArray(raw.attachedSources) ? raw.attachedSources.filter((value): value is string => typeof value === "string") : null;
+  const selectedSources = rawSources ? selectRelevantSourceExcerpts(rawSources, sourceQuery(payload), params.phase === "outline" ? 12 : 6) : [];
 
-  if (sources) {
-    const fitted = fitSources(payload, sources, params.systemPrompt, params.userPrefix, params.tool, budgetTokens);
+  if (rawSources) {
+    const fitted = fitSources(payload, selectedSources, params.systemPrompt, params.userPrefix, params.tool, resolved.budgetTokens);
     payload = fitted.payload;
     truncatedSources = fitted.truncatedSources;
-    omittedSources = fitted.omittedSources;
+    omittedSources = fitted.omittedSources + Math.max(0, rawSources.length - selectedSources.length);
   }
 
   let estimatedTokens = requestTokens(params.systemPrompt, params.userPrefix, payload, params.tool);
-  if (estimatedTokens > budgetTokens && typeof payload.markdown === "string" && (params.phase === "outline" || params.phase === "chapter_summary" || params.phase === "consistency")) {
+  if (estimatedTokens > resolved.budgetTokens && typeof payload.markdown === "string" && (params.phase === "outline" || params.phase === "chapter_summary" || params.phase === "consistency")) {
     const withoutMarkdown = { ...payload, markdown: "" };
     const fixedTokens = requestTokens(params.systemPrompt, params.userPrefix, withoutMarkdown, params.tool);
-    const markdownBudget = Math.max(512, budgetTokens - fixedTokens - 256);
+    const markdownBudget = Math.max(512, resolved.budgetTokens - fixedTokens - 256);
     payload = { ...payload, markdown: compactMarkdownOverview(payload.markdown, markdownBudget) };
     compactedMarkdown = true;
     estimatedTokens = requestTokens(params.systemPrompt, params.userPrefix, payload, params.tool);
   }
 
-  if (estimatedTokens > budgetTokens) {
-    throw new LongWritingContextBudgetError(params.phase, estimatedTokens, budgetTokens);
-  }
+  if (estimatedTokens > resolved.budgetTokens) throw new LongWritingContextBudgetError(params.phase, estimatedTokens, resolved.budgetTokens);
   return {
     payload: payload as T,
     estimatedTokens,
-    budgetTokens,
+    budgetTokens: resolved.budgetTokens,
+    requestedBudgetTokens: resolved.requestedBudgetTokens,
+    modelContextWindowTokens: resolved.modelContextWindowTokens,
+    outputReserveTokens: resolved.outputReserveTokens,
     truncatedSources,
     omittedSources,
+    sourceExcerptCount: selectedSources.length,
     compactedMarkdown,
   };
 }

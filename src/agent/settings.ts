@@ -5,6 +5,8 @@ export interface AgentSettings {
   disabledTools: string[];
   enabledSkills: import("../features/skills/skills").SkillReference[];
   contextCompressionTokens: number;
+  /** Total model context window used by long-writing Workers to reserve output safely. */
+  longWritingContextWindowTokens: number;
   maxRounds: number;
   webSearchMaxCalls: number;
   recentMessages: number;
@@ -25,6 +27,7 @@ export const defaultAgentSettings: AgentSettings = {
   disabledTools: [],
   enabledSkills: [],
   contextCompressionTokens: 98000,
+  longWritingContextWindowTokens: 32768,
   maxRounds: 20,
   webSearchMaxCalls: 2,
   recentMessages: 20,
@@ -52,7 +55,8 @@ export function normalizeAgentSettings(value: Partial<AgentSettings> | null | un
       skill && typeof skill.name === "string" && ["builtin", "global", "workspace"].includes(skill.scope)
       && typeof skill.baseDir === "string" && typeof skill.skillFile === "string",
     )) : [],
-    contextCompressionTokens: Math.round(numberInRange(source.contextCompressionTokens, defaultAgentSettings.contextCompressionTokens, 8000, 200000)),
+    contextCompressionTokens: Math.round(numberInRange(source.contextCompressionTokens, defaultAgentSettings.contextCompressionTokens, 1024, 500000)),
+    longWritingContextWindowTokens: Math.round(numberInRange(source.longWritingContextWindowTokens, defaultAgentSettings.longWritingContextWindowTokens, 8192, 1000000)),
     maxRounds: Math.round(numberInRange(source.maxRounds, defaultAgentSettings.maxRounds, 4, 50)),
     webSearchMaxCalls: Math.round(numberInRange(source.webSearchMaxCalls, defaultAgentSettings.webSearchMaxCalls, 1, 10)),
     recentMessages: Math.round(numberInRange(source.recentMessages, defaultAgentSettings.recentMessages, 4, 100)),

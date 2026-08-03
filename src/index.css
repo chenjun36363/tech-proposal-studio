@@ -342,45 +342,58 @@
   }
   .toc-item-wrap:hover .toc-item { background: transparent; }
   .toc-item-wrap.selected .toc-item { background: transparent; }
-  .toc-node-actions {
-    position: absolute;
-    z-index: 3;
-    top: 50%;
-    right: 5px;
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    padding: 2px;
+  .toc-context-menu {
+    position: fixed;
+    z-index: 80;
+    width: 224px;
+    padding: 5px;
     border: 1px solid hsl(var(--border));
-    border-radius: 6px;
-    background: hsl(var(--card) / 0.98);
-    box-shadow: 0 3px 10px hsl(var(--foreground) / 0.14);
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(-50%) translateX(3px);
-    transition: opacity .12s ease, transform .12s ease;
+    border-radius: 8px;
+    background: hsl(var(--card));
+    box-shadow: 0 12px 28px hsl(var(--foreground) / .18), 0 2px 6px hsl(var(--foreground) / .1);
   }
-  .toc-node-actions button {
-    flex: none;
-    width: 24px;
-    height: 24px;
-    display: grid;
-    place-items: center;
+  .toc-context-menu-title {
+    overflow: hidden;
+    padding: 6px 8px 7px;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .toc-context-menu button {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+    padding: 5px 8px;
     border: 0;
+    border-radius: 5px;
     background: transparent;
-    color: hsl(var(--foreground) / 0.72);
-    border-radius: 4px;
+    color: hsl(var(--foreground));
+    font-size: 12px;
+    text-align: left;
     cursor: pointer;
   }
-  .toc-item-wrap:hover .toc-node-actions {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(-50%) translateX(0);
+  .toc-context-menu button:hover:not(:disabled),
+  .toc-context-menu button:focus-visible {
+    background: hsl(var(--foreground) / .08);
+    outline: none;
   }
-  .toc-node-actions button:hover:not(:disabled),
-  .toc-node-actions button:focus-visible { color:hsl(var(--foreground)); background:hsl(var(--foreground) / .1); outline: none; }
-  .toc-node-actions button.delete:hover { color: hsl(var(--destructive)); background: hsl(var(--destructive) / 0.1); }
-  .toc-node-actions button:disabled { cursor:not-allowed; opacity:.28; }
+  .toc-context-menu button:disabled {
+    color: hsl(var(--muted-foreground));
+    cursor: not-allowed;
+    opacity: .48;
+  }
+  .toc-context-menu button.danger { color: hsl(var(--destructive)); }
+  .toc-context-menu button.danger:hover:not(:disabled),
+  .toc-context-menu button.danger:focus-visible { background: hsl(var(--destructive) / .1); }
+  .toc-context-menu-separator {
+    height: 1px;
+    margin: 4px 3px;
+    background: hsl(var(--border));
+  }
 
   .toc-item:hover {
     background: hsl(var(--foreground) / 0.055);
@@ -2475,11 +2488,6 @@
     background: hsl(var(--primary) / 0.08);
     color: hsl(var(--primary));
   }
-  .workspace-doc-row > .icon-button {
-    flex: 0 0 28px;
-    width: 28px;
-    height: 28px;
-  }
   .workspace-doc-row .spinning {
     animation: workspace-doc-spin 0.8s linear infinite;
   }
@@ -2519,6 +2527,19 @@
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .workspace-doc-context-menu {
+    width: 252px;
+  }
+  .workspace-doc-status {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding-right: 8px;
+    color: hsl(var(--muted-foreground));
+    font-size: 10px;
     white-space: nowrap;
   }
 
@@ -5662,6 +5683,87 @@
   }
   .long-writing-panel button:hover:not(:disabled) { background: hsl(var(--muted)); }
   .long-writing-panel button:disabled { cursor: not-allowed; opacity: 0.5; }
+  /* The long-task form styles every descendant button/input; restore the shared model picker layout. */
+  .long-writing-panel .model-combobox .model-combobox-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 0;
+    gap: 8px;
+    padding: 8px 10px;
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    font-size: 12px;
+    text-align: left;
+  }
+  .long-writing-panel .model-combobox .model-combobox-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .long-writing-panel .model-combobox .model-combobox-input,
+  .long-writing-panel .model-combobox .model-combobox-input:focus {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    box-shadow: none;
+    background: transparent;
+  }
+  .long-writing-panel .model-combobox .model-combobox-list {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px;
+  }
+  /* Model rows act as compact cards here: long-task selection is a consequential choice. */
+  .long-writing-panel .model-combobox .model-combobox-option {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    justify-items: start;
+    align-content: center;
+    min-height: 58px;
+    gap: 4px;
+    padding: 10px 11px;
+    border: 1px solid hsl(var(--border) / 0.72);
+    border-radius: 8px;
+    background: hsl(var(--background) / 0.58);
+    font-size: 12px;
+    text-align: left;
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+  .long-writing-panel .model-combobox .model-combobox-option:hover,
+  .long-writing-panel .model-combobox .model-combobox-option.highlight {
+    border-color: hsl(var(--primary) / 0.36);
+    background: hsl(var(--primary) / 0.075);
+  }
+  .long-writing-panel .model-combobox .model-combobox-option.selected {
+    border-color: hsl(var(--primary) / 0.58);
+    background: hsl(var(--primary) / 0.11);
+    box-shadow: inset 3px 0 0 hsl(var(--primary));
+  }
+  .long-writing-panel .model-combobox .model-combobox-option-name,
+  .long-writing-panel .model-combobox .model-combobox-option-meta {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .long-writing-panel .model-combobox .model-combobox-option-name {
+    font-weight: 650;
+    line-height: 1.35;
+  }
+  .long-writing-panel .model-combobox .model-combobox-option-meta {
+    font-size: 10px;
+    line-height: 1.35;
+  }
   .long-writing-empty {
     height: 100%;
     display: flex;
@@ -5742,6 +5844,22 @@
   .long-writing-task-head em { color: hsl(var(--primary)); font-size: 14px; font-style: normal; font-weight: 750; }
   .long-writing-task-head.status-conflict,
   .long-writing-task-head.status-failed { border-color: hsl(var(--destructive) / 0.45); }
+  .long-writing-task-model {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 44%);
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid hsl(var(--border));
+    border-radius: 9px;
+    background: hsl(var(--card));
+  }
+  .long-writing-task-model > div { min-width: 0; display: grid; gap: 3px; }
+  .long-writing-task-model b { font-size: 11px; }
+  .long-writing-task-model span { color: hsl(var(--muted-foreground)); font-size: 10px; line-height: 1.45; }
+  @media (max-width: 420px) {
+    .long-writing-task-model { grid-template-columns: minmax(0, 1fr); }
+  }
   .long-writing-progress {
     height: 5px;
     overflow: hidden;

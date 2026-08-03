@@ -4,9 +4,10 @@ import { buildAgentPreferencePrompt, defaultAgentSettings, normalizeAgentSetting
 describe("agent settings", () => {
   it("fills missing values and clamps unsafe numeric ranges", () => {
     const settings = normalizeAgentSettings({ contextCompressionTokens: 999999, maxRounds: 999, webSearchMaxCalls: 99, recentMessages: 1, temperature: -1 });
-    expect(settings.contextCompressionTokens).toBe(200000);
+    expect(settings.contextCompressionTokens).toBe(500000);
     expect(settings.maxRounds).toBe(50);
     expect(settings.webSearchMaxCalls).toBe(10);
+    expect(settings.longWritingContextWindowTokens).toBe(32768);
     expect(settings.recentMessages).toBe(4);
     expect(settings.temperature).toBe(0);
     expect(settings.knowledgeToolsEnabled).toBe(true);
@@ -21,6 +22,7 @@ describe("agent settings", () => {
   it("uses the default web search limit for existing settings", () => {
     expect(normalizeAgentSettings({}).webSearchMaxCalls).toBe(2);
     expect(normalizeAgentSettings({}).maxRounds).toBe(20);
+    expect(normalizeAgentSettings({ longWritingContextWindowTokens: 9999999 }).longWritingContextWindowTokens).toBe(1000000);
   });
 
   it("turns response and citation preferences into model instructions", () => {

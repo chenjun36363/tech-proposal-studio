@@ -12,14 +12,17 @@ interface ModelEntry {
   ownedBy?: string;
 }
 
-function buildEntries(providers: LlmProvider[]): ModelEntry[] {
+function buildEntries(providers: LlmProvider[], activeOnly = false): ModelEntry[] {
   const entries: ModelEntry[] = [];
   for (const provider of providers) {
     if (!provider.enabled) continue;
     const catalog: ModelOption[] = provider.catalog?.length
       ? provider.catalog
       : provider.activeModels.map(model => ({ id: model, displayName: model }));
-    for (const item of catalog) {
+    const models = activeOnly
+      ? provider.activeModels.map(model => catalog.find(item => item.id === model) ?? { id: model, displayName: model })
+      : catalog;
+    for (const item of models) {
       entries.push({
         providerId: provider.id,
         providerName: provider.name,
@@ -44,6 +47,7 @@ export function ModelSelect({
   value,
   onChange,
   disabled,
+  activeOnly = false,
   id,
   placeholder = "选择模型…",
 }: {
@@ -51,10 +55,12 @@ export function ModelSelect({
   value: SelectedModel | null;
   onChange: (next: SelectedModel | null) => void;
   disabled?: boolean;
+  /** Restrict the picker to each provider's explicitly enabled models. */
+  activeOnly?: boolean;
   id?: string;
   placeholder?: string;
 }) {
-  const allEntries = useMemo(() => buildEntries(providers), [providers]);
+  const allEntries = useMemo(() => buildEntries(providers, activeOnly), [providers, activeOnly]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);

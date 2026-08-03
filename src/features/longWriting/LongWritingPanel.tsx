@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, CirclePause, CirclePlay, Plus, RotateCcw, Square, Trash2, WandSparkles } from "lucide-react";
 import type { Project, ResolvedModelConfig, SelectedModel } from "../../core/types";
+import { ModelSelect } from "../../components/ModelSelect";
 import { readTextFileSnapshot, writeTextFileChecked, type TextFileSnapshot } from "../workspace/documentSafety";
 import { alignHeadingsToRules } from "../editor/markdownDoc";
 import { resolveActiveModelConfig } from "../../services/llm/resolve";
@@ -13,6 +14,7 @@ import { appendLongWritingEvent, createLongWritingEvent } from "./events";
 import { LongWritingEventLog, LongWritingJobCard } from "./LongWritingOutput";
 import { applyEditableOutline, canCreateLongWritingDocument, createEditableOutline, createNewOutlineChapter, type EditableOutlineChapter } from "./outlineEditing";
 import { createChapterDraft, createChapterSummary, createConsistencyReport, createLocalChapterSummary, createOutlinePlan } from "./model";
+import { resolveLongWritingContextBudget } from "./contextBudget";
 import {
   commitLongTaskChapter,
   createProposalBackup,
@@ -73,9 +75,6 @@ function textFromSource(source: Project["sources"][number]): string {
   return [source.title, source.heading, source.content ?? source.excerpt].filter(Boolean).join("\n");
 }
 
-function modelKey(selection: SelectedModel): string {
-  return `${selection.providerId}\u0000${selection.model}`;
-}
 
 function normalizePlan(plan: OutlinePlan, markdown: string, mode: LongWritingMode, requested: string[], documentTitle?: string): OutlinePlan {
   const chapters = parseLongWritingDocument(markdown).chapters;
@@ -190,10 +189,7 @@ export function LongWritingPanel({
   const parsed = useMemo(() => parseLongWritingDocument(project.markdown), [project.markdown]);
   const modelOptions = useMemo(() => project.providers
     .filter(provider => provider.enabled)
-    .flatMap(provider => provider.activeModels.map(model => ({
-      selection: { providerId: provider.id, model } satisfies SelectedModel,
-      label: `${provider.name} / ${model}`,
-    }))), [project.providers]);
+    .flatMap(provider => provider.activeModels.map(model => ({ providerId: provider.id, model } satisfies SelectedModel))), [project.providers]);
   const [mode, setMode] = useState<LongWritingMode>("fill");
   const [documentTitle, setDocumentTitle] = useState(project.name);
   const [instruction, setInstruction] = useState("");
@@ -312,13 +308,40 @@ export function LongWritingPanel({
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const hasValidModelSelection = !!modelSelection && modelOptions.some(option => modelKey(option.selection) === modelKey(modelSelection));
+  const hasValidModelSelection = !!modelSelection && modelOptions.some(option =>
+    option.providerId === modelSelection.providerId && option.model === modelSelection.model,
+  );
 
   const modelConfig = (record?: LongWritingTaskRecord): ResolvedModelConfig => resolveActiveModelConfig(
     project.providers,
     record?.modelProviderId ? { providerId: record.modelProviderId, model: record.model } : modelSelection,
     { aiEnabled: project.model.enabled },
   );
+
+  const changeTaskModel = async (next: SelectedModel | null) => {
+    const current = taskRef.current;
+    if (!current || !next) return;
+    if (busy) return notify("长任务正在执行，请等待当前执行结束后再切换模型");
+    try {
+      const config = resolveActiveModelConfig(project.providers, next, { aiEnabled: project.model.enabled });
+      if (current.modelProviderId === config.providerId && current.model === config.model) return;
+      setModelSelection(next);
+      await mutateTask(taskValue => ({
+        ...taskValue,
+        modelProviderId: config.providerId,
+        model: config.model,
+        events: appendLongWritingEvent(taskValue.events, createLongWritingEvent(
+          "model_changed",
+          `执行模型已切换为 ${config.providerName} / ${config.model}`,
+          { details: { providerId: config.providerId, model: config.model } },
+        )),
+        updatedAt: new Date().toISOString(),
+      }));
+      notify(`后续执行将使用 ${config.providerName} / ${config.model}`);
+    } catch (error) {
+      notify(longWritingErrorMessage(error, "切换长任务模型失败"));
+    }
+  };
 
   const updateJob = (jobId: string, patch: Partial<ChapterJob>) => mutateTask(current => ({
     ...current,
@@ -353,6 +376,10 @@ export function LongWritingPanel({
       const requested = [...selected];
       const sourceRefs = project.sources.filter(source => sourceIds.has(source.id)).map(source => ({ id: source.id, title: source.title, path: source.location, excerpt: source.excerpt }));
       const now = new Date().toISOString();
+      const outlineContext = resolveLongWritingContextBudget("outline", {
+        contextBudgetTokens: project.agent.contextCompressionTokens,
+        modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
+      });
       const baseTask: LongWritingTaskRecord = {
         id: taskId,
         filePath: project.filePath,
@@ -373,6 +400,9 @@ export function LongWritingPanel({
         consistencyIssues: [],
         events: [
           createLongWritingEvent("task_started", "已保存当前正文，Coordinator 开始准备长任务"),
+          createLongWritingEvent("task_started", `上下文策略：模型窗口 ${outlineContext.modelContextWindowTokens} tokens，目录输入预算 ${outlineContext.budgetTokens}，预留输出 ${outlineContext.outputReserveTokens}；每章仅筛选相关资料片段`, {
+            details: { contextWindowTokens: outlineContext.modelContextWindowTokens, inputBudgetTokens: outlineContext.budgetTokens, outputReserveTokens: outlineContext.outputReserveTokens, selectedSourceCount: sourceRefs.length },
+          }),
           createLongWritingEvent("backup_created", `已创建任务前原文备份：${backup.path}`, { details: { backupPath: backup.path } }),
         ],
         createdAt: now,
@@ -395,6 +425,7 @@ export function LongWritingPanel({
                 documentTitle: project.name,
                 instruction: instruction.trim(),
                 contextBudgetTokens: project.agent.contextCompressionTokens,
+                modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
               }, config, controller.signal);
               await recordEvent("summary_completed", `章节摘要已完成：${chapter.titlePath.join(" / ")}`, {
                 chapterId: chapter.id,
@@ -450,6 +481,7 @@ export function LongWritingPanel({
           attachedSources,
           chapterSummaries,
           contextBudgetTokens: project.agent.contextCompressionTokens,
+          modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
         }, config, controller.signal);
       } catch (error) {
         if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
@@ -663,6 +695,7 @@ export function LongWritingPanel({
             })),
             attachedSources: sourceText,
             contextBudgetTokens: project.agent.contextCompressionTokens,
+            modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
           }, modelConfig(initialTask), signal);
         },
         validate: ({ value: job }, draft) => {
@@ -749,6 +782,7 @@ export function LongWritingPanel({
         markdown: currentMarkdown,
         chapterSummaries: latest.chapters.filter(job => job.summary).map(job => ({ chapterId: job.chapterId, titlePath: job.titlePath, summary: job.summary! })),
         contextBudgetTokens: project.agent.contextCompressionTokens,
+        modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
       }, modelConfig(initialTask), controller.signal);
       const issues = [...new Map([...localIssues, ...modelIssues].map(issue => [issue.id, { ...issue, status: "pending" as const }])).values()];
       await mutateTask(current => ({
@@ -891,10 +925,13 @@ export function LongWritingPanel({
     </select></label>
     {mode === "create" && <label>方案标题<input value={documentTitle} onChange={event => setDocumentTitle(event.target.value)} placeholder="例如：智慧园区综合管理平台技术方案" /></label>}
     <label>总指令<textarea value={instruction} onChange={event => setInstruction(event.target.value)} rows={5} placeholder={mode === "create" ? "说明方案目标、受众、必须遵循的事实、风格和边界…" : "说明目标、必须保留的事实、风格和边界…"} /></label>
-    <label>模型<select value={modelSelection ? modelKey(modelSelection) : ""} onChange={event => {
-      const option = modelOptions.find(item => modelKey(item.selection) === event.target.value);
-      setModelSelection(option?.selection ?? null);
-    }}><option value="">请选择模型</option>{modelOptions.map(option => <option key={modelKey(option.selection)} value={modelKey(option.selection)}>{option.label}</option>)}</select></label>
+    <label>模型<ModelSelect
+      providers={project.providers}
+      value={modelSelection}
+      onChange={setModelSelection}
+      activeOnly
+      placeholder="请选择模型"
+    /></label>
     {mode === "create" ? <div className="long-writing-section"><b>创建范围</b><span>AI 将先根据标题、总指令和明确附加资料生成完整 H2 目录，确认后再按章节写作。</span></div> : <div className="long-writing-section"><b>章节范围</b>{parsed.chapters.map(chapter => <label className="long-writing-check" key={chapter.id}>
       <input type="checkbox" checked={selected.has(chapter.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(chapter.id) ? next.delete(chapter.id) : next.add(chapter.id); return next; })} />
       <span>{chapter.titlePath.join(" / ")}</span><em>{chapter.bodyMarkdown.replace(/\s/g, "").length} 字</em>
@@ -912,9 +949,24 @@ export function LongWritingPanel({
   const progress = task.chapters.length ? Math.round(done / task.chapters.length * 100) : 0;
   const planningFailed = task.status === "failed" && !task.plan;
   const resumable = !!task.plan && task.chapters.length > 0 && ["running", "paused", "failed"].includes(task.status);
+  const taskModelSelection = task.modelProviderId
+    ? { providerId: task.modelProviderId, model: task.model }
+    : modelOptions.find(option => option.model === task.model) ?? null;
+  const canChangeTaskModel = !busy && !["completed", "cancelled", "restored"].includes(task.status);
   return <div className="long-writing-panel">
     {availability && <div className="long-writing-warning"><AlertTriangle size={15} /><span>当前编辑器的桌面工作区上下文暂时不可用：{availability.title}。长任务仍绑定到 <code>{task.filePath}</code>，进度和执行输出不会被此提示页覆盖。</span></div>}
     <div className={`long-writing-task-head status-${task.status}`}><div><b>{task.status === "awaiting_outline" ? "目录待确认" : task.status === "awaiting_repairs" ? "一致性检查待处理" : `长任务：${task.status}`}</b><span>{task.mode === "create" ? `从零创建：${task.documentTitle || "未命名方案"}` : task.mode} · {task.model} · 并发 {task.concurrency}</span></div><em>{progress}%</em></div>
+    <div className="long-writing-task-model">
+      <div><b>后续执行模型</b><span>{busy ? "当前执行正在使用任务启动时的模型；执行结束后可切换。" : "切换后用于继续、重试和一致性修正。"}</span></div>
+      <ModelSelect
+        providers={project.providers}
+        value={taskModelSelection}
+        onChange={next => void changeTaskModel(next)}
+        activeOnly
+        disabled={!canChangeTaskModel}
+        placeholder="请选择模型"
+      />
+    </div>
     <div className="long-writing-progress"><i style={{ width: `${progress}%` }} /></div>
     {task.error && <div className="long-writing-warning"><AlertTriangle size={15} />{task.error}</div>}
     <LongWritingEventLog events={task.events ?? []} busy={busy} />

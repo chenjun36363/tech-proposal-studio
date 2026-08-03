@@ -2,7 +2,7 @@ import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "../.
 import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../../core/types";
 import { agentCompletion } from "../../services/model";
 import type { ChapterDraftResult, ChapterSummarySubmission, ConsistencyIssue, OutlinePlan } from "./types";
-import { prepareLongWritingPayload } from "./contextBudget";
+import { LongWritingContextBudgetError, longWritingPhaseOutputTokens, prepareLongWritingPayload, type LongWritingContextPhase } from "./contextBudget";
 
 export type LongWritingModelConfig = ResolvedModelConfig | OpenAICompatibleConfig;
 
@@ -24,6 +24,7 @@ export interface OutlinePlanningInput {
   requestedChapterIds?: string[];
   attachedSources?: string[];
   contextBudgetTokens?: number;
+  modelContextWindowTokens?: number;
 }
 
 export interface ChapterSummaryInput {
@@ -33,6 +34,7 @@ export interface ChapterSummaryInput {
   documentTitle?: string;
   instruction: string;
   contextBudgetTokens?: number;
+  modelContextWindowTokens?: number;
 }
 
 export interface ChapterDraftInput {
@@ -55,6 +57,7 @@ export interface ChapterDraftInput {
   }>;
   attachedSources?: string[];
   contextBudgetTokens?: number;
+  modelContextWindowTokens?: number;
 }
 
 export interface ConsistencyCheckInput {
@@ -66,6 +69,7 @@ export interface ConsistencyCheckInput {
     summary: string;
   }>;
   contextBudgetTokens?: number;
+  modelContextWindowTokens?: number;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -425,6 +429,54 @@ function isTransientModelRequestError(error: unknown): boolean {
   return /error sending request|failed to fetch|network|网络|connection (?:refused|reset|closed)|连接(?:失败|重置|关闭)|timed? ?out|timeout|超时|temporar|429|rate.?limit|限流|(?:^|\D)5\d{2}(?:\D|$)/i.test(message);
 }
 
+function isContextLengthError(error: unknown): boolean {
+  if (isAbortError(error)) return false;
+  const message = errorMessage(error);
+  return /context(?:[_ -]?(?:length|window|limit))(?:[_ -]?(?:exceeded|error))?|maximum context|too many tokens|token limit|上下文(?:长度)?(?:超限|过长)|tokens? exceed/i.test(message);
+}
+
+async function callLongWritingTool<T>(params: {
+  phase: LongWritingContextPhase;
+  input: Record<string, unknown> & { contextBudgetTokens?: number; modelContextWindowTokens?: number; attachedSources?: string[]; markdown?: string };
+  systemPrompt: string;
+  userPrefix: string;
+  tool: AgentToolDefinition;
+  config: LongWritingModelConfig;
+  signal?: AbortSignal;
+  parse: (argumentsValue: JsonRecord) => T;
+  allowContentJson?: boolean;
+}): Promise<T> {
+  let candidate = { ...params.input };
+  let lastContextError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const prepared = prepareLongWritingPayload({
+        phase: params.phase,
+        input: candidate,
+        systemPrompt: params.systemPrompt,
+        userPrefix: params.userPrefix,
+        tool: params.tool,
+      });
+      try {
+        return await callForcedTool(params.tool, [
+          { role: "system", content: params.systemPrompt },
+          { role: "user", content: `${params.userPrefix}\n${jsonPayload(prepared.payload)}` },
+        ], params.config, params.signal, params.parse, longWritingPhaseOutputTokens(params.phase, candidate.modelContextWindowTokens), params.allowContentJson);
+      } catch (error) {
+        if (!isContextLengthError(error)) throw error;
+        lastContextError = error;
+        if (attempt >= 2) throw error;
+        candidate.contextBudgetTokens = Math.max(1024, Math.floor(prepared.budgetTokens * 0.6));
+      }
+    } catch (error) {
+      if (!(error instanceof LongWritingContextBudgetError) || attempt >= 2) throw error;
+      lastContextError = error;
+      candidate.contextBudgetTokens = Math.max(1024, Math.floor(error.budgetTokens * 0.6));
+    }
+  }
+  throw lastContextError ?? new Error("长任务上下文降级重试失败");
+}
+
 function waitForModelRetry(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(new DOMException("模型请求已取消", "AbortError"));
   return new Promise((resolve, reject) => {
@@ -565,17 +617,10 @@ export async function createChapterSummary(
     "摘要应保留可供全文规划使用的固定事实、术语和待确认项，不提出目录变更。",
   ].join("\n");
   const prefix = "请总结当前章节：";
-  const prepared = prepareLongWritingPayload({
-    phase: "chapter_summary",
-    input: { ...input },
-    systemPrompt,
-    userPrefix: prefix,
-    tool: chapterSummaryTool,
+  return callLongWritingTool({
+    phase: "chapter_summary", input: { ...input }, systemPrompt, userPrefix: prefix, tool: chapterSummaryTool, config, signal,
+    parse: argumentsValue => parseChapterSummary(argumentsValue, input.chapterId), allowContentJson: true,
   });
-  return callForcedTool(chapterSummaryTool, [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
-  ], config, signal, argumentsValue => parseChapterSummary(argumentsValue, input.chapterId), 3000, true);
 }
 
 function validateCreateOutlinePlan(plan: OutlinePlan, documentTitle?: string): OutlinePlan {
@@ -607,17 +652,10 @@ export async function createOutlinePlan(
     ...creationRules,
   ].join("\n");
   const prefix = "请根据以下输入生成目录规划：";
-  const prepared = prepareLongWritingPayload({
-    phase: "outline",
-    input: { ...input },
-    systemPrompt,
-    userPrefix: prefix,
-    tool: outlineTool,
+  const plan = await callLongWritingTool({
+    phase: "outline", input: { ...input }, systemPrompt, userPrefix: prefix, tool: outlineTool, config, signal,
+    parse: parseOutlinePlan, allowContentJson: true,
   });
-  const plan = await callForcedTool(outlineTool, [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
-  ], config, signal, parseOutlinePlan, 6000, true);
   return input.mode === "create" ? validateCreateOutlinePlan(plan, input.documentTitle) : plan;
 }
 
@@ -634,17 +672,10 @@ export async function createChapterDraft(
   ].join("\n");
   const prefix = "请生成当前章节草稿：";
   const preparedInput = { ...input, outlinePlan: scopedChapterPlan(input.outlinePlan, input.chapterId) };
-  const prepared = prepareLongWritingPayload({
-    phase: "chapter_draft",
-    input: preparedInput,
-    systemPrompt,
-    userPrefix: prefix,
-    tool: chapterDraftTool,
+  return callLongWritingTool({
+    phase: "chapter_draft", input: preparedInput, systemPrompt, userPrefix: prefix, tool: chapterDraftTool, config, signal,
+    parse: argumentsValue => parseChapterDraft(argumentsValue, input.chapterId), allowContentJson: true,
   });
-  return callForcedTool(chapterDraftTool, [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
-  ], config, signal, argumentsValue => parseChapterDraft(argumentsValue, input.chapterId), undefined, true);
 }
 
 export async function createConsistencyReport(
@@ -659,17 +690,10 @@ export async function createConsistencyReport(
     "所有问题初始 status 必须为 pending；没有问题时提交 issues: []。",
   ].join("\n");
   const prefix = "请检查以下冻结计划和全文：";
-  const prepared = prepareLongWritingPayload({
-    phase: "consistency",
-    input: { ...input },
-    systemPrompt,
-    userPrefix: prefix,
-    tool: consistencyTool,
+  return callLongWritingTool({
+    phase: "consistency", input: { ...input }, systemPrompt, userPrefix: prefix, tool: consistencyTool, config, signal,
+    parse: parseConsistencyReport, allowContentJson: true,
   });
-  return callForcedTool(consistencyTool, [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `${prefix}\n${jsonPayload(prepared.payload)}` },
-  ], config, signal, parseConsistencyReport, 5000, true);
 }
 
 export const longWritingToolContracts = {

@@ -1,12 +1,13 @@
-import { Check, Power } from "lucide-react";
+import { Check, Command, Power } from "lucide-react";
 import { agentToolCatalog, agentToolGroups, type AgentToolGroupId } from "../../agent/toolCatalog";
 import type { Project } from "../../core/types";
 
 const catalogNames = new Set(agentToolCatalog.map(tool => tool.name));
 
-export function ToolSettingsSection({ draft, setDraft }: {
+export function ToolSettingsSection({ draft, setDraft, openEnvironmentCheck }: {
   draft: Project;
   setDraft: (project: Project) => void;
+  openEnvironmentCheck?: () => void;
 }) {
   const disabled = new Set(draft.agent.disabledTools);
   const enabledCount = agentToolCatalog.length - agentToolCatalog.filter(tool => disabled.has(tool.name)).length;
@@ -33,6 +34,7 @@ export function ToolSettingsSection({ draft, setDraft }: {
     <div className="tool-settings-summary">
       <span><b>{enabledCount} / {agentToolCatalog.length}</b><small>个工具已启用</small></span>
       <div>
+        {openEnvironmentCheck && <button type="button" onClick={openEnvironmentCheck}><Command size={14} />环境检查</button>}
         <button type="button" onClick={() => setAllEnabled(true)}><Check size={14} />全部启用</button>
         <button type="button" onClick={() => setAllEnabled(false)}><Power size={14} />全部停用</button>
       </div>

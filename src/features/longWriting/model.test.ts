@@ -212,6 +212,26 @@ describe("long writing structured model calls", () => {
     expect(JSON.stringify(payload)).not.toContain("contextBudgetTokens");
   });
 
+  it("rebuilds the request with a smaller context budget after a provider context overflow", async () => {
+    vi.mocked(agentCompletion)
+      .mockRejectedValueOnce(new Error("context_length_exceeded: maximum context length"))
+      .mockResolvedValueOnce(toolResponse("submit_outline_plan", plan));
+
+    await expect(createOutlinePlan({
+      mode: "rewrite",
+      instruction: "统一改写全文",
+      markdown: "# 方案\n\n## 第一章 项目概述",
+      attachedSources: ["招标文件\n" + "建设范围、功能要求与验收标准。".repeat(9000)],
+      contextBudgetTokens: 20000,
+      modelContextWindowTokens: 32000,
+    }, config)).resolves.toEqual(plan);
+
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
+    const first = vi.mocked(agentCompletion).mock.calls[0][0] as { messages: Array<{ content: string }> };
+    const second = vi.mocked(agentCompletion).mock.calls[1][0] as { messages: Array<{ content: string }> };
+    expect(second.messages[1].content.length).toBeLessThan(first.messages[1].content.length);
+  });
+
   it("keeps full plans only for the target and adjacent chapters in chapter workers", async () => {
     vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_chapter_draft", draft));
     const expandedPlan = {
@@ -292,13 +312,13 @@ describe("long writing structured model calls", () => {
   });
 
   it("does not retry unrelated model errors with auto tool_choice", async () => {
-    vi.mocked(agentCompletion).mockRejectedValueOnce(new Error("模型服务返回 400：上下文长度超限"));
+    vi.mocked(agentCompletion).mockRejectedValueOnce(new Error("模型服务返回 400：请求参数无效"));
 
     await expect(createOutlinePlan({
       mode: "rewrite",
       instruction: "统一改写全文",
       markdown: "# 方案",
-    }, config)).rejects.toThrow("上下文长度超限");
+    }, config)).rejects.toThrow("请求参数无效");
 
     expect(agentCompletion).toHaveBeenCalledTimes(1);
   });

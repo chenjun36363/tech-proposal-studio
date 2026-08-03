@@ -1,5 +1,5 @@
 import type { DocumentBlock, Project, WordExportPreferences } from "../../core/types";
-import { createProject, DEFAULT_WORD_EXPORT_PREFERENCES } from "../../core/data";
+import { createProject, DEFAULT_WORD_EXPORT_PREFERENCES, makeId } from "../../core/data";
 import { defaultProposalMarkdown } from "../editor/markdownDoc";
 import { normalizeAgentSettings } from "../../agent/settings";
 const KEY = "tech-proposal-studio.project.v1";
@@ -127,11 +127,17 @@ function normalizeProject(raw: StoredProject): Project {
 export function loadProject(): Project {
   try {
     const current = localStorage.getItem(KEY);
-    if (current) return normalizeProject(JSON.parse(current));
+    if (current) {
+      const project = normalizeProject(JSON.parse(current));
+      if (!project.id) project.id = makeId();
+      return project;
+    }
     const legacy = localStorage.getItem(LEGACY_KEY);
     if (legacy) {
       localStorage.setItem(KEY, legacy);
-      return normalizeProject(JSON.parse(legacy));
+      const project = normalizeProject(JSON.parse(legacy));
+      if (!project.id) project.id = makeId();
+      return project;
     }
     return createProject();
   } catch {

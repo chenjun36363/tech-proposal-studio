@@ -44,6 +44,7 @@ export type LongWritingEventType =
   | "outline_fallback"
   | "outline_completed"
   | "outline_confirmed"
+  | "model_changed"
   | "worker_started"
   | "worker_retry"
   | "draft_received"

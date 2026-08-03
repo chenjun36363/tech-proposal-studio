@@ -2,7 +2,7 @@
 
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProject } from "../../core/data";
 import type { Project } from "../../core/types";
 import { ToolSettingsSection } from "./ToolSettingsSection";
@@ -51,6 +51,20 @@ describe("ToolSettingsSection category permissions", () => {
     act(() => root.render(<Harness initial={createProject()} />));
     const labels = Array.from(container.querySelectorAll(".tool-group-toggle b")).map(node => node.textContent);
     expect(labels).toEqual(["规划与协作", "内容审核", "技能", "方案读取", "方案编辑", "知识库", "长期记忆", "联网访问", "工作区文档", "Git 读取", "Git 变更", "系统访问"]);
+    act(() => root.unmount());
+  });
+
+  it("opens environment checks from the settings tools section when available", () => {
+    const onEnvironmentCheck = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    act(() => root.render(<ToolSettingsSection draft={createProject()} setDraft={() => undefined} openEnvironmentCheck={onEnvironmentCheck} />));
+
+    const button = Array.from(container.querySelectorAll("button")).find(node => node.textContent?.includes("环境检查"));
+    expect(button).toBeDefined();
+    act(() => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onEnvironmentCheck).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
   });
 });

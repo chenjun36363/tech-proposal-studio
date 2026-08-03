@@ -87,10 +87,19 @@ function withBrowserWriteLock<T>(projectId: string, task: () => Promise<T>): Pro
   });
 }
 
-function requireWorkspaceRoot(workspaceRoot?: string): string {
+async function resolveDesktopWorkspaceRoot(workspaceRoot?: string): Promise<string> {
   const root = workspaceRoot?.trim();
-  if (!root) throw new Error("工作目录不能为空");
-  return root;
+  if (root) return root;
+  // 工作目录尚未就绪时，回退到应用默认工作目录，避免“每次打开都丢失历史会话”。
+  try {
+    const { getDefaultWorkspaceRoot } = await import("../features/workspace/workspace");
+    const fallback = await getDefaultWorkspaceRoot();
+    const trimmed = fallback?.trim();
+    if (trimmed) return trimmed;
+  } catch {
+    // 忽略，落到下面的错误
+  }
+  throw new Error("工作目录不能为空");
 }
 
 function errorText(error: unknown): string {
@@ -101,15 +110,16 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
-async function upsertDesktopConversation(conversation: AgentConversation, workspaceRoot: string): Promise<AgentConversation> {
+async function upsertDesktopConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {
+  const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
   let candidate = conversation;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await invoke<AgentConversation>("agent_conversation_upsert", { workspaceRoot, conversation: candidate });
+      return await invoke<AgentConversation>("agent_conversation_upsert", { workspaceRoot: root, conversation: candidate });
     } catch (error) {
       const message = errorText(error);
       if (message.includes("会话已在其他位置更新") && attempt === 0) {
-        const latest = await invoke<AgentConversation>("agent_conversation_get", { workspaceRoot, id: candidate.id });
+        const latest = await invoke<AgentConversation>("agent_conversation_get", { workspaceRoot: root, id: candidate.id });
         candidate = {
           ...candidate,
           revision: latest.revision,
@@ -134,7 +144,8 @@ async function upsertDesktopConversation(conversation: AgentConversation, worksp
 export async function listAgentConversations(projectId: string, workspaceRoot?: string): Promise<AgentConversation[]> {
   if (isDesktop()) {
     ensureDesktopBridge();
-    return invoke<AgentConversation[]>("agent_conversation_list", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), projectId });
+    const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
+    return invoke<AgentConversation[]>("agent_conversation_list", { workspaceRoot: root, projectId });
   }
   return readLocal().filter(item => item.projectId === projectId).sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -142,7 +153,8 @@ export async function listAgentConversations(projectId: string, workspaceRoot?: 
 export async function getAgentConversation(conversationId: string, workspaceRoot?: string): Promise<AgentConversation> {
   if (isDesktop()) {
     ensureDesktopBridge();
-    return invoke<AgentConversation>("agent_conversation_get", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), id: conversationId });
+    const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
+    return invoke<AgentConversation>("agent_conversation_get", { workspaceRoot: root, id: conversationId });
   }
   const conversation = readLocal().find(item => item.id === conversationId);
   if (!conversation) throw new Error("会话不存在");
@@ -158,7 +170,7 @@ export async function saveAgentConversation(conversation: AgentConversation, wor
   const next = { ...conversation, messages: persistentAgentMessages(conversation.messages), updatedAt: Date.now(), messagesLoaded: true };
   if (isDesktop()) {
     ensureDesktopBridge();
-    const saved = await upsertDesktopConversation(next, requireWorkspaceRoot(workspaceRoot));
+    const saved = await upsertDesktopConversation(next, workspaceRoot);
     return saved;
   }
   return withBrowserWriteLock(conversation.projectId, async () => {
@@ -172,8 +184,9 @@ export async function saveAgentConversation(conversation: AgentConversation, wor
 export async function patchAgentConversation(conversation: AgentConversation, patch: AgentConversationPatch, workspaceRoot?: string): Promise<AgentConversation> {
   if (isDesktop()) {
     ensureDesktopBridge();
+    const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
     const saved = await invoke<AgentConversation>("agent_conversation_patch", {
-      workspaceRoot: requireWorkspaceRoot(workspaceRoot),
+      workspaceRoot: root,
       patch: { id: conversation.id, projectId: conversation.projectId, ...patch },
     });
     return saved;
@@ -184,7 +197,8 @@ export async function patchAgentConversation(conversation: AgentConversation, pa
 export async function deleteAgentConversation(conversationId: string, projectId: string, workspaceRoot?: string) {
   if (isDesktop()) {
     ensureDesktopBridge();
-    await invoke("agent_conversation_delete", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), projectId, id: conversationId });
+    const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
+    await invoke("agent_conversation_delete", { workspaceRoot: root, projectId, id: conversationId });
   } else {
     await withBrowserWriteLock(projectId, async () => writeLocal(readLocal().filter(item => item.id !== conversationId)));
   }
@@ -195,7 +209,8 @@ export async function clearAgentConversations(projectId: string, workspaceRoot?:
   let count: number;
   if (isDesktop()) {
     ensureDesktopBridge();
-    count = await invoke<number>("agent_conversation_clear_project", { workspaceRoot: requireWorkspaceRoot(workspaceRoot), projectId });
+    const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
+    count = await invoke<number>("agent_conversation_clear_project", { workspaceRoot: root, projectId });
   } else {
     const all = readLocal();
     count = all.filter(item => item.projectId === projectId).length;

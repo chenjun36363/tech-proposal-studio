@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentToolDefinition } from "../../agent/protocol";
 import { estimateAgentTextTokens } from "../../agent/contextCompaction";
-import { LongWritingContextBudgetError, prepareLongWritingPayload } from "./contextBudget";
+import { LongWritingContextBudgetError, prepareLongWritingPayload, resolveLongWritingContextBudget, selectRelevantSourceExcerpts } from "./contextBudget";
 
 const tool: AgentToolDefinition = {
   type: "function",
@@ -24,6 +24,28 @@ function longMarkdown(chapters = 16, bodySize = 1200): string {
 }
 
 describe("long writing context budget", () => {
+  it("caps input against the real model window after reserving output", () => {
+    expect(resolveLongWritingContextBudget("outline", {
+      contextBudgetTokens: 98000,
+      modelContextWindowTokens: 32000,
+    })).toMatchObject({
+      requestedBudgetTokens: 98000,
+      modelContextWindowTokens: 32000,
+      outputReserveTokens: 6000,
+      budgetTokens: 24976,
+    });
+  });
+
+  it("selects relevant source chunks for a chapter instead of repeating entire attachments", () => {
+    const excerpts = selectRelevantSourceExcerpts([
+      "总体需求\n\n# 项目背景\n\n建设目标和范围。\n\n# 运维服务\n\n提供 7×24 运维与故障响应。",
+      "安全规范\n\n# 安全设计\n\n身份认证、访问控制与审计。",
+    ], "运维服务 故障响应", 2);
+    expect(excerpts).toHaveLength(2);
+    expect(excerpts[0]).toContain("运维服务");
+    expect(excerpts[0]).toContain("总体需求");
+  });
+
   it("shares the source budget and keeps the final request within the configured limit", () => {
     const result = prepareLongWritingPayload({
       phase: "outline",

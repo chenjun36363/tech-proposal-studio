@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Command, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
@@ -18,13 +18,16 @@ import {
   detectHeadingNumberingStyle,
   deleteSection,
   fileNameFromTitle,
+  insertSection,
   parseMarkdownHeadings,
   remapHeadingAfterMarkdownChange,
+  renumberHeadings,
   replaceSection,
   sectionBody,
   shiftHeadingSectionLevels,
   stripHeadingPrefix,
   titleFromMarkdown,
+  type HeadingNode,
   type HeadingNumberingStyle,
 } from "./features/editor/markdownDoc";
 import type { AgentDraft, AgentEditorSelection } from "./agent/protocol";
@@ -87,8 +90,15 @@ import type { DocumentBlock, Project, WorkspaceMarkdownFile, WorkspacePaths } fr
 const appIcon = new URL("../src-tauri/icons/128x128.png", import.meta.url).href;
 
 type EditorMode = "section" | "full";
-type WorkspaceImportKind = "markdown" | "document";
-const MARKDOWN_UPLOAD_EXTENSIONS = [".md", ".markdown"] as const;
+type WorkspaceImportKind = "document";
+type HeadingContextMenu = { x: number; y: number; node: HeadingNode };
+type WorkspaceContextMenu =
+  | { kind: "list"; x: number; y: number }
+  | { kind: "document"; x: number; y: number; doc: WorkspaceMarkdownFile };
+
+function headingTreeHasH6(node: HeadingNode): boolean {
+  return node.heading.level >= 6 || node.children.some(headingTreeHasH6);
+}
 const DOCUMENT_UPLOAD_EXTENSIONS = [".pdf", ".doc", ".docx"] as const;
 const RIGHT_PANEL_MIN = 280;
 const RIGHT_PANEL_MAX = 720;
@@ -173,7 +183,6 @@ export default function App() {
   const [envOpen, setEnvOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
-  const [fileMenu, setFileMenu] = useState(false);
   const [wordExportOpen, setWordExportOpen] = useState(false);
   const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("section");
@@ -188,6 +197,8 @@ export default function App() {
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findIndex, setFindIndex] = useState(0);
   const [collapsedHeadings, setCollapsedHeadings] = useState<Set<string>>(new Set());
+  const [headingContextMenu, setHeadingContextMenu] = useState<HeadingContextMenu | null>(null);
+  const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenu | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [workspaceDocsCollapsed, setWorkspaceDocsCollapsed] = useState(false);
   const [leftView, setLeftView] = useState<"outline" | "git">("outline");
@@ -201,7 +212,7 @@ export default function App() {
   const rightDrag = useRef<{ startX: number; startW: number } | null>(null);
   const leftDrag = useRef<{ startX: number; startW: number } | null>(null);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
-  const fileMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceActionsMenuRef = useRef<HTMLDivElement | null>(null);
   const sourceEditorRef = useRef<MarkdownSourceEditorHandle | null>(null);
   const sourceScrollRef = useRef<HTMLTextAreaElement | null>(null);
   const previewPaneRef = useRef<HTMLDivElement | null>(null);
@@ -277,15 +288,6 @@ export default function App() {
   }, [exportMenu]);
 
   useEffect(() => {
-    if (!fileMenu) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!fileMenuRef.current?.contains(e.target as Node)) setFileMenu(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [fileMenu]);
-
-  useEffect(() => {
     if (!selectedHeadingId && headings[0]) setSelectedHeadingId(headings[0].id);
     else if (selectedHeadingId && headings.length && !headings.some(h => h.id === selectedHeadingId)) {
       setSelectedHeadingId(headings[0]?.id ?? null);
@@ -293,6 +295,25 @@ export default function App() {
   }, [headings, selectedHeadingId]);
 
   useEffect(() => setAgentSelection(undefined), [project.filePath, selectedHeadingId, editorMode]);
+
+  useEffect(() => {
+    if (!headingContextMenu && !workspaceContextMenu) return;
+    const close = () => {
+      setHeadingContextMenu(null);
+      setWorkspaceContextMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [headingContextMenu, workspaceContextMenu]);
 
   useEffect(() => {
     try {
@@ -315,11 +336,9 @@ export default function App() {
     saveAsCopy: saveCurrentAsCopy,
     openPath: openMarkdownPath,
     reload: reloadCurrentMarkdown,
-    openFromDialog,
     importMarkdown: importFromDialog,
     importWordPdf: importWordPdfFromDialog,
     create: createNewFile,
-    rename: renameCurrentFile,
   } = useProposalFileActions({
     project, desktop, setProject, resetHistory, selectedHeadingId, setSelectedHeadingId, setEditorMode,
     refreshWorkspaceDocs: () => refreshWorkspaceDocs(), notify,
@@ -506,18 +525,63 @@ export default function App() {
     setCollapsedHeadings(next);
   };
 
+  const openHeadingContextMenu = (event: React.MouseEvent, node: HeadingNode) => {
+    event.preventDefault();
+    const menuWidth = 224;
+    const menuHeight = 248;
+    setSelectedHeadingId(node.heading.id);
+    setEditorMode("section");
+    setHeadingContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+      node,
+    });
+  };
+
+  const insertHeadingSection = (headingNode: HeadingNode, placement: "before" | "after" | "child") => {
+    setHeadingContextMenu(null);
+    if (!ensureDocumentEditable()) return;
+    const target = headingNode.heading;
+    const level = placement === "child" ? target.level + 1 : target.level;
+    if (level > 6) return notify("H6 不能再插入子标题");
+    if (level === 1) return notify("不能新增文档 H1 标题");
+
+    const rawTitle = window.prompt(
+      placement === "child" ? "请输入子章节标题：" : "请输入同级章节标题：",
+      "新章节",
+    );
+    const title = stripHeadingPrefix(rawTitle ?? "").trim();
+    if (!title) return;
+
+    try {
+      const section = `${"#".repeat(level)} ${title}
+
+`;
+      const positioned = insertSection(markdown, target, placement === "before" ? "before" : "after", section);
+      const next = renumberHeadings(positioned, headingNumberingStyle);
+      const inserted = parseMarkdownHeadings(next).find(heading =>
+        heading.level === level && stripHeadingPrefix(heading.title) === title,
+      );
+      setMarkdown(next);
+      if (inserted) setSelectedHeadingId(inserted.id);
+      setEditorMode("section");
+      notify(`已插入${placement === "child" ? "子" : "同级"}章节：${title}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "插入章节失败");
+    }
+  };
+
   const renderHeadingNodes = (nodes: typeof headingTree): React.ReactNode[] => {
     return nodes.flatMap(node => {
       const hasCh = node.children.length > 0;
       const collapsed = collapsedHeadings.has(node.heading.id);
-      const subtreeHasH6 = (current: typeof node): boolean => current.heading.level >= 6 || current.children.some(subtreeHasH6);
-      const canDemote = !subtreeHasH6(node);
       const item = (
         <div key={node.heading.id} className={`toc-item-wrap level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""}`}>
           <button
             className="toc-item"
             onClick={() => { setSelectedHeadingId(node.heading.id); setEditorMode("section"); }}
-            title={node.heading.title}
+            onContextMenu={event => openHeadingContextMenu(event, node)}
+            title={`${node.heading.title}（右键打开章节操作）`}
           >
             <span className="toc-chevron" onMouseDown={hasCh ? (e => { e.stopPropagation(); e.preventDefault(); }) : undefined} onClick={hasCh ? () => toggleCollapse(node.heading.id) : undefined}>
               {hasCh ? (collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />) : null}
@@ -525,11 +589,6 @@ export default function App() {
             <span>H{node.heading.level}</span>
             <InlineMarkdown className="toc-title" children={node.heading.title} />
           </button>
-          <div className="toc-node-actions">
-            <button type="button" disabled={node.heading.level === 1} title={node.heading.level === 1 ? "H1 已是最高标题级别" : `升级「${node.heading.title}」及其子标题`} onClick={() => shiftHeadingTree(node, "promote")}><IndentDecrease size={12} /></button>
-            <button type="button" disabled={!canDemote} title={subtreeHasH6(node) ? "子标题中包含 H6，无法整体降级" : `降级「${node.heading.title}」及其子标题`} onClick={() => shiftHeadingTree(node, "demote")}><IndentIncrease size={12} /></button>
-            {node.heading.level >= 2 && <button type="button" className="delete" title={`删除「${node.heading.title}」`} onClick={() => void deleteHeadingSection(node)}><Trash2 size={11} /></button>}
-          </div>
         </div>
       );
       const children = collapsed ? [] : renderHeadingNodes(node.children);
@@ -593,15 +652,86 @@ export default function App() {
     }
   };
 
-  const saveAsTemplate = async () => {
+  const saveAsTemplate = async (document?: WorkspaceMarkdownFile) => {
     if (!desktop || !workspace?.root) return notify("另存为模板需要工作区");
-    const name = window.prompt("模板名称：", `${project.name} 章节结构`)?.trim();
+    const defaultName = document?.title ?? project.name;
+    const name = window.prompt("模板名称：", `${defaultName} 章节结构`)?.trim();
     if (!name) return;
     try {
-      await saveTemplate(markdown, name, workspace.root);
+      const content = document && !sameDocumentPath(project.filePath, document.path)
+        ? (await readTextFileSnapshot(document.path)).content
+        : markdown;
+      await saveTemplate(content, name, workspace.root);
       notify(`已保存模板：${name}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "保存模板失败");
+    }
+  };
+
+  const placeWorkspaceContextMenu = (menu: WorkspaceContextMenu, x: number, y: number) => {
+    const menuWidth = menu.kind === "document" ? 252 : 244;
+    const menuHeight = menu.kind === "document" ? 276 : 224;
+    setHeadingContextMenu(null);
+    setWorkspaceContextMenu({
+      ...menu,
+      x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
+    });
+  };
+
+  const openWorkspaceContextMenu = (event: React.MouseEvent, menu: WorkspaceContextMenu) => {
+    event.preventDefault();
+    event.stopPropagation();
+    placeWorkspaceContextMenu(menu, event.clientX, event.clientY);
+  };
+
+  const toggleWorkspaceActionsMenu = (anchor: HTMLElement | null) => {
+    if (workspaceContextMenu?.kind === "list") {
+      setWorkspaceContextMenu(null);
+      return;
+    }
+    const bounds = anchor?.getBoundingClientRect();
+    placeWorkspaceContextMenu(
+      { kind: "list", x: 0, y: 0 },
+      (bounds?.right ?? window.innerWidth - 8) - 244,
+      (bounds?.bottom ?? 8) + 4,
+    );
+  };
+
+  const chooseMarkdownForWorkspace = async () => {
+    if (!desktop || !workspace?.root) return notify("请先在设置中配置工作目录");
+    const path = await pickMarkdownFile("选择要加入工作区的 Markdown", workspace.root);
+    if (path) await importFromDialog(path);
+  };
+
+  const reloadWorkspaceDocument = async (document: WorkspaceMarkdownFile) => {
+    if (sameDocumentPath(project.filePath, document.path)) {
+      await reloadCurrentMarkdown();
+      return;
+    }
+    await openMarkdownPath(document.path);
+  };
+
+  const renameWorkspaceDocument = async (document: WorkspaceMarkdownFile) => {
+    if (safety.status === "checking") return notify("正在检查磁盘文件与共享草稿，请稍候再重命名");
+    if (!desktop) return notify("重命名仅在桌面端可用");
+    const isCurrent = sameDocumentPath(project.filePath, document.path);
+    if (isCurrent && longWritingLocked) return notify("长任务运行期间不能重命名当前文件");
+    const oldName = document.path.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || document.title;
+    const name = window.prompt("请输入新文件名：", oldName)?.trim();
+    if (!name || name === oldName) return;
+    const dir = document.path.slice(0, Math.max(document.path.lastIndexOf("\\"), document.path.lastIndexOf("/")));
+    const nextPath = `${dir}${document.path.includes("\\") ? "\\" : "/"}${fileNameFromTitle(name)}`;
+    try {
+      await renameFile(document.path, nextPath);
+      if (isCurrent) {
+        safety.renameBaseline(nextPath);
+        setProject(current => ({ ...current, filePath: nextPath, name, updatedAt: new Date().toISOString() }));
+      }
+      await refreshWorkspaceDocs();
+      notify(`已重命名为：${fileNameFromTitle(name)}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "重命名失败");
     }
   };
 
@@ -713,7 +843,8 @@ export default function App() {
     notify(`已替换 ${count} 处${editorMode === "section" ? "（当前章节）" : "（全文）"}`);
   };
 
-  const shiftHeadingTree = (headingNode: import("./features/editor/markdownDoc").HeadingNode, direction: "promote" | "demote") => {
+  const shiftHeadingTree = (headingNode: HeadingNode, direction: "promote" | "demote") => {
+    setHeadingContextMenu(null);
     if (!ensureDocumentEditable()) return;
     try {
       const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, headingNumberingStyle);
@@ -810,13 +941,25 @@ export default function App() {
         event.preventDefault();
         if (closePendingRef.current) return;
         closePendingRef.current = true;
+        let forceCloseTimer: number | undefined;
         try {
-          const allowed = await beforeDocumentChange("close");
+          // 兜底：若守卫确认 / 保存 / 草稿写入（SQLite/文件锁竞争）长时间不返回，
+          // 强制放行关窗，避免 closePendingRef 永久锁死导致窗口再也关不掉。
+          const allowed = await Promise.race([
+            beforeDocumentChange("close"),
+            new Promise<boolean>((resolve) => {
+              forceCloseTimer = window.setTimeout(() => {
+                allowCloseRef.current = true;
+                resolve(true);
+              }, 8000);
+            }),
+          ]);
           if (!allowed) return;
           safety.suppressNextUnloadDraftFlush();
           allowCloseRef.current = true;
           await appWindow.close();
         } finally {
+          if (forceCloseTimer) window.clearTimeout(forceCloseTimer);
           if (!allowCloseRef.current) closePendingRef.current = false;
         }
       });
@@ -1014,32 +1157,6 @@ export default function App() {
           {theme === "gouan" ? <Palette size={18} /> : theme === "light" ? <Sun size={18} /> : <Moon size={18} />}
         </IconButton>
         <IconButton title="设置" onClick={() => setSettingsOpen(true)}><Settings size={18} /></IconButton>
-        <div className="file-menu" ref={fileMenuRef}>
-          <IconButton title="文件操作" active={fileMenu} onClick={() => setFileMenu(value => !value)}><MoreHorizontal size={18} /></IconButton>
-          {fileMenu && <div className="file-dropdown">
-            <button type="button" onClick={() => { setFileMenu(false); void createNewFile(); }}><FilePlus2 size={15} />空白新建</button>
-            <button type="button" onClick={() => { setFileMenu(false); void openTemplatePicker(); }}><FilePlus2 size={15} />从模板新建</button>
-            <button type="button" onClick={() => { setFileMenu(false); void saveAsTemplate(); }} disabled={!desktop || !project.filePath}><FileText size={15} />另存为模板</button>
-            <button
-              type="button"
-              disabled={!desktop || !workspace?.root}
-              title={!desktop ? "仅桌面端可用" : !workspace?.root ? "请先配置工作目录" : "通过拖拽或文件路径导入 Markdown"}
-              onClick={() => { setFileMenu(false); setWorkspaceImportKind("markdown"); }}
-            ><Download size={15} />导入 Markdown…</button>
-            <button
-              type="button"
-              disabled={importingDoc || !desktop || !workspace?.root}
-              title={!desktop ? "仅桌面端可用" : !workspace?.root ? "请先配置工作目录" : importingDoc ? "MinerU 解析中…" : "通过拖拽或文件路径导入 Word/PDF"}
-              onClick={() => { setFileMenu(false); setWorkspaceImportKind("document"); }}
-            >
-              <FilePlus2 size={15} />{importingDoc ? "解析中…" : "导入 Word/PDF…"}
-            </button>
-            <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); void reloadCurrentMarkdown(); }}><RefreshCw size={15} />重新加载</button>
-            <button type="button" disabled={!desktop || !project.filePath} onClick={() => { setFileMenu(false); if (longWritingLocked) notify("长任务运行期间不能重命名当前文件"); else void renameCurrentFile(); }}><Pencil size={15} />重命名</button>
-            <div className="file-dropdown-sep" />
-            <button type="button" onClick={() => { setFileMenu(false); setEnvOpen(true); }}><Command size={15} />环境检查</button>
-          </div>}
-        </div>
       </div>
     </header>
     <div
@@ -1049,16 +1166,7 @@ export default function App() {
       <aside className="left-panel">
         <div className="panel-heading">
           <span>{leftView === "outline" ? "目录" : "源代码管理"}</span>
-          <div>
-            <IconButton title="新建 Markdown 文件" onClick={() => void createNewFile()}><FilePlus2 size={15} /></IconButton>
-            <IconButton title="打开工作区 Markdown" onClick={() => void openFromDialog()}><FolderOpen size={15} /></IconButton>
-            <IconButton
-              title={project.filePath ? "重新加载当前 Markdown" : "未关联磁盘文件"}
-              onClick={() => void reloadCurrentMarkdown()}
-            >
-              <RefreshCw size={15} />
-            </IconButton>
-          </div>
+          <div />
         </div>
         <div className="left-view-tabs" aria-label="左侧面板视图">
           <button className={leftView === "outline" ? "active" : ""} type="button" onClick={() => setLeftView("outline")} title="文档目录"><FileText size={14} /><span>目录</span></button>
@@ -1091,48 +1199,48 @@ export default function App() {
               </button>
               <div className="panel-heading-actions">
                 <IconButton
-                  title="在文件浏览器中打开工作区"
-                  disabled={!workspace?.root}
-                  onClick={() => workspace?.root && void openWorkspaceDirectory(workspace.root).catch(error => notify(String(error)))}
+                  title="新建空白 Markdown 文件"
+                  disabled={!workspace?.root || longWritingLocked || safety.status === "checking"}
+                  onClick={() => void createNewFile()}
                 >
-                  <FolderOpen size={14} />
+                  <FilePlus2 size={14} />
                 </IconButton>
-                <IconButton title="刷新文件列表" onClick={() => void refreshWorkspaceDocs()}>
-                  <RefreshCw size={14} />
-                </IconButton>
+                <div ref={workspaceActionsMenuRef} onPointerDown={event => event.stopPropagation()}>
+                  <IconButton
+                    title="工作区文档更多操作"
+                    active={workspaceContextMenu?.kind === "list"}
+                    onClick={() => toggleWorkspaceActionsMenu(workspaceActionsMenuRef.current)}
+                  >
+                    <MoreHorizontal size={14} />
+                  </IconButton>
+                </div>
               </div>
             </div>
             {!workspaceDocsCollapsed && <div className="workspace-docs-list">
-              {!workspaceDocs.length && <p className="muted toc-empty">根目录下暂无 .md</p>}
-              {workspaceDocs.map(doc => (
-                <div className={`workspace-doc-row ${project.filePath === doc.path ? "selected" : ""}`} key={doc.path}>
+              {!workspaceDocs.length && <p className="muted toc-empty">根目录下暂无 .md（可使用标题右侧的更多操作导入或从模板新建）</p>}
+              {workspaceDocs.map(doc => {
+                const isCurrentDocument = sameDocumentPath(project.filePath, doc.path);
+                return <div
+                  className={`workspace-doc-row ${isCurrentDocument ? "selected" : ""}`}
+                  key={doc.path}
+                  onContextMenu={event => openWorkspaceContextMenu(event, { kind: "document", x: 0, y: 0, doc })}
+                >
                   <button
                     type="button"
                     className="workspace-doc-item"
-                    title={doc.path}
+                    title={`${doc.path}（右键打开文件操作）`}
                     onClick={() => void openMarkdownPath(doc.path)}
                   >
                     <b>{doc.title}</b>
-                    <span>{doc.path.split(/[\\/]/).pop()}</span>
+                    <span>{doc.path.split(/[\/]/).pop()}</span>
                   </button>
-                  <IconButton
-                    title="转入知识库"
-                    disabled={knowledgeTransferPath !== null}
-                    onClick={() => void transferWorkspaceDocToKnowledge(doc)}
-                  >
-                    {knowledgeTransferPath === doc.path ? <RefreshCw className="spinning" size={14} /> : <BookOpen size={14} />}
-                  </IconButton>
-                  {pendingDelete === doc.path
-                    ? <div className="workspace-doc-confirm-delete">
-                        <button type="button" className="workspace-doc-confirm-yes" onClick={() => { confirmDeleteRef.current += 1; void deleteWorkspaceDoc(doc); }}>确认</button>
-                        <button type="button" className="workspace-doc-confirm-no" onClick={() => setPendingDelete(null)}>取消</button>
-                      </div>
-                    : <IconButton
-                        title="删除文件"
-                        onClick={() => setPendingDelete(doc.path)}
-                      ><Trash2 size={13} /></IconButton>}
-                </div>
-              ))}
+                  {pendingDelete === doc.path && <div className="workspace-doc-confirm-delete">
+                    <button type="button" className="workspace-doc-confirm-yes" onClick={() => { confirmDeleteRef.current += 1; void deleteWorkspaceDoc(doc); }}>确认</button>
+                    <button type="button" className="workspace-doc-confirm-no" onClick={() => setPendingDelete(null)}>取消</button>
+                  </div>}
+                  {knowledgeTransferPath === doc.path && <span className="workspace-doc-status"><RefreshCw className="spinning" size={13} />转入中…</span>}
+                </div>;
+              })}
             </div>}
           </div>
         )}
@@ -1343,6 +1451,106 @@ export default function App() {
         </button>
       )}
     </div>
+    {headingContextMenu && <div
+      className="toc-context-menu"
+      role="menu"
+      aria-label={`章节操作：${headingContextMenu.node.heading.title}`}
+      style={{ left: headingContextMenu.x, top: headingContextMenu.y }}
+      onPointerDown={event => event.stopPropagation()}
+    >
+      <div className="toc-context-menu-title" title={headingContextMenu.node.heading.title}>
+        {headingContextMenu.node.heading.title}
+      </div>
+      <button type="button" role="menuitem" disabled={headingContextMenu.node.heading.level === 1} onClick={() => insertHeadingSection(headingContextMenu.node, "before")}><Plus size={14} />在前插入同级章节</button>
+      <button type="button" role="menuitem" disabled={headingContextMenu.node.heading.level === 1} onClick={() => insertHeadingSection(headingContextMenu.node, "after")}><Plus size={14} />在后插入同级章节</button>
+      <button type="button" role="menuitem" disabled={headingContextMenu.node.heading.level >= 6} onClick={() => insertHeadingSection(headingContextMenu.node, "child")}><Plus size={14} />插入子章节</button>
+      <div className="toc-context-menu-separator" />
+      <button type="button" role="menuitem" disabled={headingContextMenu.node.heading.level === 1} onClick={() => shiftHeadingTree(headingContextMenu.node, "promote")}><IndentDecrease size={14} />升级标题</button>
+      <button type="button" role="menuitem" disabled={headingTreeHasH6(headingContextMenu.node)} onClick={() => shiftHeadingTree(headingContextMenu.node, "demote")}><IndentIncrease size={14} />降级标题</button>
+      <div className="toc-context-menu-separator" />
+      <button type="button" role="menuitem" className="danger" disabled={headingContextMenu.node.heading.level === 1} onClick={() => void deleteHeadingSection(headingContextMenu.node)}><Trash2 size={14} />删除章节</button>
+    </div>}
+    {workspaceContextMenu && <div
+      className="toc-context-menu workspace-doc-context-menu"
+      role="menu"
+      aria-label={workspaceContextMenu.kind === "list" ? "工作区文档操作" : `文档操作：${workspaceContextMenu.doc.title}`}
+      style={{ left: workspaceContextMenu.x, top: workspaceContextMenu.y }}
+      onPointerDown={event => event.stopPropagation()}
+    >
+      {workspaceContextMenu.kind === "list" ? <>
+        <div className="toc-context-menu-title">工作区文档</div>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspace?.root || longWritingLocked || safety.status === "checking"}
+          onClick={() => { setWorkspaceContextMenu(null); void openTemplatePicker(); }}
+        ><FilePlus2 size={14} />从模板新建</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspace?.root || longWritingLocked || safety.status === "checking"}
+          onClick={() => { setWorkspaceContextMenu(null); void chooseMarkdownForWorkspace(); }}
+        ><Download size={14} />选择 Markdown 并加入工作区…</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspace?.root || importingDoc || longWritingLocked || safety.status === "checking"}
+          onClick={() => { setWorkspaceContextMenu(null); setWorkspaceImportKind("document"); }}
+        ><FilePlus2 size={14} />{importingDoc ? "正在导入 Word / PDF…" : "导入 Word / PDF…"}</button>
+        <div className="toc-context-menu-separator" />
+        <button type="button" role="menuitem" disabled={!workspace?.root} onClick={() => { setWorkspaceContextMenu(null); void refreshWorkspaceDocs(); }}><RefreshCw size={14} />刷新文件列表</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspace?.root}
+          onClick={() => {
+            setWorkspaceContextMenu(null);
+            if (workspace?.root) void openWorkspaceDirectory(workspace.root).catch(error => notify(String(error)));
+          }}
+        ><FolderOpen size={14} />在资源管理器中打开工作区</button>
+      </> : <>
+        <div className="toc-context-menu-title" title={workspaceContextMenu.doc.path}>{workspaceContextMenu.doc.title}</div>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={longWritingLocked || safety.status === "checking"}
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); void openMarkdownPath(document.path); }}
+        ><FileText size={14} />打开</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={longWritingLocked || safety.status === "checking"}
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); void reloadWorkspaceDocument(document); }}
+        ><RefreshCw size={14} />重新加载</button>
+        <div className="toc-context-menu-separator" />
+        <button
+          type="button"
+          role="menuitem"
+          disabled={safety.status === "checking" || (longWritingLocked && sameDocumentPath(project.filePath, workspaceContextMenu.doc.path))}
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); void renameWorkspaceDocument(document); }}
+        ><Pencil size={14} />重命名</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspace?.root}
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); void saveAsTemplate(document); }}
+        ><FileText size={14} />另存为模板</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={knowledgeTransferPath !== null}
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); void transferWorkspaceDocToKnowledge(document); }}
+        >{knowledgeTransferPath === workspaceContextMenu.doc.path ? <RefreshCw className="spinning" size={14} /> : <BookOpen size={14} />}{knowledgeTransferPath === workspaceContextMenu.doc.path ? "转入知识库中…" : "转入知识库"}</button>
+        <div className="toc-context-menu-separator" />
+        <button
+          type="button"
+          role="menuitem"
+          className="danger"
+          disabled={sameDocumentPath(project.filePath, workspaceContextMenu.doc.path) && (longWritingLocked || safety.status === "checking")}
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); setPendingDelete(document.path); }}
+        ><Trash2 size={14} />删除文件</button>
+      </>}
+    </div>}
     {sourcePreview.source && <SourcePreviewModal
       source={sourcePreview.source}
       markdown={sourcePreview.markdown}
@@ -1356,6 +1564,7 @@ export default function App() {
     {settingsOpen && <SettingsModal
       project={project}
       close={() => setSettingsOpen(false)}
+      openEnvironmentCheck={() => setEnvOpen(true)}
       save={async (next, context) => {
         try {
           const nextRoot = next.workspace?.root;
@@ -1404,22 +1613,16 @@ export default function App() {
       close={() => setWebSearchOpen(false)}
     />}
     {workspaceImportKind && <FileUploadPanel
-      title={workspaceImportKind === "markdown" ? "导入 Markdown 到工作区" : "导入 Word / PDF 到工作区"}
-      description={workspaceImportKind === "markdown"
-        ? "拖入现有 Markdown，或选择文件路径。文件会复制到工作区根目录并立即打开。"
-        : "拖入 Word / PDF，或选择文件路径。构案将通过 MinerU 转换为 Markdown，并把图片写入工作区 assets。"}
-      extensions={workspaceImportKind === "markdown" ? MARKDOWN_UPLOAD_EXTENSIONS : DOCUMENT_UPLOAD_EXTENSIONS}
-      extensionLabel={workspaceImportKind === "markdown" ? "Markdown（.md / .markdown）" : "Word / PDF（.doc / .docx / .pdf）"}
+      title="导入 Word / PDF 到工作区"
+      description="拖入 Word / PDF，或选择文件路径。构案将通过 MinerU 转换为 Markdown，并把图片写入工作区 assets。"
+      extensions={DOCUMENT_UPLOAD_EXTENSIONS}
+      extensionLabel="Word / PDF（.doc / .docx / .pdf）"
       destination={workspace?.root}
-      busy={workspaceImportKind === "document" && importingDoc}
-      submitLabel={workspaceImportKind === "markdown" ? "导入并打开" : "解析并导入"}
-      choosePath={() => workspaceImportKind === "markdown"
-        ? pickMarkdownFile("选择要导入到工作区的 Markdown", workspace?.root)
-        : pickDocumentFile("选择要导入的 Word / PDF", workspace?.root)}
+      busy={importingDoc}
+      submitLabel="解析并导入"
+      choosePath={() => pickDocumentFile("选择要导入的 Word / PDF", workspace?.root)}
       upload={async path => {
-        const succeeded = workspaceImportKind === "markdown"
-          ? await importFromDialog(path)
-          : await importWordPdfFromDialog(path);
+        const succeeded = await importWordPdfFromDialog(path);
         if (succeeded) setWorkspaceImportKind(null);
         return succeeded;
       }}
@@ -1477,7 +1680,12 @@ export default function App() {
     {toast && <div className="toast"><Check size={16} />{toast}</div>}
   </div>;
 }
-function SettingsModal({ project, close, save }: { project: Project; close: () => void; save: (p: Project, context?: { connectionsLoadedRoot?: string }) => void | Promise<void> }) {
+function SettingsModal({ project, close, openEnvironmentCheck, save }: {
+  project: Project;
+  close: () => void;
+  openEnvironmentCheck: () => void;
+  save: (p: Project, context?: { connectionsLoadedRoot?: string }) => void | Promise<void>;
+}) {
   const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "wordExport" | "workspace" | "about">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
@@ -1592,7 +1800,8 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
         <div className="agent-title"><Settings size={15} /><span>Agent 运行策略</span></div>
         <p className="muted">控制多轮执行、会话记忆、知识检索与引用方式。章节修改仍需在审核区手动确认。</p>
         <div className="form-grid agent-runtime-grid">
-          <label>上下文压缩阈值（tokens）<input type="number" min={8000} max={200000} step={1000} value={draft.agent.contextCompressionTokens} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, contextCompressionTokens: Number(e.target.value) || 98000 } })} /></label>
+          <label>上下文压缩阈值（tokens）<input type="number" min={1024} max={500000} step={1000} value={draft.agent.contextCompressionTokens} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, contextCompressionTokens: Number(e.target.value) || 98000 } })} /></label>
+          <label>长任务模型上下文窗口（tokens）<input type="number" min={8192} max={1000000} step={1000} value={draft.agent.longWritingContextWindowTokens} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, longWritingContextWindowTokens: Number(e.target.value) || 32768 } })} /></label>
           <label>Agent 最大执行轮次<input type="number" min={4} max={50} value={draft.agent.maxRounds} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, maxRounds: Number(e.target.value) || 20 } })} /></label>
           <label>单任务联网搜索次数<input type="number" min={1} max={10} value={draft.agent.webSearchMaxCalls} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, webSearchMaxCalls: Number(e.target.value) || 2 } })} /></label>
           <label>保留近期消息<input type="number" min={4} max={100} value={draft.agent.recentMessages} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, recentMessages: Number(e.target.value) || 20 } })} /></label>
@@ -1611,7 +1820,11 @@ function SettingsModal({ project, close, save }: { project: Project; close: () =
           <label className="wide">附加指令<textarea className="agent-instructions" maxLength={4000} value={draft.agent.customInstructions} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, customInstructions: e.target.value } })} placeholder="例如：优先使用本项目术语，风险项采用表格呈现。" /></label>
         </div>
       </div>}
-      {section === "tools" && <ToolSettingsSection draft={draft} setDraft={setDraft} />}
+      {section === "tools" && <ToolSettingsSection
+        draft={draft}
+        setDraft={setDraft}
+        openEnvironmentCheck={desktop ? openEnvironmentCheck : undefined}
+      />}
       {section === "skills" && <SkillsSettingsSection project={draft} setProject={setDraft} />}
       {section === "history" && <ConversationHistorySettings project={project} />}
       {section === "memory" && <div className="settings-section-content memory-section-content">
