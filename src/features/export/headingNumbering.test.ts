@@ -66,9 +66,13 @@ describe("heading numbering registry", () => {
   it("keeps single-counter chinese hierarchy aligned when starting at H2", () => {
     const levels = buildHeadingNumberingLevels("chinese-hier", 2, opts);
     expect(levels).not.toBeNull();
-    // 原 H2 层级为"（一）"，仅引用自身计数器 %1
+    // 固定中文层级中的单计数器要映射到 DOCX 的相对列表级别。
     expect(levels![0].text).toBe("（%1）");
     expect(levels![0].style?.style).toBe("Heading2");
+    expect(levels![1].text).toBe("%2.");
+    expect(levels![1].style?.style).toBe("Heading3");
+    expect(levels![2].text).toBe("(%3)");
+    expect(levels![2].style?.style).toBe("Heading4");
   });
 
   it("links numbering to the heading outline reference", () => {

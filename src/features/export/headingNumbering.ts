@@ -32,7 +32,8 @@ export function buildHeadingNumberingLevels(
   startLevel: number,
   opts: HeadingNumberingOpts,
 ): ILevelsOptions[] | null {
-  if (!getHeadingNumberingScheme(schemeId)) return null;
+  const scheme = getHeadingNumberingScheme(schemeId);
+  if (!scheme) return null;
 
   const start = Math.min(Math.max(Math.trunc(startLevel), 1), 6);
   const levels: ILevelsOptions[] = [];
@@ -42,10 +43,17 @@ export function buildHeadingNumberingLevels(
     const spec = resolveHeadingNumberingLevel(schemeId, headingLevel, start);
     if (!spec) continue;
 
+    const relativeLevel = headingLevel - start;
+    // 固定中文层级方案中的 `%1` 表示当前标题自己的计数器；
+    // DOCX 占位符按多级列表的相对层级编号，因此需要转换为 `%1`、`%2`……。
+    const text = scheme.levels
+      ? spec.text.replace(/%1/g, `%${relativeLevel + 1}`)
+      : spec.text;
+
     levels.push({
-      level: headingLevel - start,
+      level: relativeLevel,
       format: toDocxLevelFormat(spec.format),
-      text: spec.text,
+      text,
       alignment: AlignmentType.START,
       style: {
         style: `Heading${headingLevel}`,

@@ -1408,7 +1408,7 @@ export default function App() {
         </div>
         {!gitDiffActive && <div
           className="heading-toolbar"
-          title="按选定格式整理全文标题层级和编号"
+          title="按选定方案重新生成全文标题编号，不改变 H1–H6 层级"
           onMouseDown={event => {
             if (!(event.target instanceof Element) || !event.target.closest("button:not(:disabled)")) return;
             event.preventDefault();
