@@ -16,7 +16,6 @@ import {
   buildHeadingTree,
   countMarkdownWords,
   defaultProposalMarkdown,
-  detectHeadingNumberingStyle,
   deleteSection,
   fileNameFromTitle,
   insertSection,
@@ -30,9 +29,9 @@ import {
   stripHeadingPrefix,
   titleFromMarkdown,
   type HeadingNode,
-  type HeadingNumberingStyle,
   type MdHeading,
 } from "./features/editor/markdownDoc";
+import { HEADING_NUMBERING_SCHEMES } from "./features/editor/headingNumbering";
 import type { AgentDraft, AgentEditorSelection } from "./agent/protocol";
 import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "./agent/proposalTools";
 import {
@@ -196,7 +195,6 @@ export default function App() {
   const [editorFontScale, setEditorFontScale] = useState<number>(() => loadEditorFontScale());
   const [previewIndent, setPreviewIndent] = useState<boolean>(() => loadPreviewIndent());
   const [syncScroll, setSyncScroll] = useState<boolean>(() => loadSyncScroll());
-  const [headingNumberingStyle, setHeadingNumberingStyle] = useState<HeadingNumberingStyle>(() => detectHeadingNumberingStyle(project.markdown ?? ""));
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
@@ -339,7 +337,6 @@ export default function App() {
       /* ignore */
     }
   }, [editorFontScale, previewIndent, syncScroll]);
-  useEffect(() => setHeadingNumberingStyle(detectHeadingNumberingStyle(project.markdown ?? "")), [project.filePath]);
 
   const { workspaceDocs, refreshLibrary, refreshWorkspaceDocs, applyWorkspace, ready: workspaceReady } = useWorkspaceSession({
     project, desktop, setProject, notify,
@@ -579,7 +576,7 @@ export default function App() {
 
 `;
       const positioned = insertSection(markdown, target, placement === "before" ? "before" : "after", section);
-      const next = renumberHeadings(positioned, headingNumberingStyle);
+      const next = renumberHeadings(positioned, project.headingNumbering);
       const inserted = parseMarkdownHeadings(next).find(heading =>
         heading.level === level && stripHeadingPrefix(heading.title) === title,
       );
@@ -620,7 +617,7 @@ export default function App() {
   const renumberAllHeadings = () => {
     if (!ensureDocumentEditable()) return;
     const fallbackTitle = project.filePath?.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || project.name;
-    const result = alignHeadingsToRules(markdown, fallbackTitle, headingNumberingStyle);
+    const result = alignHeadingsToRules(markdown, fallbackTitle, project.headingNumbering);
     const next = result.markdown;
     if (next === markdown) {
       notify("标题编号已是最新");
@@ -868,7 +865,7 @@ export default function App() {
     setHeadingContextMenu(null);
     if (!ensureDocumentEditable()) return;
     try {
-      const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, headingNumberingStyle);
+      const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, project.headingNumbering);
       setMarkdown(result.markdown);
       setSelectedHeadingId(result.headingId);
       setEditorMode("section");
@@ -899,7 +896,7 @@ export default function App() {
         notify("章节已在目标位置，无需移动");
         return;
       }
-      const next = renumberHeadings(moved, headingNumberingStyle);
+      const next = renumberHeadings(moved, project.headingNumbering);
       setMarkdown(next);
       const sourceName = stripHeadingPrefix(source.heading.title);
       const movedHeading = parseMarkdownHeadings(next).find(heading =>
@@ -1419,11 +1416,36 @@ export default function App() {
           }}
         >
           <div className="heading-toolbar-row">
-            <label className="heading-style-select" title="选择重编号时使用的标题层级和章号格式">
-              <span>格式</span>
-              <select value={headingNumberingStyle} onChange={event => setHeadingNumberingStyle(event.target.value as HeadingNumberingStyle)}>
-                <option value="chapter-h2">H2 第1章 / H3 1.1</option>
-                <option value="chapter-h1">H1 第一章 / H2 1.1</option>
+            <label className="heading-style-select" title="选择 Markdown 与 Word 共用的标题编号方案；切换后点击“设置标题”才会重写 Markdown">
+              <span>编号</span>
+              <select
+                value={project.headingNumbering.schemeId}
+                onChange={event => setProject(current => ({
+                  ...current,
+                  headingNumbering: { ...current.headingNumbering, schemeId: event.target.value },
+                  updatedAt: new Date().toISOString(),
+                }))}
+              >
+                <option value="none">无编号</option>
+                {HEADING_NUMBERING_SCHEMES.map(scheme => (
+                  <option key={scheme.id} value={scheme.id}>{scheme.label} — {scheme.description}</option>
+                ))}
+              </select>
+            </label>
+            <label className="heading-style-select" title="只控制从哪个 Markdown 标题级别开始编号，不改变现有 H1–H6 层级">
+              <span>起始</span>
+              <select
+                value={String(project.headingNumbering.startLevel)}
+                disabled={project.headingNumbering.schemeId === "none"}
+                onChange={event => setProject(current => ({
+                  ...current,
+                  headingNumbering: { ...current.headingNumbering, startLevel: Number(event.target.value) },
+                  updatedAt: new Date().toISOString(),
+                }))}
+              >
+                {[1, 2, 3, 4, 5, 6].map(level => (
+                  <option key={level} value={String(level)}>H{level}</option>
+                ))}
               </select>
             </label>
             <button type="button" className="heading-renumber-btn" onClick={renumberAllHeadings}>设置标题</button>

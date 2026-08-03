@@ -6,7 +6,8 @@ import { ContextReferences } from "../../components/ContextReferences";
 import { makeId } from "../../core/data";
 import { improveBlockStream } from "../../services/model";
 import type { AiDraft, DocumentBlock, Project, SelectedModel, SessionEvent } from "../../core/types";
-import { resolveActiveModelConfig } from "../../services/llm/resolve";
+import { resolveModelConfigChain } from "../../services/llm/resolve";
+import { runWithModelFallback } from "../../services/llm/fallback";
 import { ModelSelect } from "../../components/ModelSelect";
 
 function SessionTrace({ events, running }: { events: SessionEvent[]; running: boolean }) {
@@ -51,18 +52,28 @@ export function AiRewritePanel({ project, block, context, contextLabels, updateB
   const aiEnabled = project.model?.enabled !== false;
 
   const run = async () => {
-    let config;
+    let chain;
     try {
-      config = resolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
+      chain = resolveModelConfigChain(project.providers ?? [], selectedModel, project.fallbackModels, { aiEnabled });
     } catch (e: any) {
       notify(e?.message ?? "模型未配置");
       openSettings();
       return;
     }
+    const primary = chain[0];
     setLoading(true); setDraft(null);
-    setEvents([createEvent("status", "建立当前会话", `${config.model} · ${context.length} 条已引用资料`), createEvent("tool", "发送章节、引用资料与编辑要求")]);
+    setEvents([createEvent("status", "建立当前会话", `${primary.model} · ${context.length} 条已引用资料${chain.length > 1 ? ` · 备用 ${chain.length - 1} 个` : ""}`), createEvent("tool", "发送章节、引用资料与编辑要求")]);
     try {
-      const result = await improveBlockStream(block, instruction, context, config, chunk => appendOutput(setEvents, chunk));
+      const result = await runWithModelFallback(
+        chain,
+        (cfg) => improveBlockStream(block, instruction, context, cfg, chunk => appendOutput(setEvents, chunk)),
+        {
+          onSwitch: (_, from, to) => {
+            setEvents(current => [...current, createEvent("status", "主模型不可用，已切换备用模型", `${from.model} → ${to.model}`)]);
+            notify(`主模型 ${from.model} 不可用，已自动切换到 ${to.model}`);
+          },
+        },
+      );
       setDraft(result);
       setEvents(current => [...current, createEvent("done", "生成完成", `${result.after.length.toLocaleString()} 字符，等待确认`)]);
     } catch (error) {

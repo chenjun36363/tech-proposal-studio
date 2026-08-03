@@ -1,4 +1,5 @@
 import type { Project, WordExportPreferences } from "./types";
+import { DEFAULT_HEADING_NUMBERING_PREFERENCES } from "../features/editor/headingNumbering";
 import { defaultProposalMarkdown } from "../features/editor/markdownDoc";
 import { defaultAgentSettings } from "../agent/settings";
 import { createDefaultProvider, createDefaultSelection } from "../services/llm/defaults";
@@ -17,8 +18,6 @@ export const DEFAULT_WORD_EXPORT_PREFERENCES: WordExportPreferences = {
   companyEmail: "E-mail:sinoyd@sinoyd.com",
   headerTitle: "",
   showFooterPageNumbers: true,
-  headingNumbering: "none",
-  headingNumberingStart: 1,
 };
 
 export function createProject(): Project {
@@ -44,6 +43,7 @@ export function createProject(): Project {
       pollIntervalSeconds: 3,
     },
     agent: { ...defaultAgentSettings },
+    headingNumbering: { ...DEFAULT_HEADING_NUMBERING_PREFERENCES },
     wordExport: { ...DEFAULT_WORD_EXPORT_PREFERENCES },
     workspace: { root: "", historyDir: "" },
     commands: [

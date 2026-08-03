@@ -306,6 +306,14 @@ fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("读取失败: {e}"))
 }
 
+/// Read a secret from the OS keyring (mirrors `store_secret` used on save).
+/// Front-end uses this to reconcile connection apiKeys the same way the Rust
+/// runtime falls back to the keyring at call time (model / MinerU integrations).
+#[tauri::command]
+fn load_secret_value(name: String) -> String {
+    load_secret(&name)
+}
+
 #[tauri::command]
 fn read_binary_file(path: String) -> Result<Vec<u8>, String> {
     if path.trim().is_empty() {
@@ -654,6 +662,7 @@ pub fn run() {
             ,privileged::privileged_cancel_powershell
             ,connections::load_workspace_connections
             ,connections::save_workspace_connections
+            ,load_secret_value
             ,drafts::save_workspace_document_draft
             ,drafts::list_workspace_document_drafts
             ,drafts::delete_workspace_document_draft

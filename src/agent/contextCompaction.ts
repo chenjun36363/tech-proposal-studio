@@ -48,7 +48,10 @@ export function estimateAgentTextTokens(text: string): number {
 }
 
 function messageTokens(message: AgentMessage): number {
-  return MESSAGE_OVERHEAD_TOKENS + estimateAgentTextTokens(JSON.stringify(message));
+  // 与 runner.messagesForModel 保持一致：tool_result_data 在发往模型前会被剥离，
+  // 因此 token 估算也不应包含它（否则含大体积 before/after 正文时会虚高，并触发不必要的压缩）。
+  const { tool_result_data: _omit, ...rest } = message;
+  return MESSAGE_OVERHEAD_TOKENS + estimateAgentTextTokens(JSON.stringify(rest));
 }
 
 export function estimateAgentContextTokens(messages: AgentMessage[], tools: AgentToolDefinition[]): number {

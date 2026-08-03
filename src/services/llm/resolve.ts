@@ -98,6 +98,35 @@ export function resolveActiveModelConfig(
   };
 }
 
+/**
+ * 解析主模型 + 一组备用模型的候选链（按数组顺序，首个为主模型）。
+ * 主模型解析失败（未选择/供应商禁用等）会直接抛出，与 resolveActiveModelConfig 行为一致。
+ * 单个备用模型若解析失败（如供应商不存在），会被静默跳过，避免一个坏配置阻断整条链。
+ * 与主模型重复的备用项会被去重。
+ */
+export function resolveModelConfigChain(
+  providers: LlmProvider[],
+  selection: SelectedModel | null | undefined,
+  fallbacks: SelectedModel[] | undefined | null,
+  options?: { requireActive?: boolean; aiEnabled?: boolean },
+): ResolvedModelConfig[] {
+  const primary = resolveActiveModelConfig(providers, selection, options);
+  const chain: ResolvedModelConfig[] = [primary];
+  const seen = new Set<string>([`${primary.providerId}::${primary.model}`]);
+  for (const fallback of fallbacks ?? []) {
+    try {
+      const resolved = resolveActiveModelConfig(providers, fallback, { requireActive: false, aiEnabled: options?.aiEnabled });
+      const key = `${resolved.providerId}::${resolved.model}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      chain.push(resolved);
+    } catch {
+      // 跳过无法解析的备用模型，不阻断主流程。
+    }
+  }
+  return chain;
+}
+
 /** Soft resolve for UI: returns null instead of throwing. */
 export function tryResolveActiveModelConfig(
   providers: LlmProvider[],

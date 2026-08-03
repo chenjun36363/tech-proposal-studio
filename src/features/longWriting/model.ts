@@ -1,6 +1,7 @@
 import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "../../agent/protocol";
 import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../../core/types";
 import { agentCompletion } from "../../services/model";
+import { isFallbackableModelError } from "../../services/llm/fallback";
 import type { ChapterDraftResult, ChapterSummarySubmission, ConsistencyIssue, OutlinePlan } from "./types";
 import { LongWritingContextBudgetError, longWritingPhaseOutputTokens, prepareLongWritingPayload, type LongWritingContextPhase } from "./contextBudget";
 
@@ -440,7 +441,7 @@ async function callLongWritingTool<T>(params: {
   systemPrompt: string;
   userPrefix: string;
   tool: AgentToolDefinition;
-  config: LongWritingModelConfig;
+  configs: LongWritingModelConfig | LongWritingModelConfig[];
   signal?: AbortSignal;
   parse: (argumentsValue: JsonRecord) => T;
   allowContentJson?: boolean;
@@ -460,7 +461,7 @@ async function callLongWritingTool<T>(params: {
         return await callForcedTool(params.tool, [
           { role: "system", content: params.systemPrompt },
           { role: "user", content: `${params.userPrefix}\n${jsonPayload(prepared.payload)}` },
-        ], params.config, params.signal, params.parse, longWritingPhaseOutputTokens(params.phase, candidate.modelContextWindowTokens), params.allowContentJson);
+        ], params.configs, params.signal, params.parse, longWritingPhaseOutputTokens(params.phase, candidate.modelContextWindowTokens), params.allowContentJson);
       } catch (error) {
         if (!isContextLengthError(error)) throw error;
         lastContextError = error;
@@ -520,11 +521,40 @@ function createStructuredOutputCorrection(name: ToolName, validationError: strin
 async function callForcedTool<T>(
   tool: AgentToolDefinition,
   messages: AgentMessage[],
+  configs: LongWritingModelConfig | LongWritingModelConfig[],
+  signal: AbortSignal | undefined,
+  parse: (argumentsValue: JsonRecord) => T,
+  maxTokens?: number,
+  allowContentJson = false,
+): Promise<T> {
+  const candidates = Array.isArray(configs) ? configs : [configs];
+  const tried: string[] = [];
+  for (let ci = 0; ci < candidates.length; ci += 1) {
+    const config = candidates[ci];
+    tried.push(config.model);
+    try {
+      return await callForcedToolWithConfig(tool, messages, config, signal, parse, maxTokens, allowContentJson, candidates.length > 1);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      if (ci < candidates.length - 1 && isFallbackableModelError(error)) continue;
+      if (candidates.length > 1) {
+        throw new Error(`主模型与备用模型均失败（已尝试 ${tried.join(" → ")}）：${errorMessage(error)}`);
+      }
+      throw error;
+    }
+  }
+  throw new Error(`所有候选模型均失败：${tried.join(" → ")}`);
+}
+
+async function callForcedToolWithConfig<T>(
+  tool: AgentToolDefinition,
+  messages: AgentMessage[],
   config: LongWritingModelConfig,
   signal: AbortSignal | undefined,
   parse: (argumentsValue: JsonRecord) => T,
   maxTokens?: number,
   allowContentJson = false,
+  allowFastFail = false,
 ): Promise<T> {
   const name = tool.function.name as ToolName;
   let useAutoToolChoice = prefersAutoToolChoice(config);
@@ -557,6 +587,9 @@ async function callForcedTool<T>(
       try {
         return await completeOnce(requestMessages);
       } catch (error) {
+        // 存在备用模型时，认证缺失/网关不可达/503/429冷却等硬失败应立即切模型，
+        // 不再对同一模型做无意义的瞬态重试。
+        if (allowFastFail && isFallbackableModelError(error)) throw error;
         if (attempt >= maxAttempts || !isTransientModelRequestError(error)) throw error;
         await waitForModelRetry(700 * (2 ** (attempt - 1)), signal);
       }
@@ -607,7 +640,7 @@ function scopedChapterPlan(plan: OutlinePlan, chapterId: string): OutlinePlan {
 
 export async function createChapterSummary(
   input: ChapterSummaryInput,
-  config: LongWritingModelConfig,
+  configs: LongWritingModelConfig | LongWritingModelConfig[],
   signal?: AbortSignal,
 ): Promise<ChapterSummarySubmission> {
   const systemPrompt = [
@@ -617,7 +650,7 @@ export async function createChapterSummary(
   ].join("\n");
   const prefix = "请总结当前章节：";
   return callLongWritingTool({
-    phase: "chapter_summary", input: { ...input }, systemPrompt, userPrefix: prefix, tool: chapterSummaryTool, config, signal,
+    phase: "chapter_summary", input: { ...input }, systemPrompt, userPrefix: prefix, tool: chapterSummaryTool, configs, signal,
     parse: argumentsValue => parseChapterSummary(argumentsValue, input.chapterId), allowContentJson: true,
   });
 }
@@ -637,7 +670,7 @@ function validateCreateOutlinePlan(plan: OutlinePlan, documentTitle?: string): O
 
 export async function createOutlinePlan(
   input: OutlinePlanningInput,
-  config: LongWritingModelConfig,
+  configs: LongWritingModelConfig | LongWritingModelConfig[],
   signal?: AbortSignal,
 ): Promise<OutlinePlan> {
   const creationRules = input.mode === "create" ? [
@@ -652,7 +685,7 @@ export async function createOutlinePlan(
   ].join("\n");
   const prefix = "请根据以下输入生成目录规划：";
   const plan = await callLongWritingTool({
-    phase: "outline", input: { ...input }, systemPrompt, userPrefix: prefix, tool: outlineTool, config, signal,
+    phase: "outline", input: { ...input }, systemPrompt, userPrefix: prefix, tool: outlineTool, configs, signal,
     parse: parseOutlinePlan, allowContentJson: true,
   });
   return input.mode === "create" ? validateCreateOutlinePlan(plan, input.documentTitle) : plan;
@@ -660,7 +693,7 @@ export async function createOutlinePlan(
 
 export async function createChapterDraft(
   input: ChapterDraftInput,
-  config: LongWritingModelConfig,
+  configs: LongWritingModelConfig | LongWritingModelConfig[],
   signal?: AbortSignal,
 ): Promise<ChapterDraftResult> {
   const systemPrompt = [
@@ -672,14 +705,14 @@ export async function createChapterDraft(
   const prefix = "请生成当前章节草稿：";
   const preparedInput = { ...input, outlinePlan: scopedChapterPlan(input.outlinePlan, input.chapterId) };
   return callLongWritingTool({
-    phase: "chapter_draft", input: preparedInput, systemPrompt, userPrefix: prefix, tool: chapterDraftTool, config, signal,
+    phase: "chapter_draft", input: preparedInput, systemPrompt, userPrefix: prefix, tool: chapterDraftTool, configs, signal,
     parse: argumentsValue => parseChapterDraft(argumentsValue, input.chapterId), allowContentJson: true,
   });
 }
 
 export async function createConsistencyReport(
   input: ConsistencyCheckInput,
-  config: LongWritingModelConfig,
+  configs: LongWritingModelConfig | LongWritingModelConfig[],
   signal?: AbortSignal,
 ): Promise<ConsistencyIssue[]> {
   const systemPrompt = [
@@ -690,7 +723,7 @@ export async function createConsistencyReport(
   ].join("\n");
   const prefix = "请检查以下冻结计划和全文：";
   return callLongWritingTool({
-    phase: "consistency", input: { ...input }, systemPrompt, userPrefix: prefix, tool: consistencyTool, config, signal,
+    phase: "consistency", input: { ...input }, systemPrompt, userPrefix: prefix, tool: consistencyTool, configs, signal,
     parse: parseConsistencyReport, allowContentJson: true,
   });
 }

@@ -97,28 +97,29 @@ describe("Word export", () => {
     expect(numberingReferences.length).toBeGreaterThan(1);
   });
 
-  it("adds no heading numbering by default (none scheme)", async () => {
+  it("uses the shared default scheme (第1章 from H2)", async () => {
     const project = createProject();
     project.name = "标题编号默认";
-    project.markdown = "# 标题编号默认\n\n## 小节\n\n正文\n";
+    project.markdown = "# 标题编号默认\n\n## 第1章 小节\n\n### 1.1 子节\n";
 
     const bytes = await buildDocxBytes(project);
     const numbering = unzipEntry(bytes, "word/numbering.xml") ?? "";
     const document = unzipEntry(bytes, "word/document.xml") ?? "";
 
-    // 默认不生成任何标题编号定义（编号里不应出现标题样式链接与章节文本）
-    expect(numbering).not.toContain('w:val="Heading1"');
-    expect(numbering).not.toContain("第%1章");
-    // 正文标题段落不带编号
-    expect((document.match(/<w:numPr>/g) ?? []).length).toBe(0);
+    expect(numbering).toContain('<w:pStyle w:val="Heading2"/>');
+    expect(numbering).toContain('w:val="第%1章"');
+    expect(numbering).toContain('w:val="%1.%2"');
+    expect(numbering).not.toContain('<w:pStyle w:val="Heading1"/>');
+    expect((document.match(/<w:numPr>/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(document).not.toContain(">第1章 小节</w:t>");
+    expect(document).not.toContain(">1.1 子节</w:t>");
   });
 
   it("applies multi-level heading numbering (第一章 / 1.1 / 1.1.1)", async () => {
     const project = createProject();
     project.name = "标题编号方案";
-    project.wordExport.headingNumbering = "chapter";
-    project.wordExport.headingNumberingStart = 1;
-    project.markdown = "# 标题编号方案\n\n## 小节一\n\n### 子节一\n\n正文\n";
+    project.headingNumbering = { schemeId: "chapter", startLevel: 1 };
+    project.markdown = "# 标题编号方案\n\n## 第1章 小节一\n\n### 1.1 子节一\n\n正文\n";
 
     const bytes = await buildDocxBytes(project);
     const numbering = unzipEntry(bytes, "word/numbering.xml") ?? "";
@@ -131,14 +132,30 @@ describe("Word export", () => {
     expect(numbering).toContain('w:val="%1.%2.%3"');
     // 正文标题段落带上了编号引用（H2、H3 各一次；H1 因与项目名相同被封面吞掉）
     expect((document.match(/<w:numPr>/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    // Markdown 中的固定编号被 Word 自动编号替代，标题文本不再重复携带编号。
+    expect(document).toContain(">小节一</w:t>");
+    expect(document).toContain(">子节一</w:t>");
+    expect(document).not.toContain(">第1章 小节一</w:t>");
+    expect(document).not.toContain(">1.1 子节一</w:t>");
+  });
+
+  it("preserves Markdown heading prefixes when Word numbering is disabled", async () => {
+    const project = createProject();
+    project.name = "保留固定编号";
+    project.headingNumbering = { schemeId: "none", startLevel: 2 };
+    project.markdown = "# 保留固定编号\n\n## 第1章 背景\n\n### 1.1 范围\n";
+
+    const document = unzipEntry(await buildDocxBytes(project), "word/document.xml") ?? "";
+
+    expect(document).toContain(">第1章 背景</w:t>");
+    expect(document).toContain(">1.1 范围</w:t>");
   });
 
   it("skips numbering for levels above the start level", async () => {
     const project = createProject();
     project.name = "从二级开始";
-    project.wordExport.headingNumbering = "decimal";
-    project.wordExport.headingNumberingStart = 2;
-    project.markdown = "# 顶级标题\n\n## 小节一\n\n### 子节一\n\n正文\n";
+    project.headingNumbering = { schemeId: "decimal", startLevel: 2 };
+    project.markdown = "# 1 顶级标题\n\n## 第1章 小节一\n\n### 1.1 子节一\n\n正文\n";
 
     const bytes = await buildDocxBytes(project);
     const numbering = unzipEntry(bytes, "word/numbering.xml") ?? "";
@@ -148,8 +165,13 @@ describe("Word export", () => {
     expect(numbering).toContain('<w:pStyle w:val="Heading2"/>');
     expect(numbering).toContain('w:val="%1"');
     expect(numbering).not.toContain("第");
-    // H1 不编号，H2、H3 带编号
+    // H1 不编号，H2、H3 带编号；只替换起始级别及以下标题的固定编号。
     expect((document.match(/<w:numPr>/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(document).toContain(">1 顶级标题</w:t>");
+    expect(document).toContain(">小节一</w:t>");
+    expect(document).toContain(">子节一</w:t>");
+    expect(document).not.toContain(">第1章 小节一</w:t>");
+    expect(document).not.toContain(">1.1 子节一</w:t>");
   });
 
   it("aligns unordered-list text with the first line of ordinary body paragraphs", async () => {

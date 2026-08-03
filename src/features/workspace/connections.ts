@@ -304,10 +304,92 @@ function saveBrowserConnections(conn: ConnectionSettings) {
   localStorage.setItem(BROWSER_CONNECTIONS_KEY, JSON.stringify(normalizeConnections(conn)));
 }
 
+/**
+ * Reconcile empty apiKeys from the same fallback sources the Rust runtime uses at
+ * call time (`fill_mineru_api_key`, model `load_secret`): OS keyring mirror + the
+ * legacy `<root>/.gouan/connections.json`. This keeps the config page display
+ * consistent with the supplier (model) apiKey, whose value is likewise restored
+ * whenever the authoritative store is missing it. When a key is recovered we also
+ * write it back so the SQLite `workspace.db` row stays authoritative (self-heal).
+ */
+async function reconcileConnectionSecrets(
+  conn: ConnectionSettings | null,
+  root?: string,
+): Promise<ConnectionSettings | null> {
+  if (!conn || !isDesktop() || !root) return conn;
+  const workspaceRoot = root;
+  let changed = false;
+
+  const fill = async (
+    current: string,
+    keyringName: string,
+    legacyPointer: string,
+  ): Promise<string> => {
+    if (current.trim()) return current;
+    const fromLegacy = await readLegacyConnectionsApiKey(workspaceRoot, legacyPointer);
+    if (fromLegacy) {
+      changed = true;
+      return fromLegacy;
+    }
+    const fromKeyring = await readKeyringSecret(keyringName);
+    if (fromKeyring) {
+      changed = true;
+      return fromKeyring;
+    }
+    return current;
+  };
+
+  const mineruApiKey = await fill(conn.mineru.apiKey, "mineru-api-key", "/mineru/apiKey");
+  const searchApiKey = await fill(conn.search.apiKey, "search-api-key", "/search/apiKey");
+
+  const next: ConnectionSettings = {
+    ...conn,
+    mineru: { ...conn.mineru, apiKey: mineruApiKey },
+    search: { ...conn.search, apiKey: searchApiKey },
+  };
+
+  if (changed) {
+    try {
+      await saveWorkspaceConnections(workspaceRoot, next);
+    } catch {
+      /* best-effort self-heal; display still uses the in-memory value */
+    }
+    return next;
+  }
+  return conn;
+}
+
+async function readKeyringSecret(name: string): Promise<string | null> {
+  if (!isDesktop()) return null;
+  try {
+    const value = await invoke<string>("load_secret_value", { name });
+    return value && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readLegacyConnectionsApiKey(root: string, pointer: string): Promise<string | null> {
+  try {
+    const path = connectionsFilePath(root);
+    const raw = await invoke<string>("read_text_file", { path });
+    const value = JSON.parse(raw);
+    const key = pointer
+      .split("/")
+      .filter(Boolean)
+      .reduce<unknown>((acc, k) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[k] : undefined), value);
+    const str = typeof key === "string" ? key.trim() : "";
+    return str || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadWorkspaceConnections(root?: string): Promise<ConnectionSettings | null> {
   if (root && isDesktop()) {
     const payload = await invoke<unknown | null>("load_workspace_connections", { root });
-    return payload ? normalizeConnections(payload) : null;
+    const conn = payload ? normalizeConnections(payload) : null;
+    return reconcileConnectionSecrets(conn, root);
   }
   if (!isDesktop()) return loadBrowserConnections();
   return null;

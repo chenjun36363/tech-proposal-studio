@@ -14,8 +14,9 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import markedKatex from "marked-katex-extension";
 import { markedHighlight } from "marked-highlight";
-import type { AgentEvent, AgentMessage, AgentToolCall } from "../agent/protocol";
+import type { AgentEvent, AgentMessage, AgentToolCall, AgentDraft, AgentEditOperation } from "../agent/protocol";
 import { agentToolLabel } from "../agent/toolCatalog";
+import { AgentDraftReviewModal } from "./AgentDraftReviewModal";
 
 const agentMarked = new Marked({ gfm: true, breaks: true });
 Object.entries({ bash, css, html: xml, javascript, js: javascript, json, markdown, md: markdown, rust, sql, typescript, ts: typescript }).forEach(([name, language]) => hljs.registerLanguage(name, language));
@@ -113,6 +114,11 @@ function searchRows(data: unknown) {
 
 const SEARCH_TOOLS = new Set(["web_search", "search_knowledge", "search_memory"]);
 const MARKDOWN_RESULT_TOOLS = new Set(["read_current_section", "get_proposal_outline", "read_web_page", "read_knowledge", "read_memory"]);
+// 所有会经过 reviewAndApply（需要用户接受/拒绝）的文档修改提案工具，历史回放时都展示"查看详情"。
+const PROPOSE_REVIEW_TOOLS = new Set([
+  "propose_section_update", "propose_selection_update", "propose_section_insert",
+  "propose_section_move", "propose_section_delete", "replace_document_text",
+]);
 
 function SearchResultDetail({ data }: { data: unknown }) {
   const rows = searchRows(data);
@@ -152,10 +158,34 @@ function ChangeDetail({ data, call }: { data: unknown; call: AgentToolCall }) {
   const before = typeof stats?.beforeChars === "number" ? stats.beforeChars : null;
   const after = typeof stats?.afterChars === "number" ? stats.afterChars : null;
   const instruction = stringValue(stats?.instruction || call.arguments.instruction) || "优化当前章节";
-  return <section className="agent-change-result">
-    <div><FilePenLine size={13} /><span><b>修改稿已提交审核</b><small>{instruction}</small></span></div>
-    {(before !== null || after !== null) && <p><span>原文 {before?.toLocaleString() ?? "-"} 字</span><span>修改后 {after?.toLocaleString() ?? "-"} 字</span></p>}
-  </section>;
+  const [reviewOpen, setReviewOpen] = useState(false);
+
+  const historicalDraft: AgentDraft | null = useMemo(() => {
+    const beforeStr = stringValue(stats?.before);
+    const afterStr = stringValue(stats?.after);
+    if (!beforeStr && !afterStr) return null;
+    return {
+      callId: call.id,
+      operation: (stringValue(stats?.operation) || "replace_section") as AgentEditOperation,
+      before: beforeStr,
+      after: afterStr,
+      instruction,
+      target: {
+        sectionTitle: stringValue(call.arguments.section_title) || undefined,
+        sectionId: stringValue(call.arguments.section_id) || undefined,
+        destinationSnapshot: stringValue(stats?.destinationSnapshot) || undefined,
+      },
+    };
+  }, [stats, call.id, instruction]);
+
+  return <>
+    <section className="agent-change-result">
+      <div><FilePenLine size={13} /><span><b>{typeof stats?.approved === "boolean" ? (stats?.approved ? "用户已接受修改" : "用户已拒绝修改") : "修改稿已提交审核"}</b><small>{instruction}</small></span></div>
+      {(before !== null || after !== null) && <p><span>原文 {before?.toLocaleString() ?? "-"} 字</span><span>修改后 {after?.toLocaleString() ?? "-"} 字</span></p>}
+      {historicalDraft && <button type="button" className="agent-change-review-btn" onClick={() => setReviewOpen(true)}>查看详情</button>}
+    </section>
+    {reviewOpen && historicalDraft && <AgentDraftReviewModal draft={historicalDraft} readonly close={() => setReviewOpen(false)} reject={() => setReviewOpen(false)} accept={() => setReviewOpen(false)} />}
+  </>;
 }
 
 type PlanItem = { content: string; status: "pending" | "in_progress" | "completed"; activeForm?: string };
@@ -195,7 +225,7 @@ function ToolStep({ call, content, data, pending = false, isError = false }: {
   const searchResult = SEARCH_TOOLS.has(call.name) && searchRows(resultData).length ? <SearchResultDetail data={resultData} /> : null;
   const memoryData = record(resultData);
   const memoryResult = call.name === "remember_project_fact" && (memoryData?.title || memoryData?.content) ? <MemoryDetail data={resultData} fallback={content ?? ""} /> : null;
-  const changeResult = call.name === "propose_section_update" ? <ChangeDetail data={data} call={call} /> : null;
+  const changeResult = PROPOSE_REVIEW_TOOLS.has(call.name) ? <ChangeDetail data={data} call={call} /> : null;
   const markdownResult = MARKDOWN_RESULT_TOOLS.has(call.name) && content ? <AgentMarkdown content={content} /> : null;
   const hasSpecialResult = Boolean(todos.length || searchResult || memoryResult || changeResult || markdownResult);
   return <details className={`agent-timeline-tool ${pending ? "pending" : isError ? "error" : "done"}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}>

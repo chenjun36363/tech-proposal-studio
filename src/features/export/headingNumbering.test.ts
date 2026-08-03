@@ -43,6 +43,15 @@ describe("heading numbering registry", () => {
     expect(levels![1].style?.style).toBe("Heading2");
   });
 
+  it("keeps the chapter template when chapter-decimal starts at H2", () => {
+    const levels = buildHeadingNumberingLevels("chapter-decimal", 2, opts);
+    expect(levels).not.toBeNull();
+    expect(levels![0].text).toBe("第%1章");
+    expect(levels![0].style?.style).toBe("Heading2");
+    expect(levels![1].text).toBe("%1.%2");
+    expect(levels![1].style?.style).toBe("Heading3");
+  });
+
   it("shifts counters when starting below H1 (decimal, start=2)", () => {
     const levels = buildHeadingNumberingLevels("decimal", 2, opts);
     expect(levels).not.toBeNull();

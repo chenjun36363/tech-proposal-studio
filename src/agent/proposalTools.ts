@@ -172,7 +172,7 @@ export function createProposalToolRegistry(params: {
       content: approved
         ? `${draft.operation === "insert_section" || draft.operation === "delete_section" || draft.operation === "move_section" ? "章节结构已变化；继续操作前必须重新调用 get_proposal_outline。" : "用户已接受修改提案。"}不要再次输出完整正文，请简要总结修改依据。`
         : "用户已拒绝修改提案。请尊重该决定，必要时询问修改方向或结束任务。",
-      data: { operation: draft.operation, instruction: draft.instruction, beforeChars: draft.before.length, afterChars: draft.after.length, approved },
+      data: { operation: draft.operation, instruction: draft.instruction, before: draft.before, after: draft.after, destinationSnapshot: draft.target.destinationSnapshot, beforeChars: draft.before.length, afterChars: draft.after.length, approved },
       isError: false,
     };
   };

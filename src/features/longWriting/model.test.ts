@@ -15,6 +15,10 @@ import {
 
 vi.mock("../../services/model", () => ({ agentCompletion: vi.fn() }));
 
+afterEach(() => {
+  vi.mocked(agentCompletion).mockReset();
+});
+
 const config = {
   baseUrl: "https://example.com/v1",
   apiKey: "test-key",
@@ -589,5 +593,35 @@ describe("long writing structured model calls", () => {
       instruction: "补写",
       markdown: "# 方案",
     }, config)).rejects.toThrow("只调用 submit_outline_plan");
+  });
+
+  it("falls back to a secondary model when the primary fails with an auth error", async () => {
+    const fallback = { ...config, model: "fallback-model" };
+    vi.mocked(agentCompletion)
+      .mockRejectedValueOnce(new Error("auth_unavailable: no auth available"))
+      .mockResolvedValueOnce(rawToolResponse("submit_chapter_summary", JSON.stringify(chapterSummary)));
+    await expect(createChapterSummary({
+      chapterId: "chapter-1",
+      titlePath: ["第一章 项目概述"],
+      markdown: "## 第一章 项目概述\n\n正文。",
+      documentTitle: "方案",
+      instruction: "总结",
+      contextBudgetTokens: 4000,
+      modelContextWindowTokens: 32000,
+    }, [config, fallback])).resolves.toEqual(chapterSummary);
+    expect(vi.mocked(agentCompletion).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not switch when the only model fails with a non-fallbackable error", async () => {
+    vi.mocked(agentCompletion).mockRejectedValue(new Error("maximum context length exceeded"));
+    await expect(createChapterSummary({
+      chapterId: "chapter-1",
+      titlePath: ["第一章 项目概述"],
+      markdown: "## 第一章 项目概述\n\n正文。",
+      documentTitle: "方案",
+      instruction: "总结",
+      contextBudgetTokens: 4000,
+      modelContextWindowTokens: 32000,
+    }, config)).rejects.toThrow("maximum context length exceeded");
   });
 });

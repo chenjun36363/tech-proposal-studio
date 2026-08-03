@@ -4,7 +4,6 @@ import {
   applyAgentDraft,
   applyHeadingLevel,
   countMarkdownWords,
-  detectHeadingNumberingStyle,
   deleteSection,
   formatHeadingPrefix,
   insertSection,
@@ -56,12 +55,12 @@ describe("heading selection remapping", () => {
 });
 
 describe("heading numbering", () => {
-  it("demotes numbered H1 chapters while preserving an optional document title", () => {
+  it("preserves every existing heading level while keeping the first H1 as the document title", () => {
     const markdown = ["# 项目方案", "", "# 1 项目必要性分析", "", "## 第1章 项目背景", "", "### 1.1 建设依据", "", "# 2 项目需求分析"].join("\n");
     expect(alignHeadingsToRules(markdown)).toEqual({
-      markdown: ["# 项目方案", "", "## 第1章 项目必要性分析", "", "## 第2章 项目背景", "", "### 2.1 建设依据", "", "## 第3章 项目需求分析"].join("\n"),
+      markdown: ["# 项目方案", "", "# 项目必要性分析", "", "## 第1章 项目背景", "", "### 1.1 建设依据", "", "# 项目需求分析"].join("\n"),
       headingCount: 5,
-      demotedCount: 2,
+      demotedCount: 0,
       titlePreserved: true,
       titleCreated: false,
     });
@@ -78,12 +77,12 @@ describe("heading numbering", () => {
     });
   });
 
-  it("promotes the first preamble line when numbered H1 chapters leave no title", () => {
-    const markdown = "项目可行性研究报告\n\n申报单位：某某单位\n\n# 1 项目必要性分析\n\n# 2 项目需求分析";
+  it("promotes the first preamble line when the document has no H1 title", () => {
+    const markdown = "项目可行性研究报告\n\n申报单位：某某单位\n\n## 1 项目必要性分析\n\n## 2 项目需求分析";
     expect(alignHeadingsToRules(markdown)).toEqual({
       markdown: "# 项目可行性研究报告\n\n申报单位：某某单位\n\n## 第1章 项目必要性分析\n\n## 第2章 项目需求分析",
       headingCount: 3,
-      demotedCount: 2,
+      demotedCount: 0,
       titlePreserved: false,
       titleCreated: true,
     });
@@ -95,12 +94,16 @@ describe("heading numbering", () => {
     expect(stripHeadingPrefix("1.1.1 细节")).toBe("细节");
     expect(stripHeadingPrefix("**第1章 背景**")).toBe("**背景**");
     expect(stripHeadingPrefix("***1.1.1 细节***")).toBe("***细节***");
+    expect(stripHeadingPrefix("第2节 范围")).toBe("范围");
+    expect(stripHeadingPrefix("一、总体要求")).toBe("总体要求");
+    expect(stripHeadingPrefix("（一）建设内容")).toBe("建设内容");
+    expect(stripHeadingPrefix("(1) 实施步骤")).toBe("实施步骤");
   });
 
-  it("formats fixed prefixes", () => {
-    expect(formatHeadingPrefix(1, [2, 0, 0, 0, 0, 0])).toBe("");   // H1 is document title
-    expect(formatHeadingPrefix(2, [1, 3, 0, 0, 0, 0])).toBe("第1章");
-    expect(formatHeadingPrefix(3, [1, 2, 4, 0, 0, 0])).toBe("1.2");
+  it("formats fixed prefixes from the shared default configuration", () => {
+    expect(formatHeadingPrefix(1, [2, 0, 0, 0, 0, 0])).toBe("");
+    expect(formatHeadingPrefix(2, [0, 3, 0, 0, 0, 0])).toBe("第3章");
+    expect(formatHeadingPrefix(3, [0, 2, 4, 0, 0, 0])).toBe("2.4");
   });
 
   it("renumbers nested headings", () => {
@@ -131,19 +134,19 @@ describe("heading numbering", () => {
     expect(markdown).toContain("正文");
   });
 
-  it("supports H1 Chinese chapter headings and decimal subsections", () => {
-    const current = "# 甘肃方案\n\n## 第1章 背景\n\n### 1.1 政策\n\n#### 1.1.1 国家要求\n\n## 第2章 目标";
-    const converted = alignHeadingsToRules(current, "甘肃方案", "chapter-h1").markdown;
+  it("uses the configured start level without changing heading hierarchy", () => {
+    const current = "# 甘肃方案\n\n## 第9章 背景\n\n### 8.3 政策\n\n#### 7.6.5 国家要求";
+    const converted = alignHeadingsToRules(current, "甘肃方案", { schemeId: "chapter", startLevel: 3 }).markdown;
 
-    expect(converted).toBe("# 甘肃方案\n\n# 第一章 背景\n\n## 1.1 政策\n\n### 1.1.1 国家要求\n\n# 第二章 目标");
-    expect(detectHeadingNumberingStyle(converted)).toBe("chapter-h1");
+    expect(converted).toBe("# 甘肃方案\n\n## 背景\n\n### 第一章 政策\n\n#### 1.1 国家要求");
+    expect(parseMarkdownHeadings(converted).map(heading => heading.level)).toEqual([1, 2, 3, 4]);
   });
 
-  it("converts H1 Chinese chapters back to the current H2 format", () => {
-    const h1Chapters = "# 甘肃方案\n\n# 第一章 背景\n\n## 1.1 政策\n\n### 1.1.1 国家要求\n\n# 第二章 目标";
-    const converted = alignHeadingsToRules(h1Chapters, "甘肃方案", "chapter-h2").markdown;
-
-    expect(converted).toBe("# 甘肃方案\n\n## 第1章 背景\n\n### 1.1 政策\n\n#### 1.1.1 国家要求\n\n## 第2章 目标");
+  it("clears recognized numbering when the shared scheme is none", () => {
+    const current = "# 甘肃方案\n\n## 第2章 背景\n\n### （一）政策\n\n#### (1) 国家要求";
+    expect(renumberHeadings(current, { schemeId: "none", startLevel: 2 })).toBe(
+      "# 甘肃方案\n\n## 背景\n\n### 政策\n\n#### 国家要求",
+    );
   });
 
   it("promotes a heading and all descendants, then renumbers the document", () => {

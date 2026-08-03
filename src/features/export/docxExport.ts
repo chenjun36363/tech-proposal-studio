@@ -32,6 +32,8 @@ import { isDesktop } from "../../services/runtime";
 import { DEFAULT_WORD_EXPORT_PREFERENCES } from "../../core/data";
 import { invoke } from "@tauri-apps/api/core";
 import { readBinaryFile } from "../workspace/workspace";
+import { stripHeadingPrefix } from "../editor/markdownDoc";
+import { normalizeHeadingNumberingPreferences } from "../editor/headingNumbering";
 
 const HEADING_LEVELS = [
   HeadingLevel.HEADING_1,
@@ -724,10 +726,11 @@ export async function buildDocx(project: Project, configuredSettings?: DocxExpor
     headingBefore: [...(configuredSettings?.headingBefore ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingBefore)] as DocxExportSettings["headingBefore"],
     headingAfter: [...(configuredSettings?.headingAfter ?? DEFAULT_DOCX_EXPORT_SETTINGS.headingAfter)] as DocxExportSettings["headingAfter"],
   };
-  const headingNumberingStart = Math.min(Math.max(settings.headingNumberingStart ?? 1, 1), 6);
+  const headingNumbering = normalizeHeadingNumberingPreferences(project.headingNumbering);
+  const headingNumberingStart = headingNumbering.startLevel;
   const headingNumberingLevels: ILevelsOptions[] | null =
-    settings.headingNumbering && settings.headingNumbering !== "none"
-      ? buildHeadingNumberingLevels(settings.headingNumbering, headingNumberingStart, {
+    headingNumbering.schemeId !== "none"
+      ? buildHeadingNumberingLevels(headingNumbering.schemeId, headingNumberingStart, {
           headingFont: settings.headingFont,
           headingSizes: settings.headingSizes,
           lineSpacing: settings.lineSpacing,
@@ -817,16 +820,24 @@ export async function buildDocx(project: Project, configuredSettings?: DocxExpor
     const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) {
       const level = heading[1].length;
-      const title = plainText(heading[2].trim());
-      if (level === 1 && !sawTitle) {
+      const markdownTitle = plainText(heading[2].trim());
+      const isDocumentTitle = level === 1 && !sawTitle;
+      if (isDocumentTitle) {
         sawTitle = true;
         // 文档标题已放在封面页，正文中不再重复渲染（仅当与项目名一致时）
-        if (title && title === (project.name || "").trim()) {
+        if (markdownTitle && markdownTitle === (project.name || "").trim()) {
           i += 1;
           continue;
         }
       }
-      children.push(headingParagraph(level, title, headingNumberingRef));
+      // Word 多级列表是导出文档中的编号真值。启用自动编号后，先移除
+      // Markdown 标题里已有的固定编号，避免出现“第一章 第1章 标题”或
+      // “1.1 1.1 标题”；Markdown 源文件本身保持不变。
+      const activeNumbering = isDocumentTitle ? null : headingNumberingRef;
+      const title = activeNumbering && level >= activeNumbering.startLevel
+        ? stripHeadingPrefix(markdownTitle)
+        : markdownTitle;
+      children.push(headingParagraph(level, title, activeNumbering));
       i += 1;
       continue;
     }

@@ -13,11 +13,12 @@ function reviewCopy(draft: AgentDraft) {
   return { title: "章节修改审核", summary: "章节原文与修改稿对照", before: "章节原文", after: "修改稿", emptyBefore: "（当前章节为空）", emptyAfter: "（修改稿为空）", footer: "接受后将替换已校验的目标章节", accept: "接受并替换" };
 }
 
-export function AgentDraftReviewModal({ draft, close, reject, accept }: {
+export function AgentDraftReviewModal({ draft, close, reject, accept, readonly }: {
   draft: AgentDraft;
   close: () => void;
   reject: () => void;
   accept: () => void;
+  readonly?: boolean;
 }) {
   const copy = reviewCopy(draft);
   const revisedContent = draft.operation === "move_section" ? draft.target.destinationSnapshot ?? "" : draft.after;
@@ -115,7 +116,10 @@ export function AgentDraftReviewModal({ draft, close, reject, accept }: {
       </div>
       <footer>
         <span>{copy.footer}</span>
-        <div><button type="button" onClick={reject}>拒绝修改</button><button type="button" className="primary" onClick={accept}><Check size={14} />{copy.accept}</button></div>
+        <div>{readonly
+          ? <button type="button" onClick={close}>关闭</button>
+          : <><button type="button" onClick={reject}>拒绝修改</button><button type="button" className="primary" onClick={accept}><Check size={14} />{copy.accept}</button></>}
+        </div>
       </footer>
     </section>
   </div>;

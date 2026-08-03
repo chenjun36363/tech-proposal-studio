@@ -79,10 +79,12 @@ export interface WordExportPreferences {
   companyEmail: string;
   headerTitle: string;
   showFooterPageNumbers: boolean;
-  /** 标题多级编号方案 id（对应 headingNumbering.ts 的 HEADING_NUMBERING_SCHEMES）；"none" 表示不加编号。 */
-  headingNumbering: string;
-  /** 从第几级标题开始编号（1..6，默认 1）。 */
-  headingNumberingStart: number;
+}
+export interface HeadingNumberingPreferences {
+  /** Markdown 与 Word 共用的编号方案；"none" 表示不编号。 */
+  schemeId: string;
+  /** 从第几级 Markdown 标题开始编号（1..6）。 */
+  startLevel: number;
 }
 export interface WorkspacePaths {
   root: string;
@@ -102,6 +104,8 @@ export interface Project {
   providers: LlmProvider[];
   /** Default provider+model selection. */
   selectedModel: SelectedModel | null;
+  /** 备用模型链（按数组顺序），主模型不可用时按序自动切换。 */
+  fallbackModels?: SelectedModel[];
   /** Derived from selectedModel for gradual migration of call sites. */
   model: OpenAICompatibleConfig;
   search: SearchConfig;
@@ -109,6 +113,8 @@ export interface Project {
   mineru: MinerUConfig;
   /** Agent 会话、上下文和工具策略。 */
   agent: import("../agent/settings").AgentSettings;
+  /** Markdown 与 Word 导出共用的标题编号设置。 */
+  headingNumbering: HeadingNumberingPreferences;
   /** Word 导出的封面、页眉与页脚设置。 */
   wordExport: WordExportPreferences;
   commands: CommandPreset[];

@@ -6,6 +6,7 @@ import { LLM_PROTOCOL_LABELS, PROVIDER_PRESETS, createDefaultProvider } from "..
 import { deriveModelSnapshot, encodeModelValue, parseModelValue, repairSelectionForProviders, resolvedFromLegacy } from "../../services/llm/resolve";
 import type { ResolvedModelConfig } from "../../core/types";
 import { ModelSelect } from "../../components/ModelSelect";
+import { FallbackModelSelect } from "../../components/FallbackModelSelect";
 import { ApiKeyField } from "../../components/ApiKeyField";
 import { ccSwitchItemKey, isCcSwitchItemImportable, isCcSwitchItemImported, listCcSwitchProviders, mergeCcSwitchProviders, type CcSwitchProviderItem } from "./ccswitchImport";
 import { isDesktop } from "../../services/runtime";
@@ -329,6 +330,10 @@ export function ModelSettingsSection({
     });
   };
 
+  const commitFallbackModels = (next: SelectedModel[]) => {
+    setDraft(current => ({ ...current, fallbackModels: next.length ? next : undefined }));
+  };
+
   const setAiEnabled = (enabled: boolean) => {
     setDraft(current => ({
       ...current,
@@ -407,6 +412,14 @@ export function ModelSettingsSection({
       {!aiEnabled && <small className="model-list-hint">总开关关闭时仍可配置供应商，但不会发起模型请求。</small>}
       {aiEnabled && enabledProviderCount === 0 && <small className="model-list-error">请至少启用一个供应商。</small>}
     </label>
+
+    <FallbackModelSelect
+      providers={providers}
+      value={draft.fallbackModels ?? []}
+      onChange={commitFallbackModels}
+      disabled={!aiEnabled}
+      exclude={draft.selectedModel}
+    />
 
     <div className="provider-list-header">
       <b>供应商</b>

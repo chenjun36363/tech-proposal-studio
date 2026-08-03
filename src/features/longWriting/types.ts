@@ -196,6 +196,8 @@ export interface LongWritingTaskRecord {
   documentTitle?: string;
   model: string;
   modelProviderId?: string;
+  /** 任务级备用模型链（覆盖项目默认），主模型不可用时按序切换。 */
+  fallbackModels?: { providerId: string; model: string }[];
   concurrency: 1 | 2 | 3;
   selectedChapterIds: string[];
   sourceRefs: LongWritingSourceRef[];

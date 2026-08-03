@@ -66,6 +66,56 @@ describe("project persistence", () => {
       showFooterPageNumbers: false,
     });
   });
+  it("uses the shared heading numbering default for new projects", () => {
+    expect(createProject().headingNumbering).toEqual({ schemeId: "chapter-decimal", startLevel: 2 });
+  });
+  it("migrates a legacy non-none Word numbering preference", () => {
+    const legacy = createProject() as unknown as Omit<ReturnType<typeof createProject>, "headingNumbering" | "wordExport"> & {
+      headingNumbering?: undefined;
+      wordExport: ReturnType<typeof createProject>["wordExport"] & {
+        headingNumbering?: string;
+        headingNumberingStart?: number;
+      };
+    };
+    delete legacy.headingNumbering;
+    legacy.wordExport.headingNumbering = "section";
+    legacy.wordExport.headingNumberingStart = 3;
+    localStorage.setItem("tech-proposal-studio.project.v1", JSON.stringify(legacy));
+
+    expect(loadProject().headingNumbering).toEqual({ schemeId: "section", startLevel: 3 });
+  });
+  it.each([undefined, "none"])("defaults legacy Word numbering %s to chapter-decimal from H2", (legacyScheme) => {
+    const legacy = createProject() as unknown as Omit<ReturnType<typeof createProject>, "headingNumbering" | "wordExport"> & {
+      headingNumbering?: undefined;
+      wordExport: ReturnType<typeof createProject>["wordExport"] & {
+        headingNumbering?: string;
+        headingNumberingStart?: number;
+      };
+    };
+    delete legacy.headingNumbering;
+    if (legacyScheme !== undefined) legacy.wordExport.headingNumbering = legacyScheme;
+    legacy.wordExport.headingNumberingStart = 5;
+    localStorage.setItem("tech-proposal-studio.project.v1", JSON.stringify(legacy));
+
+    expect(loadProject().headingNumbering).toEqual({ schemeId: "chapter-decimal", startLevel: 2 });
+  });
+  it("persists only the shared heading numbering configuration", () => {
+    const project = createProject() as ReturnType<typeof createProject> & {
+      wordExport: ReturnType<typeof createProject>["wordExport"] & {
+        headingNumbering?: string;
+        headingNumberingStart?: number;
+      };
+    };
+    project.headingNumbering = { schemeId: "paren", startLevel: 4 };
+    project.wordExport.headingNumbering = "chapter";
+    project.wordExport.headingNumberingStart = 1;
+    saveProject(project);
+
+    const stored = JSON.parse(localStorage.getItem("tech-proposal-studio.project.v1")!);
+    expect(stored.headingNumbering).toEqual({ schemeId: "paren", startLevel: 4 });
+    expect(stored.wordExport).not.toHaveProperty("headingNumbering");
+    expect(stored.wordExport).not.toHaveProperty("headingNumberingStart");
+  });
   it("persists the configured web search call limit", () => {
     const project = createProject();
     project.agent.webSearchMaxCalls = 6;

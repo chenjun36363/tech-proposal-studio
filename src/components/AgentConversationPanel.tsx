@@ -9,7 +9,8 @@ import { buildAgentPreferencePrompt, normalizeAgentSettings, type AgentSettings 
 import { estimateAgentContextTokens, estimateAgentTextTokens } from "../agent/contextCompaction";
 import { listProjectMemories } from "../agent/memoryService";
 import type { DocumentBlock, Project, SelectedModel } from "../core/types";
-import { resolveActiveModelConfig } from "../services/llm/resolve";
+import { resolveModelConfigChain } from "../services/llm/resolve";
+import { runWithModelFallback } from "../services/llm/fallback";
 import { ModelSelect } from "./ModelSelect";
 import { AgentConversationTimeline } from "./AgentConversationTimeline";
 import { AgentDraftReviewModal } from "./AgentDraftReviewModal";
@@ -436,9 +437,9 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     const task = input.trim();
     if (!task || !active) return;
     const capturedSelection = editorSelection;
-    let config;
+    let chain;
     try {
-      config = resolveActiveModelConfig(project.providers ?? [], selectedModel, { aiEnabled });
+      chain = resolveModelConfigChain(project.providers ?? [], selectedModel, project.fallbackModels, { aiEnabled });
     } catch (e: any) {
       notify(e?.message ?? "模型未配置");
       return;
@@ -479,19 +480,6 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       push: () => pushGitRepository(workspaceRoot),
       changed: () => window.dispatchEvent(new CustomEvent(AGENT_GIT_CHANGED, { detail: { root: workspaceRoot } })),
     } : undefined;
-    const registry = createProposalToolRegistry({ project, modelConfig: config, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime, reviewGitOperation, onDocumentSearch, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
-    registerSkillTools(registry, {
-      skills: enabledSkills,
-      workspaceRoot,
-      fullAccess: fullAccessEnabled,
-      networkAccess: webSearchEnabled,
-    });
-    for (const toolName of agentSettings.disabledTools) registry.unregister(toolName);
-    if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
-    if (pinnedContextOnly || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
-    if (!memorySearchEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
-    else if (!agentSettings.autoRemember) registry.unregister("remember_project_fact");
-    if (!agentSettings.planningEnabled) registry.unregister("write_todo");
     const planningToolEnabled = agentSettings.planningEnabled && !agentSettings.disabledTools.includes("write_todo");
     const promptParts = buildAgentSystemPromptParts({
       agentSettings,
@@ -514,7 +502,26 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       memories,
       memoryIndexLimit: agentSettings.memoryIndexLimit,
     });
-      const result = await runProposalAgent({ task, messages: requestMessages, config, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: planningToolEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
+    const result = await runWithModelFallback(chain, async (activeConfig) => {
+      const registry = createProposalToolRegistry({ project, modelConfig: activeConfig, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime, reviewGitOperation, onDocumentSearch, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+      registerSkillTools(registry, {
+        skills: enabledSkills,
+        workspaceRoot,
+        fullAccess: fullAccessEnabled,
+        networkAccess: webSearchEnabled,
+      });
+      for (const toolName of agentSettings.disabledTools) registry.unregister(toolName);
+      if (!webSearchEnabled) registry.unregister("web_search").unregister("read_web_page");
+      if (pinnedContextOnly || !knowledgeSearchEnabled) registry.unregister("search_knowledge").unregister("read_knowledge");
+      if (!memorySearchEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
+      else if (!agentSettings.autoRemember) registry.unregister("remember_project_fact");
+      if (!agentSettings.planningEnabled) registry.unregister("write_todo");
+      return await runProposalAgent({ task, messages: requestMessages, config: activeConfig, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: planningToolEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
+    }, {
+      onSwitch: (_, from, to) => {
+        notify(`主模型 ${from.model} 不可用，已自动切换到 ${to.model}`);
+      },
+    });
       const runtimeMessages = result.messages.slice(1);
       const completedConversation = { ...pendingConversation, messages: runtimeMessages };
       setConversations(current => applyAgentConversationChange(current, {

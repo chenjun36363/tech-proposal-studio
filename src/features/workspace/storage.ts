@@ -1,7 +1,12 @@
-import type { DocumentBlock, Project, WordExportPreferences } from "../../core/types";
+import type { DocumentBlock, HeadingNumberingPreferences, Project, WordExportPreferences } from "../../core/types";
 import { createProject, DEFAULT_WORD_EXPORT_PREFERENCES, makeId } from "../../core/data";
 import { defaultProposalMarkdown } from "../editor/markdownDoc";
 import { normalizeAgentSettings } from "../../agent/settings";
+import {
+  DEFAULT_HEADING_NUMBERING_PREFERENCES,
+  getHeadingNumberingScheme,
+  normalizeHeadingNumberingPreferences,
+} from "../editor/headingNumbering";
 const KEY = "tech-proposal-studio.project.v1";
 const LEGACY_KEY = "schematic-writer.project.v1";
 function ensureCommands(project: Project): Project {
@@ -17,9 +22,15 @@ interface LegacySection {
   blocks?: DocumentBlock[];
 }
 
-type StoredProject = Omit<Project, "contextSourceRefs" | "wordExport"> & {
+type LegacyWordExportPreferences = Partial<WordExportPreferences> & {
+  headingNumbering?: unknown;
+  headingNumberingStart?: unknown;
+};
+
+type StoredProject = Omit<Project, "contextSourceRefs" | "wordExport" | "headingNumbering"> & {
   contextSourceRefs?: string[];
-  wordExport?: Partial<WordExportPreferences>;
+  wordExport?: LegacyWordExportPreferences;
+  headingNumbering?: Partial<HeadingNumberingPreferences>;
   sections?: LegacySection[];
 };
 
@@ -31,10 +42,36 @@ function ensureMarkdown(project: StoredProject): StoredProject {
   }
   return { ...project, markdown: defaultProposalMarkdown(project.name || "未命名技术方案") };
 }
+function ensureHeadingNumbering(project: Project): Project {
+  const stored = (project as Project & { headingNumbering?: Partial<HeadingNumberingPreferences> }).headingNumbering;
+  if (stored && typeof stored === "object") {
+    const schemeId = typeof stored.schemeId === "string" ? stored.schemeId : "";
+    if (schemeId === "none" || getHeadingNumberingScheme(schemeId)) {
+      return { ...project, headingNumbering: normalizeHeadingNumberingPreferences(stored) };
+    }
+  }
+
+  const legacy = project.wordExport as LegacyWordExportPreferences | undefined;
+  const legacySchemeId = typeof legacy?.headingNumbering === "string" ? legacy.headingNumbering : "";
+  if (legacySchemeId !== "none" && getHeadingNumberingScheme(legacySchemeId)) {
+    return {
+      ...project,
+      headingNumbering: normalizeHeadingNumberingPreferences({
+        schemeId: legacySchemeId,
+        startLevel: typeof legacy?.headingNumberingStart === "number"
+          ? legacy.headingNumberingStart
+          : DEFAULT_HEADING_NUMBERING_PREFERENCES.startLevel,
+      }),
+    };
+  }
+
+  return { ...project, headingNumbering: { ...DEFAULT_HEADING_NUMBERING_PREFERENCES } };
+}
+
 function ensureWordExport(project: Project): Project {
-  const stored = project.wordExport as Partial<WordExportPreferences> | undefined;
-  const value: Partial<WordExportPreferences> = stored && typeof stored === "object" ? stored : {};
-  const text = (key: keyof Omit<WordExportPreferences, "showFooterPageNumbers" | "headingNumberingStart">) =>
+  const stored = project.wordExport as LegacyWordExportPreferences | undefined;
+  const value = stored && typeof stored === "object" ? stored : {};
+  const text = (key: keyof Omit<WordExportPreferences, "showFooterPageNumbers">) =>
     typeof value[key] === "string" ? value[key] : DEFAULT_WORD_EXPORT_PREFERENCES[key];
   return {
     ...project,
@@ -48,12 +85,6 @@ function ensureWordExport(project: Project): Project {
       companyWebsite: text("companyWebsite"),
       companyEmail: text("companyEmail"),
       headerTitle: text("headerTitle"),
-      headingNumbering: typeof value.headingNumbering === "string"
-        ? value.headingNumbering
-        : DEFAULT_WORD_EXPORT_PREFERENCES.headingNumbering,
-      headingNumberingStart: typeof value.headingNumberingStart === "number"
-        ? value.headingNumberingStart
-        : DEFAULT_WORD_EXPORT_PREFERENCES.headingNumberingStart,
       showFooterPageNumbers: typeof value.showFooterPageNumbers === "boolean"
         ? value.showFooterPageNumbers
         : DEFAULT_WORD_EXPORT_PREFERENCES.showFooterPageNumbers,
@@ -87,7 +118,7 @@ function migrateLegacyStructure(raw: StoredProject): Project {
     ? raw.contextSourceRefs.filter(id => typeof id === "string")
     : raw.sections?.[0]?.blocks?.[0]?.sourceRefs ?? [];
   const { sections: _legacySections, ...project } = raw;
-  return { ...project, contextSourceRefs, wordExport: { ...DEFAULT_WORD_EXPORT_PREFERENCES, ...(project.wordExport ?? {}) } };
+  return { ...project, contextSourceRefs } as Project;
 }
 
 function ensureProviders(project: Project): Project {
@@ -128,7 +159,7 @@ function ensureProviders(project: Project): Project {
 function normalizeProject(raw: StoredProject): Project {
   const markdownReady = ensureMarkdown(raw);
   const migrated = migrateLegacyStructure(markdownReady);
-  return ensureCommands(ensureProviders(ensureWordExport(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) }))));
+  return ensureCommands(ensureProviders(ensureWordExport(ensureHeadingNumbering(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) })))));
 }
 export function loadProject(): Project {
   try {
@@ -151,13 +182,16 @@ export function loadProject(): Project {
   }
 }
 export function saveProject(project: Project) {
+  const normalized = ensureWordExport(ensureHeadingNumbering(project));
   localStorage.setItem(KEY, JSON.stringify({
-    ...project,
+    ...normalized,
+    headingNumbering: normalizeHeadingNumberingPreferences(normalized.headingNumbering),
+    wordExport: normalized.wordExport,
     updatedAt: new Date().toISOString(),
-    model: { ...project.model, apiKey: "" },
-    providers: (project.providers ?? []).map(provider => ({ ...provider, apiKey: "" })),
-    search: { ...project.search, apiKey: "" },
-    mineru: { ...(project.mineru ?? createProject().mineru), apiKey: "" },
+    model: { ...normalized.model, apiKey: "" },
+    providers: (normalized.providers ?? []).map(provider => ({ ...provider, apiKey: "" })),
+    search: { ...normalized.search, apiKey: "" },
+    mineru: { ...(normalized.mineru ?? createProject().mineru), apiKey: "" },
   }));
 }
 export function exportMarkdown(project: Project) {

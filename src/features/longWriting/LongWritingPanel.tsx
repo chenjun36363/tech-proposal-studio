@@ -4,7 +4,7 @@ import type { Project, ResolvedModelConfig, SelectedModel } from "../../core/typ
 import { ModelSelect } from "../../components/ModelSelect";
 import { readTextFileSnapshot, writeTextFileChecked, type TextFileSnapshot } from "../workspace/documentSafety";
 import { alignHeadingsToRules } from "../editor/markdownDoc";
-import { resolveActiveModelConfig } from "../../services/llm/resolve";
+import { resolveActiveModelConfig, resolveModelConfigChain } from "../../services/llm/resolve";
 import { isDesktop } from "../../services/runtime";
 import { createFrozenHeadingTreeSignature, parseLongWritingDocument, replaceChapterExact } from "./chapterParser";
 import { runChapterWorkerPool } from "./coordinator";
@@ -318,6 +318,13 @@ export function LongWritingPanel({
     { aiEnabled: project.model.enabled },
   );
 
+  const modelChain = (record?: LongWritingTaskRecord): ResolvedModelConfig[] => resolveModelConfigChain(
+    project.providers,
+    record?.modelProviderId ? { providerId: record.modelProviderId, model: record.model } : modelSelection,
+    record?.fallbackModels ?? project.fallbackModels ?? [],
+    { aiEnabled: project.model.enabled },
+  );
+
   const changeTaskModel = async (next: SelectedModel | null) => {
     const current = taskRef.current;
     if (!current || !next) return;
@@ -368,6 +375,7 @@ export function LongWritingPanel({
     let preparingTask: LongWritingTaskRecord | null = null;
     try {
       const config = modelConfig();
+      const configs = modelChain();
       const snapshot = await saveBeforeStart();
       if (!snapshot) throw new Error("启动前保存被取消");
       documentRef.current = snapshot.content;
@@ -390,6 +398,7 @@ export function LongWritingPanel({
         documentTitle: mode === "create" ? title : undefined,
         model: config.model,
         modelProviderId: config.providerId,
+        fallbackModels: project.fallbackModels?.length ? project.fallbackModels : undefined,
         concurrency,
         selectedChapterIds: requested,
         sourceRefs,
@@ -426,7 +435,7 @@ export function LongWritingPanel({
                 instruction: instruction.trim(),
                 contextBudgetTokens: project.agent.contextCompressionTokens,
                 modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
-              }, config, controller.signal);
+              }, configs, controller.signal);
               await recordEvent("summary_completed", `章节摘要已完成：${chapter.titlePath.join(" / ")}`, {
                 chapterId: chapter.id,
                 details: { contentLength: chapter.bodyMarkdown.length, factCount: summary.facts.length, termCount: summary.terminology.length },
@@ -482,7 +491,7 @@ export function LongWritingPanel({
           chapterSummaries,
           contextBudgetTokens: project.agent.contextCompressionTokens,
           modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
-        }, config, controller.signal);
+        }, configs, controller.signal);
       } catch (error) {
         if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
         const detail = longWritingErrorMessage(error, "未知模型错误");
@@ -543,7 +552,7 @@ export function LongWritingPanel({
     setBusy(true);
     try {
       const edited = applyEditableOutline(documentRef.current, outlineRows, { documentTitle: confirmedTitle });
-      const numbered = alignHeadingsToRules(edited, confirmedTitle || project.name, "chapter-h2").markdown;
+      const numbered = alignHeadingsToRules(edited, confirmedTitle || project.name, project.headingNumbering).markdown;
       const outlineWrite = await writeTextFileChecked(current.filePath, numbered, current.currentDocumentHash, false);
       if (outlineWrite.outcome === "conflict") {
         const conflictSnapshot = outlineWrite.snapshot;
@@ -696,7 +705,7 @@ export function LongWritingPanel({
             attachedSources: sourceText,
             contextBudgetTokens: project.agent.contextCompressionTokens,
             modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
-          }, modelConfig(initialTask), signal);
+          }, modelChain(initialTask), signal);
         },
         validate: ({ value: job }, draft) => {
           const currentChapter = parseLongWritingDocument(currentMarkdown).chapters.find(item => item.id === job.chapterId);
@@ -783,7 +792,7 @@ export function LongWritingPanel({
         chapterSummaries: latest.chapters.filter(job => job.summary).map(job => ({ chapterId: job.chapterId, titlePath: job.titlePath, summary: job.summary! })),
         contextBudgetTokens: project.agent.contextCompressionTokens,
         modelContextWindowTokens: project.agent.longWritingContextWindowTokens,
-      }, modelConfig(initialTask), controller.signal);
+      }, modelChain(initialTask), controller.signal);
       const issues = [...new Map([...localIssues, ...modelIssues].map(issue => [issue.id, { ...issue, status: "pending" as const }])).values()];
       await mutateTask(current => ({
         ...current,
