@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHeadingTargetTree,
   createFrozenHeadingTreeSignature,
+  normalizeSelectedHeadingIds,
+  parseHeadingTargets,
   parseLongWritingDocument,
   replaceChapterExact,
+  validateHeadingTargetEdit,
 } from "./chapterParser";
 
 describe("long-writing Markdown chapter parser", () => {
@@ -93,4 +97,24 @@ describe("long-writing Markdown chapter parser", () => {
     expect(() => replaceChapterExact(markdown, chapter.id, "## 第一章\n正文\n\n### 改名\n内容"))
       .toThrow("冻结标题树");
   });
-});
+
+  it("builds selectable H2-H6 targets and lets a parent cover descendants", () => {
+    const markdown = "# 方案\n## A\n正文\n### A1\n内容\n#### A1.1\n细节\n## B\n正文";
+    const targets = parseHeadingTargets(markdown);
+    const tree = buildHeadingTargetTree(markdown);
+    expect(targets.map(target => target.level)).toEqual([2, 3, 4, 2]);
+    expect(tree[0].children[0].children[0].target.title).toBe("A1.1");
+    expect(normalizeSelectedHeadingIds(markdown, [targets[0].id, targets[1].id, targets[3].id]))
+      .toEqual([targets[0].id, targets[3].id]);
+  });
+
+  it("validates that a direct edit changes only the selected subtree", () => {
+    const before = "# 方案\n## A\n正文\n### A1\n旧内容\n## B\n保持";
+    const target = parseHeadingTargets(before).find(item => item.level === 3)!;
+    const valid = before.replace("旧内容", "新内容和更多细节");
+    const outside = valid.replace("## B\n保持", "## B\n被修改");
+    const renamed = valid.replace("### A1", "### 改名");
+    expect(validateHeadingTargetEdit(before, valid, target.id).valid).toBe(true);
+    expect(validateHeadingTargetEdit(before, outside, target.id)).toMatchObject({ valid: false, reason: "outside_target" });
+    expect(validateHeadingTargetEdit(before, renamed, target.id)).toMatchObject({ valid: false, reason: "missing_target" });
+  });});

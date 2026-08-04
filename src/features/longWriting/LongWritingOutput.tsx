@@ -12,6 +12,7 @@ import {
   ListChecks,
   LoaderCircle,
   LocateFixed,
+  MessageSquareText,
   RotateCcw,
 } from "lucide-react";
 import { MarkdownDiffPane } from "../../components/MarkdownDiffPane";
@@ -21,16 +22,24 @@ import type { ChapterJob, ChapterJobStatus, LongWritingEvent } from "./types";
 
 const STATUS_LABELS: Record<ChapterJobStatus, string> = {
   queued: "排队",
+  analyzing: "分析",
+  awaiting_write: "待写入",
+  writing: "写入",
   running: "生成",
   validating: "校验",
   committing: "写入",
   completed: "完成",
+  awaiting_review: "待确认",
   retryable: "等待重试",
   failed: "失败",
   cancelled: "已停止",
 };
 
 const EVENT_LABELS: Partial<Record<LongWritingEvent["type"], string>> = {
+  server_started: "Server",
+  server_stopped: "Server",
+  session_created: "Session",
+  analysis_completed: "分析",
   task_started: "任务",
   backup_created: "备份",
   summary_started: "摘要",
@@ -49,6 +58,9 @@ const EVENT_LABELS: Partial<Record<LongWritingEvent["type"], string>> = {
   consistency_started: "检查",
   consistency_completed: "检查",
   conflict_detected: "冲突",
+  scope_review_requested: "待确认",
+  scope_review_accepted: "已确认",
+  scope_review_rejected: "已拒绝",
   paused: "暂停",
   resumed: "继续",
   failed: "失败",
@@ -65,11 +77,15 @@ function formatEventTime(value: string) {
 function statusDescription(status: ChapterJobStatus) {
   return ({
     queued: "等待 Coordinator 分配空闲 Worker。",
+    analyzing: "OpenCode 子任务正在并行分析目标标题子树。",
+    awaiting_write: "分析完成，等待提案级串行写锁。",
+    writing: "OpenCode 已重新读取正式文件并正在编辑目标子树。",
     running: "Worker 正在生成结构化章节草稿，返回后才会显示正文。",
     validating: "草稿已返回，正在检查冻结标题树与 Markdown 结构。",
     committing: "校验通过，正在通过串行写队列原子提交到磁盘。",
     completed: "章节已安全写入，可以查看最终输出与前后差异。",
     retryable: "遇到临时错误，等待退避后重试或手动重试。",
+    awaiting_review: "修改超出目标范围，正式文件已回滚，等待用户确认或拒绝。",
     failed: "本章未写入磁盘，可查看错误并单章重试。",
     cancelled: "本章请求已停止，已完成章节不受影响。",
   } satisfies Record<ChapterJobStatus, string>)[status];
@@ -78,7 +94,8 @@ function statusDescription(status: ChapterJobStatus) {
 function statusIcon(job: ChapterJob) {
   if (job.status === "completed") return <CheckCircle2 size={15} />;
   if (job.status === "failed" || job.status === "retryable") return <AlertTriangle size={15} />;
-  if (["running", "validating", "committing"].includes(job.status)) return <LoaderCircle className="long-writing-spin" size={15} />;
+  if (job.status === "awaiting_review") return <AlertTriangle size={15} />;
+  if (["analyzing", "writing", "running", "validating", "committing"].includes(job.status)) return <LoaderCircle className="long-writing-spin" size={15} />;
   return <i className="job-dot" />;
 }
 
@@ -92,14 +109,16 @@ export function LongWritingJobCard({
   workspaceRoot,
   onRetry,
   onLocate,
+  onOpen = () => undefined,
 }: {
   job: ChapterJob;
   filePath: string;
   workspaceRoot: string;
   onRetry: () => void;
   onLocate: () => void;
+  onOpen?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded] = useState(false);
   const [tab, setTab] = useState<"output" | "diff" | "details">("output");
   const [copied, setCopied] = useState(false);
   const draft = job.draft;
@@ -117,7 +136,7 @@ export function LongWritingJobCard({
   };
 
   return <article className={`long-writing-job-card status-${job.status} ${expanded ? "is-expanded" : ""}`}>
-    <button type="button" className="long-writing-job-summary" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
+    <button type="button" className="long-writing-job-summary" onClick={onOpen} aria-label={`查看章节详情：${job.titlePath.join(" / ")}`}>
       <span className="long-writing-job-state">{statusIcon(job)}</span>
       <span className="long-writing-job-heading">
         <b>{job.titlePath.join(" / ")}</b>
@@ -127,7 +146,7 @@ export function LongWritingJobCard({
         </small>
       </span>
       <em>{STATUS_LABELS[job.status]}</em>
-      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      <ChevronRight size={14} />
     </button>
     {expanded && <div className="long-writing-job-body">
       <div className="long-writing-job-toolbar">
@@ -147,7 +166,7 @@ export function LongWritingJobCard({
 
       {tab === "output" && (draft
         ? <div className="long-writing-output-preview"><MarkdownPreview markdown={draft.markdown} filePath={filePath} workspaceRoot={workspaceRoot} /></div>
-        : <div className="long-writing-stage-empty"><LoaderCircle className={(["running", "validating", "committing"] as ChapterJobStatus[]).includes(job.status) ? "long-writing-spin" : ""} size={18} /><b>{STATUS_LABELS[job.status]}</b><span>{statusDescription(job.status)}</span></div>)}
+        : <div className="long-writing-stage-empty"><LoaderCircle className={(["analyzing", "writing", "running", "validating", "committing"] as ChapterJobStatus[]).includes(job.status) ? "long-writing-spin" : ""} size={18} /><b>{STATUS_LABELS[job.status]}</b><span>{statusDescription(job.status)}</span></div>)}
 
       {tab === "diff" && visibleDiff && <div className="long-writing-diff">
         <div className="long-writing-diff-stats"><span className="deleted">-{visibleDiff.deletedLines} 行</span><span className="added">+{visibleDiff.addedLines} 行</span>{diff && diff.rows.length > shownRows.length && <small>仅展示前 {shownRows.length} 行差异</small>}</div>
@@ -165,6 +184,20 @@ export function LongWritingJobCard({
         <section className="long-writing-technical-details"><b>执行信息</b><p>状态：{STATUS_LABELS[job.status]} · 尝试：{job.attempts}/{job.maxAttempts}</p>{job.completedAt && <p>完成：{new Date(job.completedAt).toLocaleString("zh-CN", { hour12: false })}</p>}</section>
       </div>}
     </div>}
+  </article>;
+}
+
+export function LongWritingCoordinatorCard({ task, onOpen }: {
+  task: { mainSessionId?: string; status: string; mainAnalysis?: string };
+  onOpen: () => void;
+}) {
+  return <article className={`long-writing-job-card long-writing-coordinator-card status-${task.status}`}>
+    <button type="button" className="long-writing-job-summary" onClick={onOpen} aria-label="查看 Coordinator 详情">
+      <span className="long-writing-job-state"><MessageSquareText size={15} /></span>
+      <span className="long-writing-job-heading"><b>Coordinator</b><small>{task.mainSessionId ?? "尚未创建会话"}</small></span>
+      <em>{task.mainAnalysis ? "已规划" : "运行中"}</em>
+      <ChevronRight size={14} />
+    </button>
   </article>;
 }
 

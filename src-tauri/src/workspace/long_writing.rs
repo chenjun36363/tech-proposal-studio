@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 #[cfg(not(windows))]
 use std::fs::File;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -31,6 +31,9 @@ const TASK_STATUSES: &[&str] = &[
 const CHAPTER_STATUSES: &[&str] = &[
     "queued",
     "running",
+    "analyzing",
+    "awaiting_write",
+    "writing",
     "validating",
     "committing",
     "completed",
@@ -321,9 +324,164 @@ fn column_exists(db: &Connection, table: &str, column: &str) -> Result<bool, Str
     Ok(names.iter().any(|name| name == column))
 }
 
+const OPENCODE_HTTP_MIGRATION: &str = "opencode_http_v1";
+
+fn collect_backup_manifests(base: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !base.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(base).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.is_dir() {
+            collect_backup_manifests(&path, output)?;
+        } else if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.to_ascii_lowercase().ends_with(".md.json"))
+        {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_legacy_task_backups(root: &Path, task_ids: &HashSet<String>) -> Result<(), String> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let root = fs::canonicalize(root).map_err(|error| format!("旧任务工作区不可访问: {error}"))?;
+    let base = root.join(".gouan").join("backups").join("proposals");
+    if !base.exists() {
+        return Ok(());
+    }
+    let base =
+        fs::canonicalize(&base).map_err(|error| format!("旧任务备份目录不可访问: {error}"))?;
+    let mut manifests = Vec::new();
+    collect_backup_manifests(&base, &mut manifests)?;
+    for manifest_path in manifests {
+        let manifest = match fs::canonicalize(&manifest_path) {
+            Ok(path) if path.starts_with(&base) => path,
+            _ => continue,
+        };
+        let value = match fs::read_to_string(&manifest)
+            .ok()
+            .and_then(|text| serde_json::from_str::<ProposalBackup>(&text).ok())
+        {
+            Some(value) => value,
+            None => continue,
+        };
+        let Some(task_id) = value.task_id.as_ref() else {
+            continue;
+        };
+        if value.kind == "manual" || !task_ids.contains(task_id) {
+            continue;
+        }
+        let Some(manifest_name) = manifest.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(backup_name) = manifest_name.strip_suffix(".json") else {
+            continue;
+        };
+        let backup = manifest.with_file_name(backup_name);
+        if !backup.starts_with(&base) || value.path != path_string(&backup) {
+            continue;
+        }
+        if backup.exists() {
+            fs::remove_file(&backup).map_err(|error| {
+                format!("删除旧长任务备份 {} 失败: {error}", path_string(&backup))
+            })?;
+        }
+        fs::remove_file(&manifest).map_err(|error| {
+            format!(
+                "删除旧长任务备份清单 {} 失败: {error}",
+                path_string(&manifest)
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn migrate_legacy_long_tasks(db: &Connection) -> Result<(), String> {
+    let completed = db
+        .query_row(
+            "SELECT value FROM proposal_long_task_meta WHERE key=?1",
+            params![OPENCODE_HTTP_MIGRATION],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if completed.as_deref() == Some("done") {
+        return Ok(());
+    }
+
+    let mut statement = db
+        .prepare("SELECT id,workspace_root,payload_json FROM proposal_long_task")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?;
+    let mut legacy_by_root: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    for row in rows {
+        let (task_id, workspace_root, payload) = row.map_err(|error| error.to_string())?;
+        let is_opencode_http = payload
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .and_then(|value| {
+                value
+                    .get("backend")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .as_deref()
+            == Some("opencode-http");
+        if !is_opencode_http {
+            legacy_by_root
+                .entry(PathBuf::from(workspace_root))
+                .or_default()
+                .insert(task_id);
+        }
+    }
+    drop(statement);
+
+    for (root, task_ids) in &legacy_by_root {
+        cleanup_legacy_task_backups(root, task_ids)?;
+    }
+
+    let transaction = db
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    for task_ids in legacy_by_root.values() {
+        for task_id in task_ids {
+            transaction
+                .execute(
+                    "DELETE FROM proposal_long_task WHERE id=?1",
+                    params![task_id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    transaction
+        .execute(
+            "INSERT OR REPLACE INTO proposal_long_task_meta(key,value) VALUES(?1,'done')",
+            params![OPENCODE_HTTP_MIGRATION],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
 pub(crate) fn initialize_schema(db: &Connection) -> Result<(), String> {
     db.execute_batch(
         "PRAGMA foreign_keys=ON;
+         CREATE TABLE IF NOT EXISTS proposal_long_task_meta(
+           key TEXT PRIMARY KEY,
+           value TEXT NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS proposal_long_task(
            id TEXT PRIMARY KEY,
            workspace_root TEXT NOT NULL,
@@ -394,6 +552,7 @@ pub(crate) fn initialize_schema(db: &Connection) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     }
+    migrate_legacy_long_tasks(db)?;
     Ok(())
 }
 
@@ -2232,6 +2391,66 @@ mod tests {
     }
 
     #[test]
+    fn opencode_migration_removes_only_attributable_legacy_backups() {
+        let db = db();
+        let workspace = Workspace::new("# P\n## A\ntext\n");
+        save_fixture(&db, &workspace, "legacy-task", "running");
+        let mut current = workspace.task("http-task", "preparing");
+        current["backend"] = Value::String("opencode-http".into());
+        save_task_sync(&db, &path_string(&workspace.root), current).unwrap();
+
+        let legacy = create_backup_sync(&CreateProposalBackupRequest {
+            workspace_root: path_string(&workspace.root),
+            file_path: path_string(&workspace.file),
+            task_id: Some("legacy-task".into()),
+            kind: Some("original".into()),
+        })
+        .unwrap();
+        let manual = create_backup_sync(&CreateProposalBackupRequest {
+            workspace_root: path_string(&workspace.root),
+            file_path: path_string(&workspace.file),
+            task_id: Some("legacy-task".into()),
+            kind: Some("manual".into()),
+        })
+        .unwrap();
+        let unrelated = create_backup_sync(&CreateProposalBackupRequest {
+            workspace_root: path_string(&workspace.root),
+            file_path: path_string(&workspace.file),
+            task_id: Some("unrelated-task".into()),
+            kind: Some("original".into()),
+        })
+        .unwrap();
+
+        db.execute(
+            "DELETE FROM proposal_long_task_meta WHERE key=?1",
+            params![OPENCODE_HTTP_MIGRATION],
+        )
+        .unwrap();
+        migrate_legacy_long_tasks(&db).unwrap();
+
+        assert!(task_payload(&db, "legacy-task").unwrap().is_none());
+        assert!(list_chapter_payloads(&db, "legacy-task")
+            .unwrap()
+            .is_empty());
+        assert!(task_payload(&db, "http-task").unwrap().is_some());
+        assert!(!Path::new(&legacy.path).exists());
+        assert!(!backup_manifest_path(Path::new(&legacy.path)).exists());
+        assert!(Path::new(&manual.path).exists());
+        assert!(backup_manifest_path(Path::new(&manual.path)).exists());
+        assert!(Path::new(&unrelated.path).exists());
+        assert!(backup_manifest_path(Path::new(&unrelated.path)).exists());
+        assert_eq!(
+            db.query_row(
+                "SELECT value FROM proposal_long_task_meta WHERE key=?1",
+                params![OPENCODE_HTTP_MIGRATION],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "done"
+        );
+    }
+
+    #[test]
     fn stable_ids_match_typescript_fnv_parent_and_occurrence_algorithm() {
         let markdown = "# 方案\n## 概述\n### 目标\n## 概述\n## Ａ  B\n";
         let chapters = parse_chapters(markdown);
@@ -2285,7 +2504,10 @@ mod tests {
             kind: Some("original".into()),
         })
         .unwrap();
-        assert_eq!(backup.file_path, path_string(&workspace.file));
+        assert_eq!(
+            backup.file_path,
+            path_string(&fs::canonicalize(&workspace.file).unwrap())
+        );
         assert_eq!(backup.task_id.as_deref(), Some("t"));
         let listed = list_backups_sync(&ListProposalBackupsRequest {
             workspace_root: path_string(&workspace.root),
@@ -2306,7 +2528,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(result.file_path, path_string(&workspace.file));
+        assert_eq!(
+            result.file_path,
+            path_string(&fs::canonicalize(&workspace.file).unwrap())
+        );
         assert_eq!(result.content, "## A\noriginal\n");
         assert_eq!(result.sha256, hash_text(&result.content));
     }
@@ -2351,7 +2576,10 @@ mod tests {
                 chapter_hash,
                 content,
             } => {
-                assert_eq!(file_path, path_string(&workspace.file));
+                assert_eq!(
+                    file_path,
+                    path_string(&fs::canonicalize(&workspace.file).unwrap())
+                );
                 assert_eq!(document_hash, hash_text(&content));
                 assert_eq!(chapter_hash, parse_chapters(&content)[0].markdown_hash);
                 assert_eq!(content, "# P\n## A\n### S\nnew\n## B\nkeep\n");

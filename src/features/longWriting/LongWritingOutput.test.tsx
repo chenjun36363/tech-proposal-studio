@@ -45,7 +45,7 @@ describe("LongWritingOutput", () => {
     expect(html).toContain("检测到磁盘版本变化");
   });
 
-  it("renders an expandable completed chapter summary with output metadata", () => {
+  it("renders a completed chapter summary that opens the global detail dialog", () => {
     const html = renderToStaticMarkup(<LongWritingJobCard
       job={completedJob}
       filePath="D:\\workspace\\proposal.md"
@@ -56,7 +56,27 @@ describe("LongWritingOutput", () => {
     expect(html).toContain("第一章 总体设计");
     expect(html).toContain("完成");
     expect(html).toContain("第 1 次尝试");
-    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("查看章节详情");
     expect(html).toContain("→");
+  });
+  it("marks an out-of-scope edit as awaiting confirmation", () => {
+    const html = renderToStaticMarkup(<LongWritingJobCard
+      job={{
+        ...completedJob,
+        status: "awaiting_review",
+        scopeReview: {
+          reason: "outside_target",
+          proposedDocumentMarkdown: "# 方案\n\n越界修改",
+          proposedDocumentHash: "proposed-hash",
+          rollbackDocumentHash: "rollback-hash",
+          createdAt: "2026-08-04T00:00:00.000Z",
+        },
+      }}
+      filePath="D:\\workspace\\proposal.md"
+      workspaceRoot="D:\\workspace"
+      onRetry={() => undefined}
+      onLocate={() => undefined}
+    />);
+    expect(html).toContain("待确认");
   });
 });

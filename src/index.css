@@ -6668,3 +6668,114 @@
 .workspace-setup-hint { text-align: left; font-size: 12px; color: hsl(var(--muted-foreground)); line-height: 1.6; margin: 0 0 18px; }
 .workspace-setup-hint code { background: hsl(var(--muted)); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .workspace-setup-card .modal-actions { display: flex; justify-content: flex-end; }
+/* OpenCode long-task detail dialog */
+.opencode-detail-backdrop { z-index: 1300; padding: 24px; }
+.opencode-detail-modal {
+  width: min(1080px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - 48px));
+  max-width: none;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.opencode-detail-modal .modal-title > div { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.opencode-detail-modal .modal-title > div > span { min-width: 0; display: grid; gap: 2px; }
+.opencode-detail-modal .modal-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.opencode-detail-modal .modal-title small { color: hsl(var(--muted-foreground)); font-size: 10px; font-weight: 400; }
+.opencode-detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.22);
+}
+.opencode-detail-tabs > button { min-height: 30px; gap: 5px; padding: 0 11px; border-color: transparent; background: transparent; font-size: 11px; }
+.opencode-detail-tabs > button.active { border-color: hsl(var(--border)); background: hsl(var(--background)); color: hsl(var(--primary)); }
+.opencode-detail-tools { margin-left: auto; display: flex; gap: 5px; }
+.opencode-detail-tools button { min-height: 29px; gap: 4px; padding: 0 9px; font-size: 10px; }
+.opencode-detail-body { min-height: 0; overflow: auto; padding: 16px; background: hsl(var(--background)); }
+.opencode-detail-note { padding: 8px 16px; border-top: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); font-size: 9px; }
+.opencode-detail-output { max-height: none; min-height: 100%; }
+.opencode-detail-output .md-preview { padding: 18px 22px !important; font-size: 12px; }
+.opencode-detail-diff { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+.opencode-detail-diff .long-writing-diff-stats { grid-column: 1 / -1; }
+.opencode-detail-diff > section > div { max-height: calc(100vh - 250px); }
+.opencode-detail-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.opencode-coordinator-plan { display: grid; gap: 10px; }
+.opencode-coordinator-plan > b { font-size: 13px; }
+.opencode-coordinator-plan > pre { margin: 0; padding: 14px; border: 1px solid hsl(var(--border)); border-radius: 6px; background: hsl(var(--muted) / 0.18); white-space: pre-wrap; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.long-writing-coordinator-card { border-style: dashed; }
+.opencode-conversation { display: grid; gap: 12px; }
+.opencode-conversation-actions { position: sticky; top: -16px; z-index: 2; display: flex; align-items: center; gap: 8px; margin: -16px -16px 0; padding: 9px 16px; border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--background) / 0.96); }
+.opencode-conversation-actions code { min-width: 0; overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.opencode-conversation-actions > div { margin-left: auto; display: flex; gap: 4px; }
+.opencode-conversation-actions button { width: 28px; min-height: 28px; padding: 0; }
+.opencode-conversation-messages { display: grid; gap: 10px; }
+.opencode-conversation-message { overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 7px; background: hsl(var(--card)); }
+.opencode-conversation-message > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 7px 11px; border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--muted) / 0.24); }
+.opencode-conversation-message > header span { display: inline-flex; align-items: center; gap: 6px; }
+.opencode-conversation-message > header b { font-size: 11px; }
+.opencode-conversation-message > header small { color: hsl(var(--muted-foreground)); font-size: 9px; }
+.opencode-conversation-message-meta { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.opencode-conversation-message-meta small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opencode-conversation-toggle { width: 26px; min-height: 26px; flex: 0 0 26px; padding: 0; border-color: transparent; background: transparent; color: hsl(var(--muted-foreground)); }
+.opencode-conversation-toggle:hover { background: hsl(var(--muted) / 0.48); color: hsl(var(--foreground)); }
+.opencode-conversation-message.is-collapsed > header { border-bottom-color: transparent; }
+.opencode-conversation-message-body,
+.opencode-conversation-message-body pre,
+.opencode-conversation-message-body .opencode-conversation-error { -webkit-user-select: text; user-select: text; cursor: text; }
+.opencode-conversation-message.role-user { border-left: 3px solid hsl(var(--primary)); }
+.opencode-conversation-message.role-assistant { border-left: 3px solid hsl(145 48% 42%); }
+.opencode-conversation-parts { display: grid; gap: 8px; padding: 10px; }
+.opencode-conversation-text pre,
+.opencode-conversation-unknown pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.opencode-conversation-text.type-reasoning { padding: 8px; border-left: 2px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+.opencode-conversation-tool { overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 6px; background: hsl(var(--muted) / 0.12); }
+.opencode-conversation-tool > header { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 5px; min-height: 34px; padding: 6px 9px; }
+.opencode-conversation-tool > header b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.opencode-conversation-tool > header em { color: hsl(var(--muted-foreground)); font: 9px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.opencode-conversation-tool.status-completed > header,
+.opencode-conversation-tool.status-success > header { color: hsl(145 48% 34%); }
+.opencode-conversation-value { border-top: 1px solid hsl(var(--border)); }
+.opencode-conversation-value summary { display: flex; align-items: center; min-height: 32px; padding: 5px 9px; cursor: pointer; color: hsl(var(--muted-foreground)); font-size: 10px; }
+.opencode-conversation-value summary button { width: 25px; min-height: 25px; margin-left: auto; padding: 0; }
+.opencode-conversation-value pre { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border-top: 1px solid hsl(var(--border)); background: hsl(var(--background)); white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.opencode-conversation-error,
+.opencode-conversation-load-error { display: flex; align-items: flex-start; gap: 7px; padding: 9px; color: hsl(var(--destructive)); font-size: 10px; line-height: 1.5; }
+.opencode-conversation-load-error { align-items: center; border: 1px solid hsl(var(--destructive) / 0.3); border-radius: 6px; background: hsl(var(--destructive) / 0.06); }
+.opencode-conversation-load-error span { min-width: 0; display: grid; }
+.opencode-conversation-load-error button { margin-left: auto; }
+.opencode-conversation-empty { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: hsl(var(--muted-foreground)); text-align: center; }
+.opencode-conversation-empty b { color: hsl(var(--foreground)); font-size: 12px; }
+.opencode-conversation-empty span { font-size: 10px; }
+.opencode-conversation-unknown { padding: 7px 9px; border: 1px dashed hsl(var(--border)); border-radius: 6px; color: hsl(var(--muted-foreground)); font-size: 10px; }
+
+@media (max-width: 720px) {
+  .opencode-detail-backdrop { padding: 0; }
+  .opencode-detail-modal { width: 100vw; height: 100vh; border-radius: 0; }
+  .opencode-detail-tabs { overflow-x: auto; padding-inline: 8px; }
+  .opencode-detail-tabs > button { flex: 0 0 auto; }
+  .opencode-detail-tools { margin-left: 4px; }
+  .opencode-detail-body { padding: 10px; }
+  .opencode-detail-diff,
+  .opencode-detail-metadata { grid-template-columns: minmax(0, 1fr); }
+  .opencode-detail-diff .long-writing-diff-stats { grid-column: 1; }
+  .opencode-conversation-actions { top: -10px; margin: -10px -10px 0; padding-inline: 10px; }
+}
+.long-writing-job-card.status-awaiting_review { border-color: hsl(38 78% 52% / 0.6); }
+.long-writing-job-card.status-awaiting_review .long-writing-job-state,
+.long-writing-job-card.status-awaiting_review .long-writing-job-summary em { color: hsl(38 72% 38%); }
+.opencode-scope-review { display: grid; gap: 12px; }
+.opencode-scope-review-warning { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; padding: 10px 12px; border: 1px solid hsl(38 78% 52% / 0.38); border-radius: 7px; background: hsl(38 78% 52% / 0.08); color: hsl(38 72% 34%); }
+.opencode-scope-review-warning span { min-width: 0; display: grid; gap: 3px; }
+.opencode-scope-review-warning b { font-size: 11px; }
+.opencode-scope-review-warning small { color: hsl(var(--foreground) / 0.72); font-size: 10px; line-height: 1.5; }
+.opencode-scope-review-actions { position: sticky; bottom: -16px; display: flex; justify-content: flex-end; gap: 8px; margin: 0 -16px -16px; padding: 10px 16px; border-top: 1px solid hsl(var(--border)); background: hsl(var(--background) / 0.96); }
+.opencode-scope-review-actions button { min-height: 32px; }
+.opencode-scope-review-actions button.primary { border-color: hsl(38 65% 45%); background: hsl(38 65% 45%); color: white; }
+.opencode-scope-review-decision { padding: 10px; border-radius: 6px; font-size: 11px; text-align: center; }
+.opencode-scope-review-decision.is-accepted { background: hsl(145 48% 42% / 0.1); color: hsl(145 48% 32%); }
+.opencode-scope-review-decision.is-rejected { background: hsl(var(--muted) / 0.45); color: hsl(var(--muted-foreground)); }

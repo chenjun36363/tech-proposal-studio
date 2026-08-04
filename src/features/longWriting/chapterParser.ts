@@ -254,3 +254,136 @@ export function replaceChapterExact(markdown: string, chapterId: string, replace
   return markdown.slice(0, target.start) + nextSection + markdown.slice(target.end);
 }
 
+
+export interface ParsedHeadingTarget {
+  id: string;
+  order: number;
+  level: number;
+  title: string;
+  titlePath: string[];
+  parentId?: string;
+  start: number;
+  end: number;
+  heading: ParsedMarkdownHeading;
+  headings: ParsedMarkdownHeading[];
+  markdown: string;
+  bodyMarkdown: string;
+}
+
+export interface HeadingTargetTreeNode {
+  target: ParsedHeadingTarget;
+  children: HeadingTargetTreeNode[];
+}
+
+export function parseHeadingTargets(markdown: string): ParsedHeadingTarget[] {
+  const document = parseLongWritingDocument(markdown);
+  return document.headings
+    .filter(heading => heading.level >= 2)
+    .map((heading, order) => ({
+      id: heading.id,
+      order,
+      level: heading.level,
+      title: heading.title,
+      titlePath: heading.path,
+      parentId: heading.parentId,
+      start: heading.start,
+      end: heading.end,
+      heading,
+      headings: document.headings.filter(candidate => candidate.start >= heading.start && candidate.start < heading.end),
+      markdown: markdown.slice(heading.start, heading.end),
+      bodyMarkdown: markdown.slice(heading.lineEnd, heading.end),
+    }));
+}
+
+export function buildHeadingTargetTree(markdown: string): HeadingTargetTreeNode[] {
+  const targets = parseHeadingTargets(markdown);
+  const nodes = new Map<string, HeadingTargetTreeNode>(targets.map(target => [target.id, { target, children: [] }]));
+  const roots: HeadingTargetTreeNode[] = [];
+  for (const target of targets) {
+    const node = nodes.get(target.id)!;
+    const parent = target.parentId ? nodes.get(target.parentId) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+export function filterHeadingTargetTree(nodes: HeadingTargetTreeNode[], query: string): HeadingTargetTreeNode[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return nodes;
+
+  const visit = (node: HeadingTargetTreeNode): HeadingTargetTreeNode | null => {
+    if (node.target.titlePath.join(" / ").toLocaleLowerCase().includes(normalizedQuery)) return node;
+    const children = node.children.map(visit).filter((child): child is HeadingTargetTreeNode => child !== null);
+    return children.length ? { ...node, children } : null;
+  };
+  return nodes.map(visit).filter((node): node is HeadingTargetTreeNode => node !== null);
+}
+
+export function collectCollapsibleHeadingIds(nodes: HeadingTargetTreeNode[]): string[] {
+  const ids: string[] = [];
+  const visit = (node: HeadingTargetTreeNode) => {
+    if (node.children.length) {
+      ids.push(node.target.id);
+      node.children.forEach(visit);
+    }
+  };
+  nodes.forEach(visit);
+  return ids;
+}
+
+export function selectAllHeadingTargetIds(nodes: HeadingTargetTreeNode[]): string[] {
+  return nodes.map(node => node.target.id);
+}
+
+export function normalizeSelectedHeadingIds(markdown: string, selectedIds: Iterable<string>): string[] {
+  const targets = parseHeadingTargets(markdown);
+  const selected = new Set(selectedIds);
+  const targetById = new Map(targets.map(target => [target.id, target]));
+  return targets
+    .filter(target => {
+      if (!selected.has(target.id)) return false;
+      let parentId = target.parentId;
+      while (parentId) {
+        if (selected.has(parentId)) return false;
+        parentId = targetById.get(parentId)?.parentId;
+      }
+      return true;
+    })
+    .map(target => target.id);
+}
+
+export function getHeadingTargetById(markdown: string, headingId: string): ParsedHeadingTarget | undefined {
+  return parseHeadingTargets(markdown).find(target => target.id === headingId);
+}
+
+export function createFrozenTargetSignature(target: ParsedHeadingTarget): string {
+  const indexById = new Map(target.headings.map((heading, index) => [heading.id, index]));
+  return JSON.stringify({
+    version: 2,
+    headings: target.headings.map(heading => ({
+      level: heading.level,
+      title: heading.title,
+      parentIndex: heading.parentId ? (indexById.get(heading.parentId) ?? null) : null,
+    })),
+  });
+}
+
+export type HeadingEditValidation =
+  | { valid: true; before: ParsedHeadingTarget; after: ParsedHeadingTarget }
+  | { valid: false; reason: "missing_target" | "outside_target" | "heading_tree" };
+
+export function validateHeadingTargetEdit(beforeMarkdown: string, afterMarkdown: string, headingId: string): HeadingEditValidation {
+  const before = getHeadingTargetById(beforeMarkdown, headingId);
+  const after = getHeadingTargetById(afterMarkdown, headingId);
+  if (!before || !after) return { valid: false, reason: "missing_target" };
+  if (beforeMarkdown.slice(0, before.start) !== afterMarkdown.slice(0, after.start)
+    || beforeMarkdown.slice(before.end) !== afterMarkdown.slice(after.end)) {
+    return { valid: false, reason: "outside_target" };
+  }
+  if (createFrozenTargetSignature(before) !== createFrozenTargetSignature(after)) {
+    return { valid: false, reason: "heading_tree" };
+  }
+  return { valid: true, before, after };
+}
+

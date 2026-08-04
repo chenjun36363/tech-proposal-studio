@@ -68,10 +68,7 @@ pub(super) fn find_document_by_location(
     Ok(None)
 }
 
-pub(super) fn document_id_for_location(
-    db: &Connection,
-    location: &str,
-) -> Result<String, String> {
+pub(super) fn document_id_for_location(db: &Connection, location: &str) -> Result<String, String> {
     Ok(find_document_by_location(db, location)?
         .map(|(id, _)| id)
         .unwrap_or_else(|| stable_id("kd", &normalized_location(location))))
@@ -187,7 +184,8 @@ fn reconcile_knowledge_locations(
         let mut stmt = db
             .prepare("SELECT id,location FROM knowledge_documents")
             .map_err(|e| e.to_string())?;
-        let result = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        let result = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
             .collect::<Result<_, _>>()
             .map_err(|e| e.to_string())?;
@@ -236,7 +234,8 @@ fn ensure_knowledge_fts(db: &Connection) -> Result<(), String> {
         let mut stmt = db
             .prepare("PRAGMA table_info(knowledge_chunk_fts)")
             .map_err(|e| e.to_string())?;
-        let result = stmt.query_map([], |row| row.get(1))
+        let result = stmt
+            .query_map([], |row| row.get(1))
             .map_err(|e| e.to_string())?
             .collect::<Result<_, _>>()
             .map_err(|e| e.to_string())?;
@@ -254,12 +253,13 @@ fn ensure_knowledge_fts(db: &Connection) -> Result<(), String> {
                  FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id",
             )
             .map_err(|e| e.to_string())?;
-        let result = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<_, _>>()
-        .map_err(|e| e.to_string())?;
+        let result = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
         result
     };
     db.execute_batch(

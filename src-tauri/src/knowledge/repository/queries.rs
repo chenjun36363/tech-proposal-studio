@@ -35,19 +35,25 @@ fn valid_quality(quality: &str) -> Result<(), String> {
 fn search_tokens(query: &str) -> Vec<String> {
     const STOP_WORDS: &[&str] = &[
         "请", "请问", "帮", "帮我", "我", "一下", "查", "查询", "检索", "搜索", "找", "查找",
-        "如何", "怎么", "怎样", "什么", "哪些", "哪个", "是否", "能否", "可以", "需要",
-        "保障", "保证", "实现", "采用",
-        "关于", "有关", "相关", "方面", "内容", "资料", "信息", "方案", "说明", "介绍",
-        "的", "了", "和", "与", "或", "及", "以及", "并", "在", "对", "中", "为", "是",
+        "如何", "怎么", "怎样", "什么", "哪些", "哪个", "是否", "能否", "可以", "需要", "保障",
+        "保证", "实现", "采用", "关于", "有关", "相关", "方面", "内容", "资料", "信息", "方案",
+        "说明", "介绍", "的", "了", "和", "与", "或", "及", "以及", "并", "在", "对", "中", "为",
+        "是",
     ];
     let mut tokens: Vec<String> = Vec::new();
     for token in segmented(query).split_whitespace() {
         let token = token
-            .trim_matches(|character: char| character.is_whitespace() || character.is_ascii_punctuation() || "，。！？；：、（）【】《》“”‘’".contains(character))
+            .trim_matches(|character: char| {
+                character.is_whitespace()
+                    || character.is_ascii_punctuation()
+                    || "，。！？；：、（）【】《》“”‘’".contains(character)
+            })
             .replace('"', "");
         if !token.is_empty()
             && !STOP_WORDS.contains(&token.as_str())
-            && !tokens.iter().any(|existing| existing.eq_ignore_ascii_case(&token))
+            && !tokens
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&token))
         {
             tokens.push(token);
             if tokens.len() == 8 {
@@ -77,14 +83,24 @@ fn search_excerpt(content: &str, tokens: &[String]) -> String {
     let chars = content.chars().collect::<Vec<_>>();
     let match_char = tokens
         .iter()
-        .filter_map(|token| content.find(token).map(|byte| content[..byte].chars().count()))
+        .filter_map(|token| {
+            content
+                .find(token)
+                .map(|byte| content[..byte].chars().count())
+        })
         .min()
         .unwrap_or(0);
     let start = match_char.saturating_sub(70);
     let end = (start + 220).min(chars.len());
     let prefix = if start > 0 { "…" } else { "" };
     let suffix = if end < chars.len() { "…" } else { "" };
-    format!("{prefix}{}{suffix}", chars[start..end].iter().collect::<String>().replace('\n', " "))
+    format!(
+        "{prefix}{}{suffix}",
+        chars[start..end]
+            .iter()
+            .collect::<String>()
+            .replace('\n', " ")
+    )
 }
 
 fn token_match_score(result: &KnowledgeSearchResult, tokens: &[String]) -> f64 {
@@ -303,41 +319,41 @@ pub(in crate::knowledge) fn search(
     let requested_limit = limit.unwrap_or(30).min(100);
     let candidate_limit = requested_limit.saturating_mul(4).clamp(20, 100);
     let sql = format!("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END+CASE c.quality WHEN 'good' THEN -0.6 WHEN 'bad' THEN 2.5 ELSE 0.0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')){document_filter} ORDER BY score,c.position LIMIT ?6");
-    let run = |expression: &str, stage_penalty: f64| -> Result<Vec<KnowledgeSearchResult>, String> {
-        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
-        let mut bind_values: Vec<Value> = vec![
-            Value::Text(expression.to_string()),
-            Value::Text(trimmed.to_string()),
-            Value::Integer(include_good as i64),
-            Value::Integer(include_normal as i64),
-            Value::Integer(include_bad as i64),
-            Value::Integer(candidate_limit as i64),
-        ];
-        bind_values.extend(document_ids.iter().cloned().map(Value::Text));
-        let rows = stmt.query_map(
-            params_from_iter(bind_values),
-            |row| {
-                let chunk = chunk_from_row(row)?;
-                let excerpt = search_excerpt(&chunk.content, &query_tokens);
-                let matched_section_id = chunk.section_id.clone();
-                let level: i64 = row.get(12)?;
-                let parent_id: Option<String> = row.get(13)?;
-                let mut result = KnowledgeSearchResult {
-                    chunk,
-                    excerpt,
-                    score: row.get(11)?,
-                    scope_section_id: matched_section_id.clone(),
-                    matched_section_id,
-                    level,
-                    can_move_up: level > 1 && parent_id.is_some(),
-                    parent_id,
-                };
-                result.score += stage_penalty - token_match_score(&result, &query_tokens);
-                Ok(result)
-            },
-        ).map_err(|e| e.to_string())?;
-        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
-    };
+    let run =
+        |expression: &str, stage_penalty: f64| -> Result<Vec<KnowledgeSearchResult>, String> {
+            let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+            let mut bind_values: Vec<Value> = vec![
+                Value::Text(expression.to_string()),
+                Value::Text(trimmed.to_string()),
+                Value::Integer(include_good as i64),
+                Value::Integer(include_normal as i64),
+                Value::Integer(include_bad as i64),
+                Value::Integer(candidate_limit as i64),
+            ];
+            bind_values.extend(document_ids.iter().cloned().map(Value::Text));
+            let rows = stmt
+                .query_map(params_from_iter(bind_values), |row| {
+                    let chunk = chunk_from_row(row)?;
+                    let excerpt = search_excerpt(&chunk.content, &query_tokens);
+                    let matched_section_id = chunk.section_id.clone();
+                    let level: i64 = row.get(12)?;
+                    let parent_id: Option<String> = row.get(13)?;
+                    let mut result = KnowledgeSearchResult {
+                        chunk,
+                        excerpt,
+                        score: row.get(11)?,
+                        scope_section_id: matched_section_id.clone(),
+                        matched_section_id,
+                        level,
+                        can_move_up: level > 1 && parent_id.is_some(),
+                        parent_id,
+                    };
+                    result.score += stage_penalty - token_match_score(&result, &query_tokens);
+                    Ok(result)
+                })
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+        };
 
     let finish = |mut results: Vec<KnowledgeSearchResult>| {
         results.sort_by(|left, right| {
@@ -430,7 +446,11 @@ pub(in crate::knowledge) fn section_scope(
         if !markdown.is_empty() {
             markdown.push_str("\n\n");
         }
-        markdown.push_str(&format!("{} {}", "#".repeat(row_level.clamp(1, 6) as usize), row_title));
+        markdown.push_str(&format!(
+            "{} {}",
+            "#".repeat(row_level.clamp(1, 6) as usize),
+            row_title
+        ));
         if !body.trim().is_empty() {
             markdown.push_str("\n\n");
             markdown.push_str(body.trim());
@@ -531,11 +551,8 @@ pub(in crate::knowledge) fn remove_document(
         [document_id],
     )
     .map_err(|e| e.to_string())?;
-    db.execute(
-        "DELETE FROM knowledge_documents WHERE id=?1",
-        [document_id],
-    )
-    .map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM knowledge_documents WHERE id=?1", [document_id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -575,7 +592,9 @@ pub(in crate::knowledge) fn save_heading_metadata(
         .prepare("SELECT id,title FROM knowledge_sections WHERE document_id=?1 ORDER BY position")
         .map_err(|e| e.to_string())?;
     let sections = stmt
-        .query_map([document_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([document_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -587,7 +606,11 @@ pub(in crate::knowledge) fn save_heading_metadata(
         if let Some((index, decision)) = decisions.iter().enumerate().find(|(index, decision)| {
             !used[*index]
                 && decision.selected
-                && original.lines().nth(decision.line).map(normalized_heading_text).as_deref()
+                && original
+                    .lines()
+                    .nth(decision.line)
+                    .map(normalized_heading_text)
+                    .as_deref()
                     == Some(normalized_title.as_str())
         }) {
             used[index] = true;
@@ -641,13 +664,21 @@ mod tests {
         assert!(tokens.iter().any(|token| token == "接口"));
         assert!(tokens.concat().contains("幂等"));
         assert!(tokens.concat().contains("灾备"), "{tokens:?}");
-        assert!(!tokens.iter().any(|token| matches!(token.as_str(), "请" | "如何" | "保障" | "和")));
+        assert!(!tokens
+            .iter()
+            .any(|token| matches!(token.as_str(), "请" | "如何" | "保障" | "和")));
     }
 
     #[test]
     fn deduplicates_and_limits_search_tokens() {
         let tokens = search_tokens("\"OAuth\" OAuth PKCE token refresh client server callback redirect security protocol standard");
-        assert_eq!(tokens.iter().filter(|token| token.eq_ignore_ascii_case("OAuth")).count(), 1);
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.eq_ignore_ascii_case("OAuth"))
+                .count(),
+            1
+        );
         assert!(tokens.len() <= 8);
         assert!(tokens.iter().any(|token| token == "PKCE"));
     }

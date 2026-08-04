@@ -57,7 +57,10 @@ async fn find_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Upd
         .map_err(|error| format!("升级地址无效: {error}"))?
         .build()
         .map_err(|error| format!("无法初始化升级服务: {error}"))?;
-    updater.check().await.map_err(|error| format!("检查更新失败: {error}"))
+    updater
+        .check()
+        .await
+        .map_err(|error| format!("检查更新失败: {error}"))
 }
 
 #[tauri::command]
@@ -68,8 +71,12 @@ pub async fn app_update_check(app: AppHandle) -> Result<UpdateStatus, String> {
     let current = current_version(&app);
     let Some(update) = find_update(&app).await? else {
         return Ok(UpdateStatus {
-            configured: true, available: false, current_version: current,
-            version: None, date: None, body: None,
+            configured: true,
+            available: false,
+            current_version: current,
+            version: None,
+            date: None,
+            body: None,
             message: Some("当前已是最新版本。".into()),
         });
     };

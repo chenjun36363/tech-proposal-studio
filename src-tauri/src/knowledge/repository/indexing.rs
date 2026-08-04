@@ -1,13 +1,12 @@
 use super::{document_id_for_location, knowledge_db, storage_location};
 use crate::knowledge::parser::{build_document_chunks, parse_sections, segmented};
-use crate::knowledge::{hash_text, now_string, KnowledgeDocument, WorkspacePaths, CHUNKING_VERSION, MAX_CHUNK_CHARS};
+use crate::knowledge::{
+    hash_text, now_string, KnowledgeDocument, WorkspacePaths, CHUNKING_VERSION, MAX_CHUNK_CHARS,
+};
 use rusqlite::{params, OptionalExtension};
 use std::collections::BTreeMap;
 
-fn load_document(
-    db: &rusqlite::Connection,
-    id: &str,
-) -> Result<Option<KnowledgeDocument>, String> {
+fn load_document(db: &rusqlite::Connection, id: &str) -> Result<Option<KnowledgeDocument>, String> {
     db.query_row(
         "SELECT d.id,d.source_type,d.title,d.location,d.source_url,d.fingerprint,d.status,d.error,d.section_count,d.chunk_count,d.updated_at,d.structure_status,COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c WHERE c.document_id=d.id),0) FROM knowledge_documents d WHERE d.id=?1",
         [id],
@@ -83,7 +82,8 @@ where
         let mut stmt = db
             .prepare("SELECT id,quality FROM knowledge_chunks WHERE document_id=?1")
             .map_err(|e| e.to_string())?;
-        let result = stmt.query_map([&id], |row| Ok((row.get(0)?, row.get(1)?)))
+        let result = stmt
+            .query_map([&id], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
             .collect::<Result<_, _>>()
             .map_err(|e| e.to_string())?;
@@ -190,11 +190,7 @@ where
                 "index_writing",
                 chunk_index + 1,
                 chunks.len(),
-                &format!(
-                    "正在写入知识切片 {}/{}…",
-                    chunk_index + 1,
-                    chunks.len()
-                ),
+                &format!("正在写入知识切片 {}/{}…", chunk_index + 1, chunks.len()),
             );
         }
     }

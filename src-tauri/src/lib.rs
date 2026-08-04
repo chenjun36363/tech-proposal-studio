@@ -7,57 +7,66 @@ use std::{
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 
+#[path = "agent/conversations.rs"]
+mod agent_conversations;
+#[path = "integrations/ccswitch.rs"]
+mod ccswitch;
+#[path = "workspace/connections.rs"]
+mod connections;
+#[path = "platform/credentials.rs"]
+mod credentials;
+#[path = "workspace/drafts.rs"]
+mod drafts;
+#[path = "platform/export.rs"]
+mod export;
+#[path = "workspace/git.rs"]
+mod git;
 mod knowledge;
+#[path = "workspace/long_writing.rs"]
+mod long_writing;
+#[path = "agent/memory.rs"]
+mod memory;
 #[path = "integrations/mineru.rs"]
 mod mineru;
 #[path = "integrations/model.rs"]
 mod model;
-#[path = "agent/memory.rs"]
-mod memory;
-#[path = "platform/credentials.rs"]
-mod credentials;
-#[path = "platform/export.rs"]
-mod export;
+#[path = "integrations/opencode.rs"]
+mod opencode;
+#[path = "platform/privileged.rs"]
+mod privileged;
+#[path = "platform/process.rs"]
+mod process;
 #[path = "integrations/search.rs"]
 mod search;
+#[path = "agent/skills.rs"]
+mod skills;
 #[path = "platform/system.rs"]
 mod system;
 #[path = "platform/terminal.rs"]
 mod terminal;
-#[path = "integrations/ccswitch.rs"]
-mod ccswitch;
-#[path = "platform/process.rs"]
-mod process;
-#[path = "agent/conversations.rs"]
-mod agent_conversations;
-#[path = "workspace/connections.rs"]
-mod connections;
-#[path = "workspace/drafts.rs"]
-mod drafts;
-#[path = "workspace/git.rs"]
-mod git;
-#[path = "platform/privileged.rs"]
-mod privileged;
-#[path = "agent/skills.rs"]
-mod skills;
 #[path = "integrations/updater.rs"]
 mod updater;
 #[path = "workspace/files.rs"]
 mod workspace_files;
-#[path = "workspace/long_writing.rs"]
-mod long_writing;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
 use process::{detect_tools, init_db, open_workspace_powershell, run_command, run_command_stream};
 
+use git::{
+    git_branches, git_commit, git_commit_diff, git_create_branch, git_diff, git_discard, git_fetch,
+    git_init, git_log, git_pull, git_push, git_set_remote, git_stage, git_stage_all,
+    git_staged_summary, git_stash_pop, git_stash_push, git_status, git_switch_branch, git_unstage,
+    git_unstage_all,
+};
 use terminal::{terminal_close, terminal_open, terminal_resize, terminal_write, TerminalState};
-use git::{git_branches, git_commit, git_commit_diff, git_create_branch, git_diff, git_discard, git_fetch, git_init, git_log, git_pull, git_push, git_set_remote, git_stage, git_stage_all, git_staged_summary, git_stash_pop, git_stash_push, git_status, git_switch_branch, git_unstage, git_unstage_all};
 
-
-pub(crate) use model::ModelConfig;
-use model::{agent_completion, generate_text, generate_text_stream, list_models, model_proxy_cancel, model_proxy_json, model_proxy_stream, ModelProxyState};
 pub(crate) use credentials::load_secret;
 use credentials::store_secret;
-use export::{save_binary_file, save_docx_export, save_markdown, sanitize_filename};
+use export::{sanitize_filename, save_binary_file, save_docx_export, save_markdown};
+pub(crate) use model::ModelConfig;
+use model::{
+    agent_completion, generate_text, generate_text_stream, list_models, model_proxy_cancel,
+    model_proxy_json, model_proxy_stream, ModelProxyState,
+};
 use search::search_web;
 use system::open_external_url;
 
@@ -118,11 +127,17 @@ fn file_updated_at(meta: &fs::Metadata) -> String {
 
 fn collect_markdown_files(dir: &Path, max_depth: usize) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
-    fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    fn walk(
+        dir: &Path,
+        depth: usize,
+        max_depth: usize,
+        out: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
         if depth > max_depth {
             return Ok(());
         }
-        let entries = fs::read_dir(dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
+        let entries =
+            fs::read_dir(dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
         for entry in entries {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
@@ -198,11 +213,7 @@ fn ensure_workspace(paths: WorkspacePaths) -> Result<WorkspacePaths, String> {
 
 #[tauri::command]
 fn pick_directory(app: AppHandle, title: String) -> Result<Option<String>, String> {
-    let folder = app
-        .dialog()
-        .file()
-        .set_title(&title)
-        .blocking_pick_folder();
+    let folder = app.dialog().file().set_title(&title).blocking_pick_folder();
     Ok(folder.map(|p| p.to_string()))
 }
 
@@ -212,7 +223,11 @@ fn pick_markdown_file(
     title: String,
     default_path: Option<String>,
 ) -> Result<Option<String>, String> {
-    let mut dialog = app.dialog().file().set_title(&title).add_filter("Markdown", &["md", "markdown"]);
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title(&title)
+        .add_filter("Markdown", &["md", "markdown"]);
     if let Some(path) = default_path.filter(|s| !s.trim().is_empty()) {
         dialog = dialog.set_directory(path);
     }
@@ -501,7 +516,9 @@ fn save_project_file(history_dir: String, mut project: Value) -> Result<String, 
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(&history_dir).join(format!("{}.json", sanitize_filename(name))));
+        .unwrap_or_else(|| {
+            PathBuf::from(&history_dir).join(format!("{}.json", sanitize_filename(name)))
+        });
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -528,7 +545,8 @@ fn save_project_file(history_dir: String, mut project: Value) -> Result<String, 
 #[tauri::command]
 fn load_project_file(path: String) -> Result<Value, String> {
     let text = fs::read_to_string(&path).map_err(|e| format!("读取方案失败: {e}"))?;
-    let mut project: Value = serde_json::from_str(&text).map_err(|e| format!("解析方案失败: {e}"))?;
+    let mut project: Value =
+        serde_json::from_str(&text).map_err(|e| format!("解析方案失败: {e}"))?;
     if let Some(obj) = project.as_object_mut() {
         obj.insert("filePath".into(), Value::String(path));
     }
@@ -571,6 +589,7 @@ pub fn run() {
         .manage(TerminalState::default())
         .manage(ModelProxyState::default())
         .manage(privileged::PrivilegedProcessState::default())
+        .manage(opencode::OpenCodeServerState::default())
         .setup(|app| {
             init_db(&app.handle()).map_err(std::io::Error::other)?;
             Ok(())
@@ -647,6 +666,15 @@ pub fn run() {
             long_writing::list_proposal_long_task_chapters,
             long_writing::recover_proposal_long_task,
             long_writing::delete_proposal_long_task,
+            opencode::start_open_code_server,
+            opencode::stop_open_code_server,
+            opencode::get_open_code_server_status,
+            opencode::list_open_code_models,
+            opencode::create_open_code_session,
+            opencode::prompt_open_code_session,
+            opencode::abort_open_code_session,
+            opencode::get_open_code_session_status,
+            opencode::get_open_code_session_messages,
             agent_conversations::agent_conversation_list,
             agent_conversations::agent_conversation_get,
             agent_conversations::agent_conversation_upsert,
@@ -656,61 +684,61 @@ pub fn run() {
             rename_file,
             delete_file,
             write_library_markdown,
-            save_image_to_workspace
-            ,privileged::privileged_file_operation
-            ,privileged::privileged_run_powershell
-            ,privileged::privileged_cancel_powershell
-            ,connections::load_workspace_connections
-            ,connections::save_workspace_connections
-            ,load_secret_value
-            ,drafts::save_workspace_document_draft
-            ,drafts::list_workspace_document_drafts
-            ,drafts::delete_workspace_document_draft
-            ,ccswitch::list_ccswitch_providers
-            ,knowledge::knowledge_scan
-            ,knowledge::knowledge_import_markdown
-            ,updater::app_update_check
-            ,updater::app_update_install
-            ,knowledge::knowledge_move_workspace_markdown
-            ,knowledge::knowledge_index_pending
-            ,knowledge::knowledge_list
-            ,knowledge::knowledge_sections
-            ,knowledge::knowledge_search
-            ,knowledge::knowledge_section_scope
-            ,knowledge::knowledge_chunk
-            ,knowledge::knowledge_set_chunk_quality
-            ,knowledge::knowledge_set_section_quality
-            ,knowledge::knowledge_section_chunks
-            ,knowledge::knowledge_remove
-            ,knowledge::knowledge_delete_file
-            ,knowledge::knowledge_import_web
-            ,knowledge::knowledge_fetch_web_page
-            ,knowledge::knowledge_analyze_markdown
-            ,knowledge::knowledge_apply_headings
-            ,knowledge::knowledge_backups
-            ,knowledge::knowledge_restore_backup
-            ,memory::memory_list
-            ,memory::memory_read
-            ,memory::memory_search
-            ,memory::memory_write
-            ,memory::memory_propose
-            ,memory::memory_accept
-            ,memory::memory_delete
-            ,memory::memory_rebuild
-            ,skills::skill_discover
-            ,skills::skill_read
-            ,skills::skill_read_resource
-            ,skills::skill_validate
-            ,skills::skill_create
-            ,skills::skill_install
-            ,skills::skill_delete
-            ,skills::skill_package
-            ,skills::skill_market_search
-            ,skills::skill_market_detail
-            ,skills::skill_check_updates
-            ,skills::skill_update
-            ,skills::skill_runtime_status
-            ,skills::skill_run_command
+            save_image_to_workspace,
+            privileged::privileged_file_operation,
+            privileged::privileged_run_powershell,
+            privileged::privileged_cancel_powershell,
+            connections::load_workspace_connections,
+            connections::save_workspace_connections,
+            load_secret_value,
+            drafts::save_workspace_document_draft,
+            drafts::list_workspace_document_drafts,
+            drafts::delete_workspace_document_draft,
+            ccswitch::list_ccswitch_providers,
+            knowledge::knowledge_scan,
+            knowledge::knowledge_import_markdown,
+            updater::app_update_check,
+            updater::app_update_install,
+            knowledge::knowledge_move_workspace_markdown,
+            knowledge::knowledge_index_pending,
+            knowledge::knowledge_list,
+            knowledge::knowledge_sections,
+            knowledge::knowledge_search,
+            knowledge::knowledge_section_scope,
+            knowledge::knowledge_chunk,
+            knowledge::knowledge_set_chunk_quality,
+            knowledge::knowledge_set_section_quality,
+            knowledge::knowledge_section_chunks,
+            knowledge::knowledge_remove,
+            knowledge::knowledge_delete_file,
+            knowledge::knowledge_import_web,
+            knowledge::knowledge_fetch_web_page,
+            knowledge::knowledge_analyze_markdown,
+            knowledge::knowledge_apply_headings,
+            knowledge::knowledge_backups,
+            knowledge::knowledge_restore_backup,
+            memory::memory_list,
+            memory::memory_read,
+            memory::memory_search,
+            memory::memory_write,
+            memory::memory_propose,
+            memory::memory_accept,
+            memory::memory_delete,
+            memory::memory_rebuild,
+            skills::skill_discover,
+            skills::skill_read,
+            skills::skill_read_resource,
+            skills::skill_validate,
+            skills::skill_create,
+            skills::skill_install,
+            skills::skill_delete,
+            skills::skill_package,
+            skills::skill_market_search,
+            skills::skill_market_detail,
+            skills::skill_check_updates,
+            skills::skill_update,
+            skills::skill_runtime_status,
+            skills::skill_run_command
         ])
         .run(tauri::generate_context!())
         .expect("failed to run application");

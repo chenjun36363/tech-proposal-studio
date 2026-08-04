@@ -259,5 +259,4 @@ mod tests {
         });
         assert!(serde_json::from_value::<WorkspaceDocumentDraft>(payload).is_err());
     }
-
 }

@@ -417,7 +417,7 @@ export function InspectorPanel({
         <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} workspaceRuntime={agentWorkspaceRuntime} onDocumentSearch={onAgentDocumentSearch} notify={notify} />
       </div>
       <div className={`long-writing-host ${agentMode === "long-writing" ? "" : "is-hidden"}`}>
-        <LongWritingPanel project={project} baselineHash={longWritingBaselineHash} saveBeforeStart={saveBeforeLongWriting} onDocumentSnapshot={onLongWritingSnapshot} onLockChange={onLongWritingLockChange} onLocateChapter={onLocateLongWritingChapter} notify={notify} />
+        <LongWritingPanel project={project} baselineHash={longWritingBaselineHash} saveBeforeStart={saveBeforeLongWriting} onDocumentSnapshot={onLongWritingSnapshot} onLockChange={onLongWritingLockChange} onLocateChapter={onLocateLongWritingChapter} onManageReferences={() => setTab("context")} notify={notify} />
       </div>
     </div>
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}

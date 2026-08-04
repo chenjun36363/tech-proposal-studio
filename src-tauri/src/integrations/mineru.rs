@@ -52,8 +52,8 @@ fn safe_stem(file_name: &str) -> String {
         .map(|c| match c {
             // Keep the generated Markdown destination parseable without depending on
             // every renderer to balance punctuation in a bare link destination.
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '(' | ')' | '[' | ']'
-            | '{' | '}' => '_',
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '(' | ')' | '[' | ']' | '{'
+            | '}' => '_',
             _ => c,
         })
         .collect();
@@ -76,7 +76,10 @@ fn rewrite_image_paths(markdown: &str, asset_rel: &str) -> String {
         .replace_all(markdown, |captures: &regex::Captures<'_>| {
             // Angle-bracket destinations remain valid when the import directory has
             // spaces or punctuation (for example a Word filename containing brackets).
-            format!("{}<{}/{}>{}", &captures[1], asset, &captures[2], &captures[3])
+            format!(
+                "{}<{}/{}>{}",
+                &captures[1], asset, &captures[2], &captures[3]
+            )
         })
         .into_owned()
 }
@@ -146,10 +149,7 @@ fn extract_zip_markdown_and_images(
         let mut final_name = name.clone();
         if used_names.contains(&final_name.to_ascii_lowercase()) {
             let path = PathBuf::from(&name);
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("image");
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
             let ext = path
                 .extension()
                 .and_then(|s| s.to_str())
@@ -201,7 +201,10 @@ async fn send_json(
             .json(payload);
     }
 
-    let response = builder.send().await.map_err(|e| format!("MinerU 调用失败: {e}"))?;
+    let response = builder
+        .send()
+        .await
+        .map_err(|e| format!("MinerU 调用失败: {e}"))?;
     let status = response.status();
     let text = response
         .text()
@@ -304,7 +307,9 @@ fn fill_mineru_api_key(config: &mut MinerUConfig, workspace_root: &Path) {
     }
 }
 
-pub async fn convert_document(req: ConvertDocumentRequest) -> Result<ConvertDocumentResult, String> {
+pub async fn convert_document(
+    req: ConvertDocumentRequest,
+) -> Result<ConvertDocumentResult, String> {
     let mut config = req.config;
     let workspace_root = PathBuf::from(&req.workspace_root);
     if req.workspace_root.trim().is_empty() {
@@ -314,7 +319,10 @@ pub async fn convert_document(req: ConvertDocumentRequest) -> Result<ConvertDocu
     if config.api_key.trim().is_empty() {
         return Err(format!(
             "请先在设置中配置 MinerU API Key（也可写入 {}）",
-            workspace_root.join(".gouan").join("connections.json").display()
+            workspace_root
+                .join(".gouan")
+                .join("connections.json")
+                .display()
         ));
     }
 
@@ -418,9 +426,7 @@ pub async fn convert_document(req: ConvertDocumentRequest) -> Result<ConvertDocu
         let status = upload_resp.status();
         let body = upload_resp.text().await.unwrap_or_default();
         let snippet: String = body.chars().take(400).collect();
-        return Err(format!(
-            "MinerU 文件上传失败 HTTP {status}: {snippet}"
-        ));
+        return Err(format!("MinerU 文件上传失败 HTTP {status}: {snippet}"));
     }
 
     let extract_result = poll_batch_result(
@@ -449,10 +455,7 @@ pub async fn convert_document(req: ConvertDocumentRequest) -> Result<ConvertDocu
         .await
         .map_err(|e| format!("MinerU 结果下载失败: {e}"))?;
     if !zip_resp.status().is_success() {
-        return Err(format!(
-            "MinerU 结果下载失败 HTTP {}",
-            zip_resp.status()
-        ));
+        return Err(format!("MinerU 结果下载失败 HTTP {}", zip_resp.status()));
     }
     let zip_bytes = zip_resp
         .bytes()

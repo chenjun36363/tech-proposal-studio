@@ -1,19 +1,41 @@
 use crate::{app_dir, StreamEvent};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, path::{Path, PathBuf}, process::Stdio, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use tauri::{AppHandle, Emitter};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command, time::timeout};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+    time::timeout,
+};
 
 const ALLOWED_PROGRAMS: &[&str] = &[
-    "node", "npm", "npx", "pnpm", "git", "claude", "codex", "opencode", "codebuddy", "pwsh", "powershell",
+    "node",
+    "npm",
+    "npx",
+    "pnpm",
+    "git",
+    "claude",
+    "codex",
+    "opencode",
+    "codebuddy",
+    "pwsh",
+    "powershell",
 ];
 
 pub(crate) fn init_db(app: &AppHandle) -> Result<(), String> {
     let dir = app_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let db = rusqlite::Connection::open(dir.join("workspace.db")).map_err(|error| error.to_string())?;
-    db.busy_timeout(Duration::from_secs(5)).map_err(|error| error.to_string())?;
+    let db =
+        rusqlite::Connection::open(dir.join("workspace.db")).map_err(|error| error.to_string())?;
+    db.busy_timeout(Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS command_runs(
             id INTEGER PRIMARY KEY,
@@ -33,7 +55,11 @@ pub(crate) fn init_db(app: &AppHandle) -> Result<(), String> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommandPreset {
-    program: String, args: Vec<String>, cwd: String, timeout_ms: u64, allow_shell: bool,
+    program: String,
+    args: Vec<String>,
+    cwd: String,
+    timeout_ms: u64,
+    allow_shell: bool,
     #[serde(default)]
     stdin: Option<String>,
 }
@@ -41,7 +67,10 @@ pub(crate) struct CommandPreset {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommandResult {
-    exit_code: i32, stdout: String, stderr: String, duration_ms: u128,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    duration_ms: u128,
 }
 
 fn program_basename(program: &str) -> String {
@@ -111,7 +140,7 @@ fn is_windows_exec(path: &Path) -> bool {
     }
 }
 
-fn resolve_executable(program: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_executable(program: &str) -> Result<PathBuf, String> {
     let direct = PathBuf::from(program);
     if direct.is_absolute() && direct.is_file() && is_windows_exec(&direct) {
         return Ok(direct);
@@ -122,7 +151,11 @@ fn resolve_executable(program: &str) -> Result<PathBuf, String> {
     // bypass cmd.exe parsing when passed as an argument.
     if program.eq_ignore_ascii_case("opencode") {
         for dir in tool_search_dirs() {
-            let candidate = dir.join("node_modules").join("opencode-ai").join("bin").join("opencode.exe");
+            let candidate = dir
+                .join("node_modules")
+                .join("opencode-ai")
+                .join("bin")
+                .join("opencode.exe");
             if candidate.is_file() {
                 return Ok(candidate);
             }
@@ -223,12 +256,9 @@ async fn spawn_and_wait(
         command.env("PATH", path);
     }
 
-    let mut child = command.spawn().map_err(|e| {
-        format!(
-            "启动失败: {e}（程序：{}）",
-            program.display()
-        )
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("启动失败: {e}（程序：{}）", program.display()))?;
     if let Some(data) = stdin_data {
         if let Some(mut stdin) = child.stdin.take() {
             stdin
@@ -270,7 +300,10 @@ pub(crate) fn resolve_shell() -> Result<(PathBuf, Vec<String>), String> {
 }
 
 #[tauri::command]
-pub(crate) fn open_workspace_powershell(cwd: String, program: Option<String>) -> Result<(), String> {
+pub(crate) fn open_workspace_powershell(
+    cwd: String,
+    program: Option<String>,
+) -> Result<(), String> {
     let workdir = resolve_workdir(&cwd)?;
     let (shell, mut args) = resolve_shell()?;
 
@@ -280,7 +313,11 @@ pub(crate) fn open_workspace_powershell(cwd: String, program: Option<String>) ->
         }
         let executable = resolve_executable(&program)?;
         let escaped = executable.to_string_lossy().replace('\'', "''");
-        args.extend(["-NoExit".into(), "-Command".into(), format!("& '{escaped}'")]);
+        args.extend([
+            "-NoExit".into(),
+            "-Command".into(),
+            format!("& '{escaped}'"),
+        ]);
     }
 
     #[cfg(windows)]
@@ -319,21 +356,20 @@ fn redact(text: &str) -> String {
 /// Absolute paths (user workspace) are allowed; relative paths join the app cwd.
 /// No longer forced under the app package directory — workspace can live anywhere.
 pub(crate) fn resolve_workdir(cwd: &str) -> Result<PathBuf, String> {
-    let requested = if cwd.trim().is_empty() { "." } else { cwd.trim() };
+    let requested = if cwd.trim().is_empty() {
+        "."
+    } else {
+        cwd.trim()
+    };
     let path = PathBuf::from(requested);
     let workdir = if path.is_absolute() {
         path
     } else {
-        env::current_dir()
-            .map_err(|e| e.to_string())?
-            .join(path)
+        env::current_dir().map_err(|e| e.to_string())?.join(path)
     };
-    let workdir = workdir.canonicalize().map_err(|e| {
-        format!(
-            "工作目录无效: {} ({e})",
-            workdir.to_string_lossy()
-        )
-    })?;
+    let workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("工作目录无效: {} ({e})", workdir.to_string_lossy()))?;
     if !workdir.is_dir() {
         return Err(format!("工作目录不存在: {}", workdir.to_string_lossy()));
     }
@@ -341,7 +377,10 @@ pub(crate) fn resolve_workdir(cwd: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn run_command(app: AppHandle, preset: CommandPreset) -> Result<CommandResult, String> {
+pub(crate) async fn run_command(
+    app: AppHandle,
+    preset: CommandPreset,
+) -> Result<CommandResult, String> {
     if preset.allow_shell {
         return Err("首版不允许 Shell 模式".into());
     }
@@ -381,58 +420,132 @@ pub(crate) async fn run_command(app: AppHandle, preset: CommandPreset) -> Result
 }
 
 #[tauri::command]
-pub(crate) async fn run_command_stream(app: AppHandle, run_id: String, preset: CommandPreset) -> Result<CommandResult, String> {
-    if preset.allow_shell { return Err("首版不允许 Shell 模式".into()); }
+pub(crate) async fn run_command_stream(
+    app: AppHandle,
+    run_id: String,
+    preset: CommandPreset,
+) -> Result<CommandResult, String> {
+    if preset.allow_shell {
+        return Err("首版不允许 Shell 模式".into());
+    }
     ensure_allowed(&preset.program)?;
     let resolved = resolve_executable(&preset.program)?;
     let cwd = resolve_workdir(&preset.cwd)?;
     let started = std::time::Instant::now();
-    let use_cmd = resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat")).unwrap_or(false);
+    let use_cmd = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false);
     let mut command = if use_cmd {
         let mut cmd = Command::new("cmd.exe");
         cmd.arg("/D").arg("/S").arg("/C");
         let mut line = quote_cmd_arg(&resolved.to_string_lossy());
-        for arg in &preset.args { line.push(' '); line.push_str(&quote_cmd_arg(arg)); }
-        cmd.arg(line); cmd
+        for arg in &preset.args {
+            line.push(' ');
+            line.push_str(&quote_cmd_arg(arg));
+        }
+        cmd.arg(line);
+        cmd
     } else {
-        let mut cmd = Command::new(&resolved); cmd.args(&preset.args); cmd
+        let mut cmd = Command::new(&resolved);
+        cmd.args(&preset.args);
+        cmd
     };
-    command.current_dir(&cwd)
-        .stdin(if preset.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    if let Some(path) = child_path_env() { command.env("PATH", path); }
-    let mut child = command.spawn().map_err(|e| format!("启动失败: {e}（程序：{}）", resolved.display()))?;
+    command
+        .current_dir(&cwd)
+        .stdin(if preset.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(path) = child_path_env() {
+        command.env("PATH", path);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("启动失败: {e}（程序：{}）", resolved.display()))?;
     if let Some(data) = preset.stdin.as_deref() {
-        if let Some(mut stdin) = child.stdin.take() { stdin.write_all(data.as_bytes()).await.map_err(|e| format!("写入 stdin 失败: {e}"))?; }
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(data.as_bytes())
+                .await
+                .map_err(|e| format!("写入 stdin 失败: {e}"))?;
+        }
     }
     let mut stdout = child.stdout.take().ok_or("无法读取标准输出")?;
     let mut stderr = child.stderr.take().ok_or("无法读取错误输出")?;
-    let app_out = app.clone(); let stdout_run = run_id.clone();
+    let app_out = app.clone();
+    let stdout_run = run_id.clone();
     let stdout_task = tokio::spawn(async move {
-        let mut all = Vec::new(); let mut buffer = [0u8; 2048];
-        loop { let n = stdout.read(&mut buffer).await.map_err(|e| e.to_string())?; if n == 0 { break; }
+        let mut all = Vec::new();
+        let mut buffer = [0u8; 2048];
+        loop {
+            let n = stdout.read(&mut buffer).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
             all.extend_from_slice(&buffer[..n]);
             let content = redact(&String::from_utf8_lossy(&buffer[..n]));
-            let _ = app_out.emit("session://command", StreamEvent { run_id: stdout_run.clone(), channel: "stdout".into(), content });
-        } Ok::<Vec<u8>, String>(all)
+            let _ = app_out.emit(
+                "session://command",
+                StreamEvent {
+                    run_id: stdout_run.clone(),
+                    channel: "stdout".into(),
+                    content,
+                },
+            );
+        }
+        Ok::<Vec<u8>, String>(all)
     });
-    let app_err = app.clone(); let stderr_run = run_id.clone();
+    let app_err = app.clone();
+    let stderr_run = run_id.clone();
     let stderr_task = tokio::spawn(async move {
-        let mut all = Vec::new(); let mut buffer = [0u8; 2048];
-        loop { let n = stderr.read(&mut buffer).await.map_err(|e| e.to_string())?; if n == 0 { break; }
+        let mut all = Vec::new();
+        let mut buffer = [0u8; 2048];
+        loop {
+            let n = stderr.read(&mut buffer).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
             all.extend_from_slice(&buffer[..n]);
             let content = redact(&String::from_utf8_lossy(&buffer[..n]));
-            let _ = app_err.emit("session://command", StreamEvent { run_id: stderr_run.clone(), channel: "stderr".into(), content });
-        } Ok::<Vec<u8>, String>(all)
+            let _ = app_err.emit(
+                "session://command",
+                StreamEvent {
+                    run_id: stderr_run.clone(),
+                    channel: "stderr".into(),
+                    content,
+                },
+            );
+        }
+        Ok::<Vec<u8>, String>(all)
     });
-    let status = match timeout(Duration::from_millis(preset.timeout_ms.max(1_000)), child.wait()).await {
+    let status = match timeout(
+        Duration::from_millis(preset.timeout_ms.max(1_000)),
+        child.wait(),
+    )
+    .await
+    {
         Ok(result) => result.map_err(|e| e.to_string())?,
-        Err(_) => { let _ = child.kill().await; return Err("命令执行超时".into()); }
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err("命令执行超时".into());
+        }
     };
     let stdout = stdout_task.await.map_err(|e| e.to_string())??;
     let stderr = stderr_task.await.map_err(|e| e.to_string())??;
-    let result = CommandResult { exit_code: status.code().unwrap_or(-1), stdout: redact(&String::from_utf8_lossy(&stdout)), stderr: redact(&String::from_utf8_lossy(&stderr)), duration_ms: started.elapsed().as_millis() };
-    let db = rusqlite::Connection::open(app_dir(&app)?.join("workspace.db")).map_err(|e| e.to_string())?;
+    let result = CommandResult {
+        exit_code: status.code().unwrap_or(-1),
+        stdout: redact(&String::from_utf8_lossy(&stdout)),
+        stderr: redact(&String::from_utf8_lossy(&stderr)),
+        duration_ms: started.elapsed().as_millis(),
+    };
+    let db = rusqlite::Connection::open(app_dir(&app)?.join("workspace.db"))
+        .map_err(|e| e.to_string())?;
     db.execute("INSERT INTO command_runs(program,exit_code,stdout,stderr,duration_ms) VALUES(?1,?2,?3,?4,?5)", rusqlite::params![resolved.to_string_lossy().to_string(), result.exit_code, result.stdout, result.stderr, result.duration_ms as i64]).map_err(|e| e.to_string())?;
     Ok(result)
 }
@@ -447,4 +560,3 @@ pub(crate) fn detect_tools() -> Result<HashMap<String, String>, String> {
     }
     Ok(found)
 }
-

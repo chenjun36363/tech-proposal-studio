@@ -15,10 +15,14 @@ export type LongWritingTaskStatus =
 
 export type ChapterJobStatus =
   | "queued"
+  | "analyzing"
+  | "awaiting_write"
+  | "writing"
   | "running"
   | "validating"
   | "committing"
   | "completed"
+  | "awaiting_review"
   | "retryable"
   | "failed"
   | "cancelled";
@@ -35,6 +39,10 @@ export type ConsistencyIssueSeverity = "low" | "medium" | "high";
 export type ConsistencyIssueStatus = "pending" | "selected" | "dismissed" | "repaired";
 
 export type LongWritingEventType =
+  | "server_started"
+  | "server_stopped"
+  | "session_created"
+  | "analysis_completed"
   | "task_started"
   | "backup_created"
   | "summary_started"
@@ -54,6 +62,9 @@ export type LongWritingEventType =
   | "consistency_started"
   | "consistency_completed"
   | "conflict_detected"
+  | "scope_review_requested"
+  | "scope_review_accepted"
+  | "scope_review_rejected"
   | "paused"
   | "resumed"
   | "failed"
@@ -82,6 +93,8 @@ export interface LongWritingSourceRef {
   title: string;
   path?: string;
   excerpt?: string;
+  content?: string;
+  contentHash?: string;
 }
 
 /** Generic frozen tree used by outline review UIs that need nested headings. */
@@ -156,10 +169,29 @@ export interface ConsistencyReportSubmission {
   issues: ConsistencyIssue[];
 }
 
+export interface LongWritingScopeReview {
+  reason: string;
+  proposedDocumentMarkdown: string;
+  proposedDocumentHash: string;
+  rollbackDocumentHash: string;
+  createdAt: string;
+  decision?: "accepted" | "rejected";
+  decidedAt?: string;
+}
+
 export interface ChapterJob {
   id: string;
+  headingId?: string;
+  headingLevel?: number;
+  parentHeadingId?: string;
+  sessionId?: string;
+  analysis?: string;
+  preEditDocumentMarkdown?: string;
+  preEditDocumentHash?: string;
+  postEditDocumentHash?: string;
   taskId: string;
   chapterId: string;
+  scopeReview?: LongWritingScopeReview;
   order: number;
   titlePath: string[];
   status: ChapterJobStatus;
@@ -187,6 +219,14 @@ export interface LongWritingBackupRecord {
 
 export interface LongWritingTaskRecord {
   id: string;
+  schemaVersion?: 2;
+  backend?: "opencode-http";
+  mainSessionId?: string;
+  serverVersion?: string;
+  selectedHeadingIds?: string[];
+  modelRef?: { providerId: string; modelId: string };
+  mainAnalysis?: string;
+  generatedOutlineMarkdown?: string;
   filePath: string;
   workspaceRoot: string;
   mode: LongWritingMode;
@@ -234,4 +274,3 @@ export type LongWritingStructuredModelResult =
   | { type: "chapter_draft"; value: ChapterDraftResult }
   | { type: "consistency_report"; value: ConsistencyReportSubmission }
   | { type: "chapter_repair"; value: ChapterRepairSubmission };
-
