@@ -282,6 +282,12 @@
   color: hsl(var(--muted-foreground));
   font-size: 9px;
 }
+.agent-context-reference-badge {
+  cursor: default;
+}
+.agent-context-reference-badge.active {
+  border-color: hsl(var(--primary) / .55);
+}
 
 .agent-compact-toggle.active {
   border-color: hsl(var(--primary));
@@ -339,4 +345,166 @@
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.cli-agent-provider-picker { position:relative; display:grid; gap:5px; }
+.cli-agent-provider-picker .cli-engine-trigger { min-height:44px; }
+.cli-agent-model-field { display:grid; gap:4px; }
+.cli-agent-model-field label { display:grid; gap:4px; min-width:0; color:hsl(var(--muted-foreground)); font-size:9px; }
+.cli-agent-model-field .model-combobox,
+.cli-agent-model-field .model-select { width:100%; min-width:0; }
+.cli-agent-model-field .model-combobox-trigger,
+.cli-agent-model-field .model-select { min-height:29px; font-size:10px; }
+.cli-agent-runtime-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 28px 28px;
+  align-items: center;
+  min-height: 34px;
+  gap: 6px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--muted) / .2);
+}
+.cli-agent-runtime-bar > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--muted-foreground)); font-size: 9px; }
+.cli-agent-runtime-bar > button { width: 26px; height: 26px; padding: 0; display: inline-grid; place-items: center; }
+.cli-agent-runtime-bar > button:disabled { opacity: .42; cursor: not-allowed; }
+.cli-agent-runtime-state { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.cli-agent-runtime-state > i { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--muted-foreground)); }
+.cli-agent-runtime-bar.status-healthy .cli-agent-runtime-state > i { background: #2e9b64; box-shadow: 0 0 0 3px rgb(46 155 100 / 12%); }
+.cli-agent-runtime-bar.status-starting .cli-agent-runtime-state > i,
+.cli-agent-runtime-bar.status-stopping .cli-agent-runtime-state > i { background: #c68a28; }
+.cli-agent-runtime-bar.status-unhealthy .cli-agent-runtime-state > i { background: #c94e4e; }
+.cli-agent-runtime-bar.status-unknown .cli-agent-runtime-state > i { background: #8a919b; }
+.cli-agent-runtime-bar .is-spinning { animation: cli-agent-runtime-spin .8s linear infinite; }
+@keyframes cli-agent-runtime-spin { to { transform: rotate(360deg); } }
+.cli-agent-error { display:flex; align-items:flex-start; gap:5px; padding:7px 8px; border:1px solid hsl(var(--destructive)/.35); border-radius:6px; color:hsl(var(--destructive)); font-size:10px; line-height:1.45; }
+.cli-agent-draft { flex:none; }
+
+/* Local Agent engine and runtime controls. Keep these compact so the shared
+   conversation header remains the visual focus in the narrow inspector. */
+.agent-local-runtime-head {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 7px;
+  background: hsl(var(--muted) / .2);
+}
+.agent-local-provider-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 650;
+}
+.agent-local-provider-select > span { flex: none; white-space: nowrap; }
+.agent-local-provider-select select {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 10px;
+}
+.agent-local-provider-select select:focus,
+.agent-local-provider-select select:hover {
+  border-color: hsl(var(--primary) / .5);
+}
+.agent-runtime-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.agent-runtime-actions > span:not(.agent-runtime-dot) {
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+  font-weight: 600;
+}
+.agent-runtime-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: hsl(var(--muted-foreground));
+  box-shadow: 0 0 0 2px hsl(var(--muted-foreground) / .12);
+}
+.agent-runtime-dot.healthy {
+  background: hsl(var(--success));
+  box-shadow: 0 0 0 2px hsl(var(--success) / .16);
+}
+.agent-runtime-dot.starting,
+.agent-runtime-dot.stopping {
+  background: hsl(var(--warning));
+  box-shadow: 0 0 0 2px hsl(var(--warning) / .16);
+  animation: agent-runtime-pulse 1.2s ease-in-out infinite;
+}
+.agent-runtime-dot.unhealthy {
+  background: hsl(var(--destructive));
+  box-shadow: 0 0 0 2px hsl(var(--destructive) / .14);
+}
+.agent-runtime-dot.stopped { background: hsl(var(--muted-foreground)); }
+.agent-runtime-actions button {
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  background: hsl(var(--background) / .72);
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+  white-space: nowrap;
+}
+.agent-runtime-actions button:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / .5);
+  background: hsl(var(--primary) / .07);
+  color: hsl(var(--primary));
+}
+.agent-runtime-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.agent-chat-panel > .agent-model-select {
+  flex: none;
+  min-width: 0;
+  margin: 0;
+  gap: 5px;
+}
+.agent-chat-panel > .agent-model-select > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 650;
+}
+.agent-chat-panel > .agent-model-select > .model-combobox,
+.agent-chat-panel > .agent-model-select > .model-select {
+  width: 100%;
+  min-width: 0;
+}
+.agent-chat-panel > .agent-model-select .model-combobox-trigger,
+.agent-chat-panel > .agent-model-select .model-select {
+  min-height: 30px;
+  font-size: 10px;
+}
+.agent-chat-panel > .model-list-error {
+  display: block;
+  margin: -2px 0 0;
+  line-height: 1.4;
+}
+@keyframes agent-runtime-pulse {
+  50% { opacity: .45; }
+}
+@media (max-width: 320px) {
+  .agent-local-runtime-head { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .agent-runtime-actions { justify-content: flex-start; }
 }

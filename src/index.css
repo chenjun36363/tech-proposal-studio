@@ -736,7 +736,6 @@
     border-bottom: 1px solid hsl(var(--border) / 0.68);
   }
 
-  .session-trace,
   .diff,
   .cli-task-result,
   .context-manager {
@@ -2526,18 +2525,22 @@
     width: 28px;
   }
   .find-replace-row input[type="text"],
-  .find-replace-row > label > input:not([type="checkbox"]) {
+  .find-replace-row > label > input:not([type="checkbox"]),
+  .find-replace-row > label > textarea {
     height: 30px;
     border: 1px solid hsl(var(--input));
     border-radius: 10px;
     padding: 0 8px;
     outline: 0;
+    resize: vertical;
+    line-height: 20px;
     min-width: 180px;
     width: min(360px, 40vw);
     background: hsl(var(--background));
     color: hsl(var(--foreground));
   }
-  .find-replace-row input:focus {
+  .find-replace-row input:focus,
+  .find-replace-row textarea:focus {
     border-color: hsl(var(--primary) / 0.5);
   }
   .find-count {
@@ -2904,6 +2907,15 @@
     background: hsl(var(--primary) / 0.08);
     color: hsl(var(--primary));
     font-weight: 650;
+  }
+  .toc-mode button.locked {
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.35);
+  }
+  .toc-mode button .toc-lock-icon {
+    display: inline-flex;
+    vertical-align: -1px;
+    margin-left: 3px;
   }
   .toc-list {
     overflow: auto;
@@ -3889,30 +3901,6 @@
     font-size: 11px;
   }
 
-  .ai-runtime-switch {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px;
-    padding: 3px;
-    border: 1px solid hsl(var(--border));
-    border-radius: 7px;
-    background: hsl(var(--muted) / 0.55);
-  }
-  .ai-runtime-switch button { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; border: 0; background: transparent; color: hsl(var(--muted-foreground)); font-size: 11px; }
-  .ai-runtime-switch button.active { background: hsl(var(--background)); color: hsl(var(--foreground)); box-shadow: 0 1px 3px hsl(var(--foreground) / 0.08); }
-  .ai-runtime-panel { display: flex; flex-direction: column; gap: 12px; }
-  .ai-runtime-panel > label.wide { display: grid; gap: 6px; }
-  .ai-runtime-panel > label.wide .model-select { margin-top: 0; }
-  .cli-agent-panel {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-  }
-  .cli-agent-panel > * { min-width: 0; max-width: 100%; }
-  .cli-engine-picker { position: relative; display: grid; gap: 5px; }
   .cli-engine-label { color: hsl(var(--muted-foreground)); font-size: 10px; font-weight: 600; }
   .cli-engine-trigger {
     display: flex;
@@ -3963,12 +3951,6 @@
     color: hsl(var(--muted-foreground));
     font-size: 10px;
   }
-  .cli-command-hint { display: inline-flex; align-items: center; gap: 5px; color: hsl(var(--muted-foreground)); font: 10px ui-monospace, Consolas, monospace; }
-  .cli-powershell-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); border: 1px solid hsl(var(--border)); border-radius: 6px; font-size: 10px; }
-  .cli-powershell-button:hover:not(:disabled) { color: hsl(var(--foreground)); border-color: hsl(var(--foreground) / 0.25); background: hsl(var(--muted) / 0.4); }
-  .cli-agent-output { overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 6px; }
-  .cli-agent-output header { display: flex; justify-content: space-between; padding: 7px 9px; border-bottom: 1px solid hsl(var(--border)); font-size: 10px; }
-  .cli-agent-output pre { max-height: 220px; overflow: auto; margin: 0; padding: 10px; white-space: pre-wrap; color: hsl(var(--muted-foreground)); font: 10px/1.55 ui-monospace, Consolas, monospace; }
   .knowledge-field-filter label.active {
     border-color: hsl(var(--primary) / 0.5);
     background: hsl(var(--primary) / 0.08);

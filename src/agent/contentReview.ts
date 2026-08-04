@@ -1,5 +1,6 @@
 import type { ResolvedModelConfig } from "../core/types";
 import { agentCompletion } from "../services/model";
+import type { AgentCompletion } from "./runner";
 import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "./protocol";
 
 export type ContentReviewCheckStatus = "pass" | "fail" | "uncertain";
@@ -164,6 +165,7 @@ async function requestReview(
   messages: AgentMessage[],
   config: ResolvedModelConfig,
   signal?: AbortSignal,
+  completion: AgentCompletion = agentCompletion as AgentCompletion,
 ): Promise<AgentModelResponse> {
   const forcedChoice = { type: "function" as const, function: { name: submitContentReviewTool.function.name } };
   const request = {
@@ -175,10 +177,10 @@ async function requestReview(
     temperature: 0.1,
   };
   try {
-    return await agentCompletion(request, config, signal) as AgentModelResponse;
+    return await completion(request, config, signal) as AgentModelResponse;
   } catch (error) {
     if (!isForcedToolChoiceCompatibilityError(error)) throw error;
-    return await agentCompletion({ ...request, tool_choice: "auto" }, config, signal) as AgentModelResponse;
+    return await completion({ ...request, tool_choice: "auto" }, config, signal) as AgentModelResponse;
   }
 }
 
@@ -186,6 +188,7 @@ export async function reviewContent(
   input: ReviewContentInput,
   config: ResolvedModelConfig,
   signal?: AbortSignal,
+  completion?: AgentCompletion,
 ): Promise<ContentReviewResult> {
   const requirements = [...new Set(input.requirements.map(item => item.trim()).filter(Boolean))];
   if (!input.content.trim()) throw new Error("待审核内容为空");
@@ -214,7 +217,7 @@ export async function reviewContent(
     { role: "user", content: payload },
   ];
 
-  let response = await requestReview(messages, config, signal);
+  let response = await requestReview(messages, config, signal, completion);
   try {
     return normalizeReviewResult(parseToolArguments(response), { ...input, requirements });
   } catch (firstError) {
@@ -224,7 +227,7 @@ export async function reviewContent(
         role: "user",
         content: `上一次结构化审核结果无效：${firstError instanceof Error ? firstError.message : String(firstError)}。请重新调用且只调用 submit_content_review，并严格返回合法 JSON 参数。`,
       },
-    ], config, signal);
+    ], config, signal, completion);
     return normalizeReviewResult(parseToolArguments(response), { ...input, requirements });
   }
 }

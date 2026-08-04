@@ -63,6 +63,7 @@ previewMarked.use({ extensions: [markExtension] });
 
 export type MarkdownSourceEditorHandle = {
   getSelection: () => { start: number; end: number };
+  getSelectedText: () => string;
   focus: () => void;
   setSelection: (start: number, end: number) => void;
   scrollToSelection: () => void;
@@ -243,6 +244,11 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
       if (!el) return { start: 0, end: 0 };
       return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 };
     },
+    getSelectedText: () => {
+      const el = taRef.current;
+      if (!el) return "";
+      return el.value.slice(el.selectionStart ?? 0, el.selectionEnd ?? 0);
+    },
     focus: () => taRef.current?.focus(),
     setSelection: (start: number, end: number) => {
       const el = taRef.current;
@@ -254,12 +260,45 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
       const el = taRef.current;
       if (!el) return;
       const start = el.selectionStart ?? 0;
-      const before = el.value.slice(0, start);
-      const line = before.split("\n").length;
-      const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 22;
-      const paddingTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
-      const target = Math.max(0, (line - 2) * lineHeight + paddingTop - el.clientHeight / 3);
-      el.scrollTop = target;
+      const style = getComputedStyle(el);
+      const mirror = document.createElement("div");
+      const marker = document.createElement("span");
+
+      // A textarea selection has no DOM rect. Measuring only newline count
+      // loses whenever a long Markdown line soft-wraps. Use a layout mirror
+      // with the textarea's actual width/styles so the caret's visual row is
+      // measured instead of guessed from character offsets.
+      mirror.style.position = "fixed";
+      mirror.style.left = "-100000px";
+      mirror.style.top = "0";
+      mirror.style.visibility = "hidden";
+      mirror.style.pointerEvents = "none";
+      mirror.style.boxSizing = style.boxSizing;
+      mirror.style.width = `${el.clientWidth}px`;
+      mirror.style.padding = style.padding;
+      mirror.style.border = style.border;
+      mirror.style.font = style.font;
+      mirror.style.letterSpacing = style.letterSpacing;
+      mirror.style.lineHeight = style.lineHeight;
+      mirror.style.tabSize = style.tabSize;
+      mirror.style.whiteSpace = "pre-wrap";
+      mirror.style.overflowWrap = style.overflowWrap || "anywhere";
+      mirror.style.wordBreak = style.wordBreak;
+      mirror.style.minHeight = "0";
+      mirror.style.height = "auto";
+      mirror.style.margin = "0";
+      mirror.append(document.createTextNode(el.value.slice(0, start)));
+      marker.textContent = "\u200b";
+      mirror.append(marker);
+      document.body.append(mirror);
+
+      const mirrorRect = mirror.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const caretTop = markerRect.top - mirrorRect.top;
+      const target = caretTop - el.clientHeight / 3;
+      const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+      el.scrollTop = Math.min(maxScroll, Math.max(0, target));
+      mirror.remove();
     },
   }), []);
 

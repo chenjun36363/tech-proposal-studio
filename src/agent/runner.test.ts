@@ -209,6 +209,32 @@ describe("runProposalAgent", () => {
     expect(result.messages).not.toContainEqual(expect.objectContaining({ role: "user", content: expect.stringContaining("search_knowledge") }));
   });
 
+  it("supports a low-tool local transport budget and stops unavailable-tool retries", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "read-once", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已完成" } }] });
+    const execute = vi.fn(() => ({ content: "当前章节", isError: false }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } },
+      execute,
+    });
+
+    const result = await runProposalAgent({
+      task: "回答问题",
+      config,
+      registry,
+      signal: new AbortController().signal,
+      onEvent: () => undefined,
+      maxToolCalls: 1,
+      stopOnUnavailableTools: true,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ tools: [], tool_choice: "auto" }));
+  });
+
   it("stops at the configured round limit and preserves incomplete todos", async () => {
     agentCompletion.mockResolvedValue({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: crypto.randomUUID(), type: "function", function: { name: "read", arguments: "{}" } }] } }] });
     const execute = vi.fn(() => ({ content: "继续", isError: false }));

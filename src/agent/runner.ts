@@ -7,6 +7,12 @@ import { compactAgentRunContext } from "./contextCompaction";
 import { persistentAgentMessages } from "./messageUtils";
 
 const makeEventId = () => crypto.randomUUID();
+
+export type AgentCompletion = (
+  payload: Record<string, unknown>,
+  config: ResolvedModelConfig | OpenAICompatibleConfig,
+  signal?: AbortSignal,
+) => Promise<AgentModelResponse>;
 function parseArguments(value: string): { arguments: Record<string, unknown>; error?: string } {
   if (!value.trim()) return { arguments: {} };
   try {
@@ -106,13 +112,22 @@ export async function runProposalAgent(params: {
   temperature?: number;
   firstRoundToolName?: string;
   maxRounds?: number;
+  /** Limit tool executions for transports whose tool-call protocol is less reliable (for example local CLI). */
+  maxToolCalls?: number;
+  /** Stop after the model requests a tool that is not exposed in this run instead of asking it to retry repeatedly. */
+  stopOnUnavailableTools?: boolean;
+  /** Optional model transport. Local Agent uses this to reuse the same runner/tool loop. */
+  completion?: AgentCompletion;
 }) {
   const config: ResolvedModelConfig = "protocol" in params.config && "providerId" in params.config
     ? params.config
     : resolvedFromLegacy(params.config);
   const { registry, signal, onEvent } = params;
+  const complete = params.completion ?? (agentCompletion as AgentCompletion);
   const contextCompressionTokens = params.contextCompressionTokens ?? 98000;
   const maxRounds = Math.max(1, Math.round(params.maxRounds ?? 20));
+  const maxToolCalls = params.maxToolCalls === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.round(params.maxToolCalls));
+  const stopOnUnavailableTools = params.stopOnUnavailableTools === true;
   const emit = (event: AgentEventInput) => onEvent({ ...event, id: makeEventId(), at: Date.now() } as AgentEvent);
   const baseMessages = messagesForAvailableTools(params.messages ?? [{ role: "system" as const, content: params.systemPrompt ?? "" }], registry);
   let messages: AgentMessage[] = [...baseMessages, { role: "user", content: params.task }];
@@ -120,7 +135,9 @@ export async function runProposalAgent(params: {
     ? params.firstRoundToolName
     : null;
   let latestTodos: TrackedTodo[] = [];
+  let executedToolCalls = 0;
   const finalizeTodos = async (round: number) => {
+    if (executedToolCalls >= maxToolCalls) return;
     if (!registry.has("write_todo") || !latestTodos.some(todo => todo.status !== "completed")) return;
     const call: AgentToolCall = {
       id: makeEventId(),
@@ -141,9 +158,12 @@ export async function runProposalAgent(params: {
       if (signal.aborted) throw new DOMException("Agent 任务已取消", "AbortError");
       emit({ type: "round_started", round });
       const availableDefinitions = registry.definitions();
-      const roundDefinitions = requiredFirstTool
-        ? availableDefinitions.filter(tool => tool.function.name === requiredFirstTool)
-        : availableDefinitions;
+      const toolBudgetRemaining = Math.max(0, maxToolCalls - executedToolCalls);
+      const roundDefinitions = toolBudgetRemaining === 0
+        ? []
+        : requiredFirstTool
+          ? availableDefinitions.filter(tool => tool.function.name === requiredFirstTool)
+          : availableDefinitions;
       const compaction = compactAgentRunContext(messages, roundDefinitions, contextCompressionTokens);
       if (compaction.compacted) {
         messages = compaction.messages;
@@ -152,24 +172,26 @@ export async function runProposalAgent(params: {
       if (!compaction.fitsBudget) {
         throw new Error(`Agent 上下文压缩后仍超出预算 ${compaction.overflowTokens.toLocaleString()} tokens；请减少本轮超长输入、附加资料或工具定义，或提高上下文压缩阈值。`);
       }
-      const toolChoice = requiredFirstTool
+      const toolChoice = requiredFirstTool && roundDefinitions.length
         ? { type: "function" as const, function: { name: requiredFirstTool } }
         : "auto" as const;
       const request = { model: config.model, messages: messagesForModel(messages), tools: roundDefinitions, tool_choice: toolChoice, stream: false, temperature: params.temperature };
       let response: AgentModelResponse;
       try {
-        response = await agentCompletion(request, config, signal) as AgentModelResponse;
+        response = await complete(request, config, signal);
       } catch (error) {
         // Some OpenAI-compatible gateways support tools but reject a forced tool_choice.
         // Keep the native forced request as the default, then fall back to the prompt-enforced auto mode.
         if (!requiredFirstTool || !isForcedToolChoiceRejected(error)) throw error;
-        response = await agentCompletion({ ...request, tool_choice: "auto" }, config, signal) as AgentModelResponse;
+        response = await complete({ ...request, tool_choice: "auto" }, config, signal);
       }
       const assistant = response.choices?.[0]?.message;
       if (!assistant) throw new Error("模型未返回有效消息");
       const normalized = normalizedAssistant(assistant);
-      const availableCalls = normalized.calls.filter(raw => registry.has(raw.function.name));
-      const unavailableCalls = normalized.calls.filter(raw => !registry.has(raw.function.name));
+      const exposedToolNames = new Set(roundDefinitions.map(tool => tool.function.name));
+      const candidateCalls = normalized.calls.filter(raw => registry.has(raw.function.name));
+      const availableCalls = candidateCalls.filter(raw => exposedToolNames.has(raw.function.name)).slice(0, toolBudgetRemaining);
+      const unavailableCalls = normalized.calls.filter(raw => !exposedToolNames.has(raw.function.name) || !registry.has(raw.function.name));
       const normalizedMessage = availableCalls.length === normalized.calls.length ? normalized.message : {
         ...normalized.message,
         tool_calls: availableCalls.length ? availableCalls : undefined,
@@ -178,20 +200,21 @@ export async function runProposalAgent(params: {
       const content = normalized.content;
       if (content) emit({ type: "text", round, content });
       const rawCalls = availableCalls;
-      if (unavailableCalls.length) {
+      if (unavailableCalls.length && !stopOnUnavailableTools) {
         messages.push({ role: "user", content: `以下工具当前不可用，不得再次调用：${[...new Set(unavailableCalls.map(call => call.function.name))].join("、")}。请使用当前提供的工具继续，或直接完成任务。`, transient: true });
       }
       if (!rawCalls.length) {
-        if (requiredFirstTool) {
+        if (requiredFirstTool && roundDefinitions.length) {
           messages.push({ role: "user", content: `执行任务前必须先调用 ${requiredFirstTool} 创建计划。不要输出说明，立即调用该工具。`, transient: true });
           continue;
         }
-        if (unavailableCalls.length) continue;
+        if (unavailableCalls.length && !stopOnUnavailableTools) continue;
         await finalizeTodos(round);
         emit({ type: "run_completed", summary: content || "Agent 已完成任务" });
         return { messages: persistentAgentMessages(messages), summary: content, status: "completed" as const };
       }
       for (const raw of rawCalls) {
+        executedToolCalls += 1;
         const parsed = parseArguments(raw.function.arguments);
         const call: AgentToolCall = { id: raw.id || makeEventId(), name: raw.function.name, arguments: parsed.arguments };
         emit({ type: "tool_call", round, call });

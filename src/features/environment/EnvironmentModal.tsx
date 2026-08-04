@@ -20,7 +20,7 @@ export function EnvironmentModal({ project, controller, close }: EnvironmentModa
         <IconButton title="关闭" onClick={close}><X size={17} /></IconButton>
       </div>
       <div className="env-modal-body">
-        <div className="agent-title"><Download size={15} />Agent CLI</div>
+        <div className="agent-title"><Download size={15} />本地 Agent</div>
         <div className="installer-list">
           {agentTools.map(tool => {
             const installed = Boolean(toolPaths[tool.program]);

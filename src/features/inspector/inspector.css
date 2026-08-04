@@ -200,55 +200,6 @@
     color: hsl(var(--muted-foreground));
     font-size: 11px;
   }
-  .session-trace {
-    margin-top: 12px;
-    border: 1px solid hsl(var(--border));
-    border-radius: 7px;
-    background: hsl(var(--card));
-    overflow: hidden;
-  }
-  .session-trace.running { border-color: hsl(var(--primary) / 0.42); }
-  .session-trace > header {
-    min-height: 34px;
-    padding: 0 10px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid hsl(var(--border));
-    background: hsl(var(--muted) / 0.45);
-  }
-  .session-trace > header span,
-  .session-trace > header em { display: inline-flex; align-items: center; gap: 6px; }
-  .session-trace > header span { font-size: 11px; font-weight: 700; }
-  .session-trace > header em { font-size: 10px; font-style: normal; color: hsl(var(--muted-foreground)); }
-  .session-trace.running > header em { color: hsl(var(--primary)); }
-  .session-steps { padding: 8px 10px 4px; display: grid; gap: 5px; }
-  .session-step { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; align-items: start; }
-  .session-step i { width: 14px; height: 14px; display: grid; place-items: center; color: hsl(var(--muted-foreground)); }
-  .session-step i > span { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--primary) / 0.65); }
-  .session-step.done i { color: hsl(var(--success)); }
-  .session-step.error i { color: hsl(var(--destructive)); }
-  .session-step div { min-width: 0; display: flex; justify-content: space-between; gap: 8px; }
-  .session-step b { font-size: 10px; line-height: 15px; font-weight: 620; color: hsl(var(--foreground) / 0.82); }
-  .session-step small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 15px; color: hsl(var(--muted-foreground)); }
-  .session-output { border-top: 1px solid hsl(var(--border)); }
-  .session-output > div { height: 27px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font-size: 9px; color: hsl(var(--muted-foreground)); }
-  .session-output > div span { text-transform: uppercase; font-weight: 700; }
-  .session-output > div b { font-weight: 500; }
-  .session-output pre {
-    margin: 0;
-    padding: 9px 10px 11px;
-    max-height: 210px;
-    min-height: 52px;
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    background: hsl(var(--foreground) / 0.035);
-    color: hsl(var(--foreground) / 0.88);
-    font: 10px/1.55 Consolas, monospace;
-  }
-  .stream-caret { display: inline-block; width: 5px; height: 11px; margin-left: 2px; vertical-align: -2px; background: hsl(var(--primary)); animation: stream-blink .85s steps(1) infinite; }
-  .session-trace:not(.running) .stream-caret { display: none; }
   @keyframes stream-blink { 50% { opacity: 0; } }
   .context-box {
     display: flex;

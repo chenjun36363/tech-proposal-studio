@@ -22,7 +22,7 @@ export const agentTools: AgentTool[] = [
     installPackage: "@anthropic-ai/claude-code",
     description: "非交互 -p 输出，适合润色当前块",
     timeoutMs: 300_000,
-    buildArgs: () => ["-p", "--input-format", "text", "--output-format", "text"],
+    buildArgs: () => ["-p", "--input-format", "text", "--output-format", "json", "--no-session-persistence", "--tools", ""],
     promptViaStdin: true,
   },
   {
@@ -32,7 +32,7 @@ export const agentTools: AgentTool[] = [
     installPackage: "@openai/codex",
     description: "codex exec 非交互执行",
     timeoutMs: 300_000,
-    buildArgs: () => ["exec", "--skip-git-repo-check", "-"],
+    buildArgs: () => ["exec", "--skip-git-repo-check", "--ephemeral", "--json", "-"],
     promptViaStdin: true,
   },
   {
@@ -42,7 +42,7 @@ export const agentTools: AgentTool[] = [
     installPackage: "opencode-ai",
     description: "opencode run 非交互执行",
     timeoutMs: 300_000,
-    buildArgs: (prompt) => ["run", "--model", "opencode/deepseek-v4-flash-free", prompt],
+    buildArgs: (prompt) => ["run", "--format", "json", "--pure", "--model", "opencode/deepseek-v4-flash-free", prompt],
   },
   {
     id: "codebuddy",

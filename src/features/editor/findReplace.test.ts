@@ -15,6 +15,10 @@ describe("findReplace", () => {
     expect(findMatches("Foo foo", "foo", { caseSensitive: true })).toEqual([{ start: 4, end: 7 }]);
   });
 
+  it("matches LF queries against CRLF documents and returns original offsets", () => {
+    expect(findMatches("第一行\r\n第二行", "第一行\n第二行")).toEqual([{ start: 0, end: 8 }]);
+  });
+
   it("replaces one match", () => {
     const { text, nextCaret } = replaceMatch("a b a", { start: 2, end: 3 }, "X");
     expect(text).toBe("a X a");

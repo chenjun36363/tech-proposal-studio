@@ -17,6 +17,7 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { AgentConversationPanel } from "../../components/AgentConversationPanel";
+import { CliAgentConversationPanel } from "../../components/CliAgentConversationPanel";
 import { LongWritingPanel } from "../longWriting/LongWritingPanel";
 import type { TextFileSnapshot } from "../workspace/documentSafety";
 import type { AgentSearchHighlight, AgentWorkspaceRuntime } from "../../agent/proposalTools";
@@ -42,14 +43,13 @@ import type {
   SourceRecord,
 } from "../../core/types";
 import { readTextFile } from "../workspace/workspace";
-import { AiRewritePanel } from "./AiRewritePanel";
 import { ContextPanel } from "./ContextPanel";
 
 const PowerShellTerminal = lazy(() => import("../terminal/PowerShellTerminal").then(module => ({
   default: module.PowerShellTerminal,
 })));
 
-export type InspectorTab = "ai" | "commands" | "context" | "sources" | "terminal";
+export type InspectorTab = "long-writing" | "commands" | "context" | "sources" | "terminal";
 type ProjectUpdater = (updater: (project: Project) => Project, remember?: boolean) => void;
 type BlockUpdater = (updater: (block: DocumentBlock) => DocumentBlock) => void;
 type KnowledgeResultView = KnowledgeSearchResult & {
@@ -111,7 +111,6 @@ export function InspectorPanel({
   agentWorkspaceRuntime,
   onAgentDocumentSearch,
   notify,
-  openSettings,
   openSourcePreview,
   longWritingBaselineHash,
   saveBeforeLongWriting,
@@ -131,7 +130,6 @@ export function InspectorPanel({
   agentWorkspaceRuntime?: AgentWorkspaceRuntime;
   onAgentDocumentSearch?: (search: AgentSearchHighlight) => void;
   notify: (message: string) => void;
-  openSettings: () => void;
   openSourcePreview: (source: SourceRecord) => Promise<void>;
   longWritingBaselineHash: string | null;
   saveBeforeLongWriting: (content?: string) => Promise<TextFileSnapshot | null>;
@@ -184,17 +182,13 @@ export function InspectorPanel({
     })),
     [contextSources, knowledgeChunks, sourceContents],
   );
-  const contextLabels = useMemo(
-    () => contextSources.map(source => source.heading ? `${source.title} / ${source.heading}` : source.title),
-    [contextSources],
-  );
 
   useEffect(() => {
     if (tab === "terminal") setTerminalVisited(true);
   }, [tab]);
 
   useEffect(() => {
-    if (!desktop || !["ai", "context", "commands"].includes(tab)) return;
+    if (!desktop || !["long-writing", "context", "commands"].includes(tab)) return;
     const pending = contextSources.filter(source =>
       source.kind === "local"
       && !source.content
@@ -404,20 +398,20 @@ export function InspectorPanel({
     <div className="inspector-top">
       <div className="tabs">
         <button className={tab === "commands" ? "active" : ""} onClick={() => setTab("commands")}><Bot size={15} />Agent</button>
-        <button className={tab === "ai" ? "active" : ""} onClick={() => setTab("ai")}><Sparkles size={15} />AI</button>
+        <button className={tab === "long-writing" ? "active" : ""} onClick={() => setTab("long-writing")}><Sparkles size={15} />长任务</button>
         <button className={tab === "context" ? "active" : ""} onClick={() => setTab("context")}><Layers3 size={15} />上下文</button>
         <button className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}><BookOpen size={15} />知识库</button>
         <button className={tab === "terminal" ? "active" : ""} onClick={() => setTab("terminal")}><TerminalSquare size={15} />终端</button>
       </div>
     </div>
-    {tab === "ai" && <AiRewritePanel project={project} block={block} context={context} contextLabels={contextLabels} updateBlock={updateBlock} notify={notify} openSettings={openSettings} />}
+    {tab === "long-writing" && <LongWritingPanel project={project} baselineHash={longWritingBaselineHash} saveBeforeStart={saveBeforeLongWriting} onDocumentSnapshot={onLongWritingSnapshot} onLockChange={onLongWritingLockChange} onLocateChapter={onLocateLongWritingChapter} onManageReferences={() => setTab("context")} notify={notify} />}
     <div className={`agent-mode-shell ${tab === "commands" ? "" : "is-hidden"}`} aria-hidden={tab !== "commands"}>
-      <div className="agent-mode-tabs"><button className={agentMode === "conversation" ? "active" : ""} onClick={() => setAgentMode("conversation")}>普通对话</button><button className={agentMode === "long-writing" ? "active" : ""} onClick={() => setAgentMode("long-writing")}>长任务</button></div>
+      <div className="agent-mode-tabs"><button className={agentMode === "conversation" ? "active" : ""} onClick={() => setAgentMode("conversation")}>内置Agent</button><button className={agentMode === "long-writing" ? "active" : ""} onClick={() => setAgentMode("long-writing")}>本地Agent</button></div>
       <div className={`agent-conversation-host ${agentMode === "conversation" ? "" : "is-hidden"}`}>
         <AgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} workspaceRuntime={agentWorkspaceRuntime} onDocumentSearch={onAgentDocumentSearch} notify={notify} />
       </div>
       <div className={`long-writing-host ${agentMode === "long-writing" ? "" : "is-hidden"}`}>
-        <LongWritingPanel project={project} baselineHash={longWritingBaselineHash} saveBeforeStart={saveBeforeLongWriting} onDocumentSnapshot={onLongWritingSnapshot} onLockChange={onLongWritingLockChange} onLocateChapter={onLocateLongWritingChapter} onManageReferences={() => setTab("context")} notify={notify} />
+        <CliAgentConversationPanel project={project} block={block} pinnedContext={resolvedAgentContext} editorSelection={agentSelection} clearEditorSelection={clearAgentSelection} applyDraft={applyAgentDraft} workspaceRuntime={agentWorkspaceRuntime} onDocumentSearch={onAgentDocumentSearch} notify={notify} />
       </div>
     </div>
     {tab === "context" && <ContextPanel contextSources={contextSources} context={context} updateBlock={updateBlock} updateSourceContext={updateSourceContext} openSourcePreview={openSourcePreview} sourceContent={source => source.content ?? knowledgeChunks[source.id]?.content ?? sourceContents[source.id] ?? source.excerpt} notify={notify} />}

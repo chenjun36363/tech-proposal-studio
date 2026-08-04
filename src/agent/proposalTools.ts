@@ -1,4 +1,5 @@
 import type { AgentDraft, AgentEditorSelection, AgentGitApprovalRequest, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
+import type { AgentCompletion } from "./runner";
 import { AgentToolRegistry, objectSchema } from "./toolRegistry";
 import type { DocumentBlock, Project, ResolvedModelConfig } from "../core/types";
 import { searchWeb } from "../services/search";
@@ -135,6 +136,8 @@ export function createProposalToolRegistry(params: {
   gitRuntime?: AgentGitRuntime;
   reviewGitOperation?: (request: AgentGitApprovalRequest, signal: AbortSignal) => Promise<boolean>;
   onDocumentSearch?: (search: AgentSearchHighlight) => void;
+  /** Optional alternate model transport, used by Local Agent while keeping the same tools. */
+  completion?: AgentCompletion;
 }) {
   const { project, block } = params;
   let currentMarkdown = project.markdown;
@@ -547,7 +550,9 @@ export function createProposalToolRegistry(params: {
         } else {
           throw new Error("scope 必须是 document、current_section、section 或 selection");
         }
-        const result = await reviewContent({ content, requirements, scopeLabel }, params.modelConfig!, signal);
+        const result = params.completion
+          ? await reviewContent({ content, requirements, scopeLabel }, params.modelConfig!, signal, params.completion)
+          : await reviewContent({ content, requirements, scopeLabel }, params.modelConfig!, signal);
         return {
           content: formatContentReview(result),
           data: { kind: "content_review", scope, scopeLabel, headingId, contentChars: content.length, requirements, ...result },

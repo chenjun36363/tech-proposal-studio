@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, Lock, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
@@ -101,6 +101,10 @@ type WorkspaceContextMenu =
   | { kind: "list"; x: number; y: number }
   | { kind: "document"; x: number; y: number; doc: WorkspaceMarkdownFile };
 
+function textareaOffsetForSource(text: string, sourceOffset: number): number {
+  return text.slice(0, sourceOffset).replace(/\r\n?/g, "\n").length;
+}
+
 function headingTreeHasH6(node: HeadingNode): boolean {
   return node.heading.level >= 6 || node.children.some(headingTreeHasH6);
 }
@@ -191,6 +195,7 @@ export default function App() {
   const [wordExportOpen, setWordExportOpen] = useState(false);
   const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("section");
+  const [fullTextLocked, setFullTextLocked] = useState(false);
   const [viewMode, setViewMode] = useState<"split" | "edit" | "preview">("split");
   const [editorFontScale, setEditorFontScale] = useState<number>(() => loadEditorFontScale());
   const [previewIndent, setPreviewIndent] = useState<boolean>(() => loadPreviewIndent());
@@ -199,7 +204,7 @@ export default function App() {
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
-  const [findIndex, setFindIndex] = useState(0);
+  const [findIndex, setFindIndex] = useState(-1);
   const [collapsedHeadings, setCollapsedHeadings] = useState<Set<string>>(new Set());
   const [headingContextMenu, setHeadingContextMenu] = useState<HeadingContextMenu | null>(null);
   const [headingMoveTarget, setHeadingMoveTarget] = useState<HeadingMoveTarget>(null);
@@ -221,10 +226,56 @@ export default function App() {
   const sourceEditorRef = useRef<MarkdownSourceEditorHandle | null>(null);
   const sourceScrollRef = useRef<HTMLTextAreaElement | null>(null);
   const previewPaneRef = useRef<HTMLDivElement | null>(null);
-  const findInputRef = useRef<HTMLInputElement | null>(null);
+  const findInputRef = useRef<HTMLTextAreaElement | null>(null);
+  // Toolbar mousedown can blur the editor before the click handler runs.
+  // Keep a synchronous snapshot so the selected search text cannot be lost.
+  const pendingFindSelectionRef = useRef<string | null>(null);
   const desktop = isDesktop();
   useSynchronizedScroll(sourceScrollRef, previewPaneRef, viewMode === "split" && syncScroll);
   const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2500); }, []);
+  const enterSectionMode = useCallback(() => { setEditorMode("section"); setFullTextLocked(false); }, []);
+  const enterFullTextMode = useCallback(() => { setEditorMode("full"); setFullTextLocked(false); }, []);
+  const locateHeadingInFullText = (heading: MdHeading) => {
+    setSelectedHeadingId(heading.id);
+    setCollapsedHeadings(current => {
+      const next = new Set(current);
+      next.delete(heading.id);
+      return next;
+    });
+    requestAnimationFrame(() => {
+      if (viewMode !== "preview" && sourceEditorRef.current) {
+        sourceEditorRef.current.setSelection(heading.start, heading.start);
+        sourceEditorRef.current.scrollToSelection();
+        return;
+      }
+      const pane = previewPaneRef.current;
+      if (!pane) return;
+      const renderedHeadings = Array.from(pane.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
+      const headingIndex = headings.findIndex(item => item.id === heading.id);
+      const target = headingIndex >= 0 ? renderedHeadings[headingIndex] : undefined;
+      if (target) {
+        const paneRect = pane.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        pane.scrollTop = Math.max(0, pane.scrollTop + targetRect.top - paneRect.top - 16);
+        return;
+      }
+      // Fallback for a renderer that omits a heading: match by level/title,
+      // but do so against the rendered pane rather than offsetTop from a
+      // different offset parent.
+      const title = stripHeadingPrefix(heading.title).replace(/\s+/g, " ").trim();
+      const targetByTitle = Array.from(pane.querySelectorAll(`h${heading.level}`))
+        .map(node => node as HTMLElement)
+        .find(el => {
+          const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+          return text === title || text.endsWith(title) || text.startsWith(title);
+        });
+      if (targetByTitle) {
+        const paneRect = pane.getBoundingClientRect();
+        const targetRect = targetByTitle.getBoundingClientRect();
+        pane.scrollTop = Math.max(0, pane.scrollTop + targetRect.top - paneRect.top - 16);
+      }
+    });
+  };
   const [guardRequest, setGuardRequest] = useState<{ reason: UnsafeDocumentAction; resolve: (choice: "save" | "discard" | "cancel") => void } | null>(null);
   const [conflictRequest, setConflictRequest] = useState<{ resolve: (choice: ConflictChoice) => void } | null>(null);
   const saveToWorkspaceRef = useRef<() => Promise<boolean>>(async () => false);
@@ -392,7 +443,7 @@ export default function App() {
       resetHistory();
       setProject(next);
       setSelectedHeadingId(parseMarkdownHeadings(next.markdown)[0]?.id ?? null);
-      setEditorMode("section");
+      enterSectionMode();
       return { markdown: next.markdown, filePath: next.filePath ?? "" };
     };
     const requireAllowed = async (reason: UnsafeDocumentAction) => {
@@ -548,7 +599,7 @@ export default function App() {
     const menuWidth = 224;
     const menuHeight = 300;
     setSelectedHeadingId(node.heading.id);
-    setEditorMode("section");
+    enterSectionMode();
     setHeadingContextMenu({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
@@ -582,7 +633,7 @@ export default function App() {
       );
       setMarkdown(next);
       if (inserted) setSelectedHeadingId(inserted.id);
-      setEditorMode("section");
+      enterSectionMode();
       notify(`已插入${placement === "child" ? "子" : "同级"}章节：${title}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "插入章节失败");
@@ -594,10 +645,17 @@ export default function App() {
       const hasCh = node.children.length > 0;
       const collapsed = collapsedHeadings.has(node.heading.id);
       const item = (
-        <div key={node.heading.id} className={`toc-item-wrap level-${node.heading.level} ${selectedHeading?.id === node.heading.id && editorMode === "section" ? "selected" : ""}`}>
+        <div key={node.heading.id} className={`toc-item-wrap level-${node.heading.level} ${selectedHeading?.id === node.heading.id && (editorMode === "section" || fullTextLocked) ? "selected" : ""}`}>
           <button
             className="toc-item"
-            onClick={() => { setSelectedHeadingId(node.heading.id); setEditorMode("section"); }}
+            onClick={() => {
+              if (fullTextLocked) {
+                locateHeadingInFullText(node.heading);
+                return;
+              }
+              setSelectedHeadingId(node.heading.id);
+              setEditorMode("section");
+            }}
             onContextMenu={event => openHeadingContextMenu(event, node)}
             title={`${node.heading.title}（右键打开章节操作）`}
           >
@@ -789,18 +847,31 @@ export default function App() {
     }
   };
 
+  const rememberFindSelection = () => {
+    pendingFindSelectionRef.current = sourceEditorRef.current?.getSelectedText() ?? "";
+  };
+
   const openFindBar = (withReplace = false) => {
+    // Read the selection synchronously. If this was triggered by a toolbar
+    // click, the mousedown handler has already captured it before the editor
+    // loses focus; keyboard shortcuts can read it directly here.
+    const picked = pendingFindSelectionRef.current ?? sourceEditorRef.current?.getSelectedText() ?? "";
+    pendingFindSelectionRef.current = null;
+
     if (viewMode === "preview") setViewMode("split");
     setFindOpen(true);
+    if (picked) {
+      // Do not truncate or reject multiline selections: the search query must
+      // be exactly the text selected by the user.
+      setFindQuery(picked);
+      setFindIndex(-1);
+    }
     if (withReplace) {
       /* keep replace field visible always when open */
     }
+    // Wait for the controlled query field to receive the new value before
+    // focusing/selecting it.
     requestAnimationFrame(() => {
-      const sel = sourceEditorRef.current?.getSelection();
-      if (sel && sel.start !== sel.end) {
-        const picked = activeBody.slice(sel.start, sel.end);
-        if (picked && !picked.includes("\n") && picked.length < 200) setFindQuery(picked);
-      }
       findInputRef.current?.focus();
       findInputRef.current?.select();
     });
@@ -810,7 +881,12 @@ export default function App() {
     if (!match) return;
     setFindIndex(index);
     requestAnimationFrame(() => {
-      sourceEditorRef.current?.setSelection(match.start, match.end);
+      // Find ranges are offsets in the source document. Textareas normalize
+      // CRLF to LF, so convert before applying the range to the editor.
+      sourceEditorRef.current?.setSelection(
+        textareaOffsetForSource(activeBody, match.start),
+        textareaOffsetForSource(activeBody, match.end),
+      );
       sourceEditorRef.current?.scrollToSelection();
     });
   };
@@ -824,7 +900,11 @@ export default function App() {
       notify("未找到匹配");
       return;
     }
-    const next = (findIndex + dir + findHits.length) % findHits.length;
+    // A newly entered query has no active result yet. The first Next/Previous
+    // action should land on the first/last match, not skip over one.
+    const next = findIndex < 0
+      ? (dir === 1 ? 0 : findHits.length - 1)
+      : (findIndex + dir + findHits.length) % findHits.length;
     selectFindMatch(findHits[next], next);
   };
 
@@ -832,15 +912,16 @@ export default function App() {
     if (!ensureDocumentEditable()) return;
     if (!findQuery) return notify("请输入查找内容");
     if (!findHits.length) return notify("未找到匹配");
-    const idx = Math.min(Math.max(findIndex, 0), findHits.length - 1);
+    const idx = findIndex < 0 ? 0 : Math.min(findIndex, findHits.length - 1);
     const match = findHits[idx];
     const { text, nextCaret } = replaceMatch(activeBody, match, replaceQuery);
     setActiveContent(text);
     requestAnimationFrame(() => {
       const nextHits = findMatches(text, findQuery, { caseSensitive: findCaseSensitive });
       if (!nextHits.length) {
-        setFindIndex(0);
-        sourceEditorRef.current?.setSelection(nextCaret, nextCaret);
+        setFindIndex(-1);
+        const editorCaret = textareaOffsetForSource(text, nextCaret);
+        sourceEditorRef.current?.setSelection(editorCaret, editorCaret);
         notify("已替换，无更多匹配");
         return;
       }
@@ -868,7 +949,7 @@ export default function App() {
       const result = shiftHeadingSectionLevels(markdown, headingNode.heading.id, direction, project.headingNumbering);
       setMarkdown(result.markdown);
       setSelectedHeadingId(result.headingId);
-      setEditorMode("section");
+      enterSectionMode();
       notify(`已${direction === "promote" ? "升级" : "降级"} ${result.changedCount} 个标题并重新编号`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "标题层级调整失败");
@@ -904,7 +985,7 @@ export default function App() {
       );
       if (movedHeading) {
         setSelectedHeadingId(movedHeading.id);
-        setEditorMode("section");
+        enterSectionMode();
       }
       notify(`已移动章节：${source.heading.title}`);
     } catch (error) {
@@ -915,24 +996,24 @@ export default function App() {
   const showAgentDocumentSearch = ({ query, caseSensitive, scope, headingId }: AgentSearchHighlight) => {
     setFindQuery(query);
     setFindCaseSensitive(caseSensitive);
-    setFindIndex(0);
+    setFindIndex(-1);
     setFindOpen(true);
     setViewMode("split");
     if (scope === "section" && headingId && headings.some(heading => heading.id === headingId)) {
       setSelectedHeadingId(headingId);
-      setEditorMode("section");
+      enterSectionMode();
     } else {
-      setEditorMode("full");
+      enterFullTextMode();
     }
   };
 
   useEffect(() => {
     if (!findOpen) return;
     if (!findHits.length) {
-      setFindIndex(0);
+      setFindIndex(-1);
       return;
     }
-    if (findIndex >= findHits.length) setFindIndex(0);
+    if (findIndex >= findHits.length) setFindIndex(-1);
   }, [findHits, findIndex, findOpen]);
 
   useEffect(() => {
@@ -1062,7 +1143,7 @@ export default function App() {
       return;
     }
     setSelectedHeadingId(heading.id);
-    setEditorMode("section");
+    enterSectionMode();
     setCollapsedHeadings(current => {
       const next = new Set(current);
       next.delete(heading.id);
@@ -1271,8 +1352,17 @@ export default function App() {
         </div>
         {leftView === "outline" ? <>
         <div className="toc-mode">
-          <button className={editorMode === "section" ? "active" : ""} onClick={() => setEditorMode("section")}>按章节</button>
-          <button className={editorMode === "full" ? "active" : ""} onClick={() => setEditorMode("full")}>全文</button>
+          <button className={editorMode === "section" ? "active" : ""} onClick={enterSectionMode}>按章节</button>
+          <button
+            className={`${editorMode === "full" ? "active" : ""}${fullTextLocked ? " locked" : ""}`}
+            onClick={() => {
+              if (editorMode === "full") setFullTextLocked(v => !v);
+              else enterFullTextMode();
+            }}
+            title={fullTextLocked ? "全文已锁定：点击章节标题仅定位，不切换回按章节模式" : "全文（再次点击锁定全文模式，点击章节仅定位）"}
+          >
+            全文{fullTextLocked && <Lock size={11} className="toc-lock-icon" aria-label="已锁定" />}
+          </button>
         </div>
         <div className="toc-actions">
           <div className="toc-actions-row">
@@ -1462,10 +1552,10 @@ export default function App() {
             <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("`", "`", "代码")} title={formatTitle("行内代码", "Ctrl+E")}><Code2 size={14} /></button>
             <button type="button" className="format-btn" disabled={formatDisabled} onClick={() => wrapSelection("==", "==", "高亮")} title={formatTitle("标黄高亮")}><Highlighter size={14} /></button>
             <span className="heading-toolbar-spacer" />
-            <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(false)} title="查找 (Ctrl+F)">
+            <button type="button" className="heading-renumber-btn" onMouseDown={e => { if (e.button === 0) rememberFindSelection(); }} onClick={() => openFindBar(false)} title="查找 (Ctrl+F)">
               <Search size={14} /> 查找
             </button>
-            <button type="button" className="heading-renumber-btn" onClick={() => openFindBar(true)} title="替换 (Ctrl+H)">
+            <button type="button" className="heading-renumber-btn" onMouseDown={e => { if (e.button === 0) rememberFindSelection(); }} onClick={() => openFindBar(true)} title="替换 (Ctrl+H)">
               <Replace size={14} /> 替换
             </button>
           </div>
@@ -1475,24 +1565,25 @@ export default function App() {
             <div className="find-replace-row">
               <label>
                 <span>查找</span>
-                <input
+                <textarea
                   ref={findInputRef}
                   value={findQuery}
-                  onChange={e => { setFindQuery(e.target.value); setFindIndex(0); }}
+                  rows={1}
+                  onChange={e => { setFindQuery(e.target.value); setFindIndex(-1); }}
                   onKeyDown={e => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      goFind(e.shiftKey ? -1 : 1);
+                      goFind(1);
                     }
                   }}
                   placeholder="输入要查找的文本"
                 />
               </label>
-              <span className="find-count">{findQuery ? (findHits.length ? `${Math.min(findIndex + 1, findHits.length)}/${findHits.length}` : "0/0") : "—"}</span>
+              <span className="find-count">{findQuery ? (findHits.length ? (findIndex >= 0 ? `${findIndex + 1}/${findHits.length}` : `0/${findHits.length}`) : "0/0") : "—"}</span>
               <button type="button" className="heading-level-btn" onClick={() => goFind(-1)} title="上一个 (Shift+F3)"><ChevronUp size={14} /></button>
               <button type="button" className="heading-level-btn" onClick={() => goFind(1)} title="下一个 (F3)"><ChevronDown size={14} /></button>
               <label className="find-option">
-                <input type="checkbox" checked={findCaseSensitive} onChange={e => { setFindCaseSensitive(e.target.checked); setFindIndex(0); }} />
+                <input type="checkbox" checked={findCaseSensitive} onChange={e => { setFindCaseSensitive(e.target.checked); setFindIndex(-1); }} />
                 区分大小写
               </label>
               <IconButton title="关闭 (Esc)" onClick={() => setFindOpen(false)}><X size={16} /></IconButton>
@@ -1564,7 +1655,6 @@ export default function App() {
           agentWorkspaceRuntime={agentWorkspaceRuntime}
           onAgentDocumentSearch={showAgentDocumentSearch}
           notify={notify}
-          openSettings={() => setSettingsOpen(true)}
           openSourcePreview={sourcePreview.open}
           longWritingBaselineHash={safety.baseline?.sha256 ?? null}
           saveBeforeLongWriting={(content) => saveWorkspaceContent(content ?? exportMarkdown(projectRef.current), projectRef.current.filePath)}
@@ -2055,4 +2145,3 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
     </div>
   </div>;
 }
-

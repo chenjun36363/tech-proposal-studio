@@ -20,7 +20,7 @@ describe("agent install commands", () => {
     const codex = agentTools.find(item => item.id === "codex")!;
     const command = buildAgentCommand(codex, "检查并修复测试", "D:\\workspace");
     expect(command.program).toBe("codex");
-    expect(command.args).toEqual(["exec", "--skip-git-repo-check", "-"]);
+    expect(command.args).toEqual(["exec", "--skip-git-repo-check", "--ephemeral", "--json", "-"]);
     expect(command.stdin).toBe("检查并修复测试");
     expect(command.cwd).toBe("D:\\workspace");
     expect(command.allowShell).toBe(false);
@@ -37,7 +37,7 @@ describe("agent install commands", () => {
   it("uses DeepSeek V4 Flash Free for OpenCode tasks", () => {
     const opencode = agentTools.find(item => item.id === "opencode")!;
     const command = buildAgentCommand(opencode, "执行任务");
-    expect(command.args).toEqual(["run", "--model", "opencode/deepseek-v4-flash-free", "执行任务"]);
+    expect(command.args).toEqual(["run", "--format", "json", "--pure", "--model", "opencode/deepseek-v4-flash-free", "执行任务"]);
     expect(command.stdin).toBeUndefined();
   });
 

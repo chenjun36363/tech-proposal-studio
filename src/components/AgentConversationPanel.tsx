@@ -8,10 +8,14 @@ import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings, type AgentSettings } from "../agent/settings";
 import { estimateAgentContextTokens, estimateAgentTextTokens } from "../agent/contextCompaction";
 import { listProjectMemories } from "../agent/memoryService";
-import type { DocumentBlock, Project, SelectedModel } from "../core/types";
+import type { DocumentBlock, Project, ResolvedModelConfig, SelectedModel } from "../core/types";
 import { resolveModelConfigChain } from "../services/llm/resolve";
 import { runWithModelFallback } from "../services/llm/fallback";
 import { ModelSelect } from "./ModelSelect";
+import { OpenCodeModelSelect } from "../features/longWriting/OpenCodeModelSelect";
+import type { CliAgentConnection, CliAgentProvider, CliAgentRuntimeStatus } from "../agent/cliAgentService";
+import type { OpenCodeModelOption, OpenCodeModelRef } from "../features/longWriting/opencodeService";
+import { createCliAgentCompletion, cliAgentProviderMeta, cliAgentRuntimeLabel, defaultCliAgentModels, resolveCliAgentModelOption } from "../agent/cliAgentService";
 import { AgentConversationTimeline } from "./AgentConversationTimeline";
 import { AgentDraftReviewModal } from "./AgentDraftReviewModal";
 import { latestTodosFromMessages } from "../agent/todos";
@@ -69,7 +73,16 @@ function buildAgentSystemPromptParts(params: {
   return parts;
 }
 
-export function AgentConversationPanel({ project, block, pinnedContext, editorSelection, clearEditorSelection, applyDraft, workspaceRuntime, onDocumentSearch, notify }: {
+export interface LocalAgentPanelConfig {
+  connection: CliAgentConnection;
+  onConnectionChange: (next: CliAgentConnection) => void;
+  models?: OpenCodeModelOption[];
+  runtimeStatus?: CliAgentRuntimeStatus;
+  runtimeBusy?: boolean;
+  onRefreshRuntime?: () => void;
+}
+
+export function AgentConversationPanel({ project, block, pinnedContext, editorSelection, clearEditorSelection, applyDraft, workspaceRuntime, onDocumentSearch, notify, localAgent }: {
   project: Project;
   block: DocumentBlock;
   pinnedContext: ResolvedAgentContext[];
@@ -79,6 +92,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   workspaceRuntime?: AgentWorkspaceRuntime;
   onDocumentSearch?: (search: AgentSearchHighlight) => void;
   notify: (message: string) => void;
+  localAgent?: LocalAgentPanelConfig;
 }) {
   const [conversations, setConversations] = useState<AgentConversation[]>([]);
   const [activeId, setActiveId] = useState("");
@@ -97,6 +111,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const [skillSuggestionIndex, setSkillSuggestionIndex] = useState(0);
   const [skillSuggestionsDismissed, setSkillSuggestionsDismissed] = useState(false);
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
+  const localMode = Boolean(localAgent);
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const draftDecisionRef = useRef<DraftDecision | null>(null);
@@ -104,7 +119,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const gitDecisionRef = useRef<GitDecision | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const agentSettings = normalizeAgentSettings(project.agent);
-  const aiEnabled = project.model?.enabled !== false;
+  const aiEnabled = localMode || project.model?.enabled !== false;
   const running = runStatus === "running" || runStatus === "waiting_approval" || runStatus === "waiting_user";
   const workspaceRoot = project.workspace?.root;
   const conversationDefaults = (): ConversationDefaults => ({
@@ -437,12 +452,14 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     const task = input.trim();
     if (!task || !active) return;
     const capturedSelection = editorSelection;
-    let chain;
-    try {
-      chain = resolveModelConfigChain(project.providers ?? [], selectedModel, project.fallbackModels, { aiEnabled });
-    } catch (e: any) {
-      notify(e?.message ?? "模型未配置");
-      return;
+    let chain: ResolvedModelConfig[] = [];
+    if (!localAgent) {
+      try {
+        chain = resolveModelConfigChain(project.providers ?? [], selectedModel, project.fallbackModels, { aiEnabled });
+      } catch (e: any) {
+        notify(e?.message ?? "模型未配置");
+        return;
+      }
     }
     const pendingConversation: AgentConversation = {
       ...active,
@@ -480,7 +497,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       push: () => pushGitRepository(workspaceRoot),
       changed: () => window.dispatchEvent(new CustomEvent(AGENT_GIT_CHANGED, { detail: { root: workspaceRoot } })),
     } : undefined;
-    const planningToolEnabled = agentSettings.planningEnabled && !agentSettings.disabledTools.includes("write_todo");
+    const planningToolEnabled = !localAgent && agentSettings.planningEnabled && !agentSettings.disabledTools.includes("write_todo");
     const promptParts = buildAgentSystemPromptParts({
       agentSettings,
       enabledSkills,
@@ -502,8 +519,11 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       memories,
       memoryIndexLimit: agentSettings.memoryIndexLimit,
     });
-    const result = await runWithModelFallback(chain, async (activeConfig) => {
-      const registry = createProposalToolRegistry({ project, modelConfig: activeConfig, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime, reviewGitOperation, onDocumentSearch, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
+    const localCompletion = localAgent
+      ? createCliAgentCompletion(localAgent.connection, workspaceRoot || ".", fullAccessEnabled, { currentBlock: block, selection: capturedSelection })
+      : undefined;
+    const runWithConfig = async (activeConfig: ResolvedModelConfig) => {
+      const registry = createProposalToolRegistry({ project, modelConfig: activeConfig, block, selection: capturedSelection, reviewDraft, askUser, fullAccess: fullAccessEnabled, workspaceRuntime, gitRuntime, reviewGitOperation, onDocumentSearch, completion: localCompletion, onTodos: nextTodos => { setTodos(nextTodos); setTodosCollapsed(false); } });
       registerSkillTools(registry, {
         skills: enabledSkills,
         workspaceRoot,
@@ -516,12 +536,36 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       if (!memorySearchEnabled) registry.unregister("search_memory").unregister("read_memory").unregister("remember_project_fact");
       else if (!agentSettings.autoRemember) registry.unregister("remember_project_fact");
       if (!agentSettings.planningEnabled) registry.unregister("write_todo");
-      return await runProposalAgent({ task, messages: requestMessages, config: activeConfig, registry, signal: controller.signal, onEvent: event => setEvents(current => [...current, event]), contextCompressionTokens: agentSettings.contextCompressionTokens, temperature: agentSettings.temperature, firstRoundToolName: planningToolEnabled ? "write_todo" : undefined, maxRounds: agentSettings.maxRounds });
-    }, {
-      onSwitch: (_, from, to) => {
-        notify(`主模型 ${from.model} 不可用，已自动切换到 ${to.model}`);
-      },
-    });
+      if (localAgent) {
+        // 本地 CLI 只负责提出一次修改提案；应用 Runner 负责校验、预览和写入。
+        // 这样既保留文档编写能力，也避免不稳定的 CLI 反复读取、搜索或执行系统工具。
+        for (const definition of registry.definitions()) {
+          if (!definition.function.name.startsWith("propose_")) registry.unregister(definition.function.name);
+        }
+      }
+      return await runProposalAgent({
+        task,
+        messages: requestMessages,
+        config: activeConfig,
+        registry,
+        signal: controller.signal,
+        onEvent: event => setEvents(current => [...current, event]),
+        contextCompressionTokens: agentSettings.contextCompressionTokens,
+        temperature: agentSettings.temperature,
+        firstRoundToolName: planningToolEnabled ? "write_todo" : undefined,
+        maxRounds: agentSettings.maxRounds,
+        maxToolCalls: localAgent ? 1 : undefined,
+        stopOnUnavailableTools: Boolean(localAgent),
+        completion: localCompletion,
+      });
+    };
+    const result = localAgent
+      ? await runWithConfig({ providerId: `local-${localAgent.connection.provider}`, providerName: cliAgentProviderMeta[localAgent.connection.provider].label, protocol: "openai-completions", baseUrl: "", apiKey: "", model: localAgent.connection.model || `${localAgent.connection.provider}:default`, timeoutMs: 300_000, headers: {}, enabled: true })
+      : await runWithModelFallback(chain, runWithConfig, {
+        onSwitch: (_, from, to) => {
+          notify(`主模型 ${from.model} 不可用，已自动切换到 ${to.model}`);
+        },
+      });
       const runtimeMessages = result.messages.slice(1);
       const completedConversation = { ...pendingConversation, messages: runtimeMessages };
       setConversations(current => applyAgentConversationChange(current, {
@@ -555,11 +599,46 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       <button type="button" title="删除当前会话" onClick={removeConversation} disabled={running}><Trash2 size={14} /></button>
     </header>
 
-    <label className="agent-model-select">
-      <span>模型</span>
-      <ModelSelect providers={project.providers ?? []} value={selectedModel} onChange={setSelectedModel} disabled={running || !aiEnabled} />
-    </label>
-    {!aiEnabled && <small className="model-list-error">联网模型已关闭，请先在设置中启用。</small>}
+    {localAgent ? <>
+      <div className="agent-local-runtime-head">
+        <label className="agent-local-provider-select">
+          <span>引擎</span>
+          <select value={localAgent.connection.provider} onChange={event => localAgent.onConnectionChange({ ...localAgent.connection, provider: event.target.value as CliAgentProvider })} disabled={running || localAgent.runtimeBusy}>
+            {(Object.keys(cliAgentProviderMeta) as CliAgentProvider[]).map(provider => <option key={provider} value={provider}>{cliAgentProviderMeta[provider].label}</option>)}
+          </select>
+        </label>
+        <div className="agent-runtime-actions" aria-label="本地 Agent 状态控制">
+          <span className={`agent-runtime-dot ${localAgent.runtimeStatus?.phase ?? "unknown"}`} />
+          <span>{cliAgentRuntimeLabel(localAgent.runtimeStatus?.phase ?? "unknown")}</span>
+          <button type="button" onClick={localAgent.onRefreshRuntime} disabled={running || localAgent.runtimeBusy} title="重新检测">重新检测</button>
+        </div>
+      </div>
+      <label className="agent-model-select">
+        <span>模型</span>
+        <OpenCodeModelSelect
+          models={localAgent.models ?? defaultCliAgentModels[localAgent.connection.provider]}
+          value={((): OpenCodeModelRef | null => {
+            const selected = resolveCliAgentModelOption(localAgent.models ?? defaultCliAgentModels[localAgent.connection.provider], localAgent.connection.model);
+            return selected ? { providerId: selected.providerId, modelId: selected.modelId } : null;
+          })()}
+          onChange={(model: OpenCodeModelRef | null) => {
+            const nextModel = !model || model.modelId === "__default__"
+              ? ""
+              : localAgent.connection.provider === "opencode"
+                ? `${model.providerId}/${model.modelId}`
+                : model.modelId;
+            localAgent.onConnectionChange({ ...localAgent.connection, model: nextModel });
+          }}
+          disabled={running || localAgent.runtimeBusy}
+        />
+      </label>
+    </> : <>
+      <label className="agent-model-select">
+        <span>模型</span>
+        <ModelSelect providers={project.providers ?? []} value={selectedModel} onChange={setSelectedModel} disabled={running || !aiEnabled} />
+      </label>
+      {!aiEnabled && <small className="model-list-error">联网模型已关闭，请先在设置中启用。</small>}
+    </>}
 
     <AgentTodoPlan todos={todos} collapsed={todosCollapsed} toggle={() => setTodosCollapsed(value => !value)} />
 
@@ -609,26 +688,26 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
     </section>}
 
     <div className="agent-tool-toggles">
-      <label className={`agent-compact-toggle ${memorySearchEnabled ? "active" : ""}`} title={memorySearchEnabled ? "引用记忆：已启用（点击关闭）" : "引用记忆：已关闭（点击启用）"} aria-label="引用记忆">
+      {!localAgent && <label className={`agent-compact-toggle ${memorySearchEnabled ? "active" : ""}`} title={memorySearchEnabled ? "引用记忆：已启用（点击关闭）" : "引用记忆：已关闭（点击启用）"} aria-label="引用记忆">
         <input type="checkbox" checked={memorySearchEnabled} disabled={running} onChange={event => setMemorySearchEnabled(event.target.checked)} />
         <Brain size={14} />
-      </label>
-      <label className={`agent-compact-toggle ${knowledgeSearchEnabled ? "active" : ""}`} title={knowledgeSearchEnabled ? "知识检索：已启用（点击关闭）" : "知识检索：已关闭（点击启用）"} aria-label="知识检索">
+      </label>}
+      {!localAgent && <label className={`agent-compact-toggle ${knowledgeSearchEnabled ? "active" : ""}`} title={knowledgeSearchEnabled ? "知识检索：已启用（点击关闭）" : "知识检索：已关闭（点击启用）"} aria-label="知识检索">
         <input type="checkbox" checked={knowledgeSearchEnabled} disabled={running || pinnedContextOnly} onChange={event => setKnowledgeSearchEnabled(event.target.checked)} />
         <Database size={14} />
-      </label>
-      <label className={`agent-compact-toggle ${webSearchEnabled ? "active" : ""}`} title={webSearchEnabled ? "联网搜索：已启用（点击关闭）" : "联网搜索：已关闭（点击启用）"} aria-label="联网搜索">
+      </label>}
+      {!localAgent && <label className={`agent-compact-toggle ${webSearchEnabled ? "active" : ""}`} title={webSearchEnabled ? "联网搜索：已启用（点击关闭）" : "联网搜索：已关闭（点击启用）"} aria-label="联网搜索">
         <input type="checkbox" checked={webSearchEnabled} disabled={running} onChange={event => setWebSearchEnabled(event.target.checked)} />
         <Globe2 size={14} />
-      </label>
+      </label>}
       <label className={`agent-compact-toggle ${pinnedContextOnly ? "active" : ""}`} title={`仅使用已引用资料，共 ${pinnedContext.length} 条`} aria-label={`仅使用已引用资料，共 ${pinnedContext.length} 条`}>
         <input type="checkbox" checked={pinnedContextOnly} disabled={!pinnedContext.length || running} onChange={event => setPinnedContextOnly(event.target.checked)} />
         <BookOpen size={14} /><small>{pinnedContext.length}</small>
       </label>
-      <label className={`agent-compact-toggle agent-full-access ${fullAccessEnabled ? "active" : ""}`} title="完全访问：允许 Agent 无需逐项确认执行文档、文件和系统命令操作" aria-label="完全访问">
+      {!localAgent && <label className={`agent-compact-toggle agent-full-access ${fullAccessEnabled ? "active" : ""}`} title="完全访问：允许 Agent 无需逐项确认执行文档、文件和系统命令操作" aria-label="完全访问">
         <input type="checkbox" checked={fullAccessEnabled} disabled={running} onChange={event => setFullAccessEnabled(event.target.checked)} />
         <ShieldAlert size={14} />
-      </label>
+      </label>}
     </div>
     {editorSelection && <div className="agent-selection-capture" title={editorSelection.text}>
       <span><FileSearch size={13} /><b>已捕获选区</b><small>{editorSelection.text.length.toLocaleString()} 字 · {editorSelection.sectionTitle ?? (editorSelection.scope === "document" ? "全文" : "当前章节")}</small></span>

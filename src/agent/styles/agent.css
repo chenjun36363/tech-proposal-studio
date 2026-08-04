@@ -1,4 +1,4 @@
-/* Shared by CLI Agent (AiRewritePanel) and conversation draft review. */
+/* Shared by 本地 Agent conversation and built-in Agent draft review. */
 .agent-task-input textarea { min-height:112px !important; resize:vertical; line-height:1.6; }
 .agent-run-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .agent-run-actions button { min-height:32px; display:inline-flex; align-items:center; justify-content:center; gap:5px; }

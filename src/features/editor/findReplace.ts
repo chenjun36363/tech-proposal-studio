@@ -1,5 +1,29 @@
 export type FindMatch = { start: number; end: number };
 
+type NormalizedText = { text: string; boundaries: number[] };
+
+/**
+ * Textarea values use LF line endings, while files opened from Windows can
+ * still contain CRLF. Normalize only for matching and retain a boundary map
+ * so returned ranges remain offsets into the original document.
+ */
+function normalizeLineEndings(value: string): NormalizedText {
+  let text = "";
+  const boundaries = [0];
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "\r") {
+      if (value[index + 1] === "\n") index += 1;
+      text += "\n";
+      boundaries.push(index + 1);
+      continue;
+    }
+    text += char;
+    boundaries.push(index + 1);
+  }
+  return { text, boundaries };
+}
+
 export function findMatches(
   text: string,
   query: string,
@@ -7,8 +31,10 @@ export function findMatches(
 ): FindMatch[] {
   if (!query) return [];
   const caseSensitive = opts?.caseSensitive ?? false;
-  const hay = caseSensitive ? text : text.toLowerCase();
-  const needle = caseSensitive ? query : query.toLowerCase();
+  const normalizedHay = normalizeLineEndings(text);
+  const normalizedNeedle = normalizeLineEndings(query).text;
+  const hay = caseSensitive ? normalizedHay.text : normalizedHay.text.toLowerCase();
+  const needle = caseSensitive ? normalizedNeedle : normalizedNeedle.toLowerCase();
   if (!needle) return [];
 
   const matches: FindMatch[] = [];
@@ -16,7 +42,10 @@ export function findMatches(
   while (from <= hay.length - needle.length) {
     const idx = hay.indexOf(needle, from);
     if (idx < 0) break;
-    matches.push({ start: idx, end: idx + query.length });
+    matches.push({
+      start: normalizedHay.boundaries[idx],
+      end: normalizedHay.boundaries[idx + needle.length],
+    });
     from = idx + Math.max(1, needle.length);
   }
   return matches;
