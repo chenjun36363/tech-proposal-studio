@@ -15,12 +15,15 @@ use headings::{apply_heading_decisions, detect_heading_candidates, resolve_ambig
 #[cfg(test)]
 use parser::{build_document_chunks, parse_sections};
 use repository::{
-    chunk as repository_chunk, classify_documents, document_id as repository_document_id,
-    document_location, find_document_id, index_document as repository_index_document,
+    chunk as repository_chunk, classify_documents, delete_category as repository_delete_category,
+    document_id as repository_document_id, document_location, find_document_id,
+    index_document as repository_index_document, list_categories as repository_list_categories,
     list_documents, list_sections, mark_document_restored, remove_document, resolve_workspace_path,
+    save_category as repository_save_category,
     save_heading_metadata as repository_save_heading_metadata, search as search_repository,
     section_chunks as repository_section_chunks, section_scope as repository_section_scope,
     set_chunk_quality as repository_set_chunk_quality,
+    set_document_category as repository_set_document_category,
     set_section_quality as repository_set_section_quality, source_location, storage_location,
 };
 
@@ -31,7 +34,7 @@ const MAX_CHUNK_CHARS: usize = 6000;
 const CHUNKING_VERSION: i64 = 3;
 const MAX_WEB_BYTES: usize = 5 * 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeDocument {
     id: String,
@@ -47,6 +50,16 @@ pub struct KnowledgeDocument {
     char_count: i64,
     updated_at: String,
     structure_status: String,
+    category_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeCategory {
+    id: String,
+    name: String,
+    order: i64,
+    color: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -816,8 +829,41 @@ pub fn knowledge_search(
     qualities: Option<Vec<String>>,
     fields: Option<Vec<String>>,
     document_ids: Option<Vec<String>>,
+    category_ids: Option<Vec<String>>,
 ) -> Result<Vec<KnowledgeSearchResult>, String> {
-    search_repository(&workspace, &query, limit, qualities, fields, document_ids)
+    search_repository(&workspace, &query, limit, qualities, fields, document_ids, category_ids)
+}
+
+#[tauri::command]
+pub fn knowledge_list_categories(
+    workspace: WorkspacePaths,
+) -> Result<Vec<KnowledgeCategory>, String> {
+    repository_list_categories(&workspace)
+}
+
+#[tauri::command]
+pub fn knowledge_save_category(
+    workspace: WorkspacePaths,
+    category: KnowledgeCategory,
+) -> Result<KnowledgeCategory, String> {
+    repository_save_category(&workspace, &category)
+}
+
+#[tauri::command]
+pub fn knowledge_delete_category(
+    workspace: WorkspacePaths,
+    category_id: String,
+) -> Result<(), String> {
+    repository_delete_category(&workspace, &category_id)
+}
+
+#[tauri::command]
+pub fn knowledge_set_document_category(
+    workspace: WorkspacePaths,
+    document_id: String,
+    category_id: Option<String>,
+) -> Result<(), String> {
+    repository_set_document_category(&workspace, &document_id, category_id.as_deref())
 }
 
 #[tauri::command]

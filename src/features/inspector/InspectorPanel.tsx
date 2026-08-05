@@ -12,6 +12,7 @@ import {
   Minus,
   Search,
   Sparkles,
+  Tag,
   TerminalSquare,
   ThumbsDown,
   ThumbsUp,
@@ -27,12 +28,14 @@ import {
   getKnowledgeChunk,
   getKnowledgeSectionScope,
   listKnowledge,
+  listKnowledgeCategories,
   searchKnowledge,
   setKnowledgeChunkQuality,
 } from "../knowledge/knowledge";
 import { isDesktop } from "../../services/runtime";
 import type {
   DocumentBlock,
+  KnowledgeCategory,
   KnowledgeChunk,
   KnowledgeChunkQuality,
   KnowledgeDocument,
@@ -154,6 +157,10 @@ export function InspectorPanel({
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
   const [docFilterOpen, setDocFilterOpen] = useState(false);
   const [docFilterQuery, setDocFilterQuery] = useState("");
+  const [knowledgeCategories, setKnowledgeCategories] = useState<KnowledgeCategory[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
+  const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
+  const [categoryFilterQuery, setCategoryFilterQuery] = useState("");
   const desktop = isDesktop();
   const contextSources = useMemo(
     () => project.sources.filter(source => block.sourceRefs.includes(source.id)),
@@ -230,6 +237,9 @@ export function InspectorPanel({
     void listKnowledge(project.workspace)
       .then(documents => { if (!cancelled) setKnowledgeDocuments(documents); })
       .catch(() => undefined);
+    void listKnowledgeCategories(project.workspace)
+      .then(categories => { if (!cancelled) setKnowledgeCategories(categories); })
+      .catch(() => undefined);
     return () => { cancelled = true; };
   }, [desktop, tab, project.workspace?.root]);
 
@@ -304,6 +314,7 @@ export function InspectorPanel({
       [...searchFields],
       undefined,
       selectedDocuments.size > 0 ? [...selectedDocuments] : undefined,
+      selectedCategories.size > 0 ? [...selectedCategories] : undefined,
     );
     const scopes = await Promise.all(found.map(result =>
       getKnowledgeSectionScope(project.workspace!, result.scopeSectionId)
@@ -381,6 +392,16 @@ export function InspectorPanel({
 
   const selectAllDocuments = () => setSelectedDocuments(new Set(knowledgeDocuments.map(doc => doc.id)));
   const clearDocuments = () => setSelectedDocuments(new Set());
+
+  const toggleCategory = (id: string) => {
+    setSelectedCategories(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearCategories = () => setSelectedCategories(new Set());
 
   const markQuality = async (chunk: KnowledgeChunk, quality: KnowledgeChunkQuality) => {
     if (!project.workspace || chunk.quality === quality) return;
@@ -465,6 +486,32 @@ export function InspectorPanel({
                       <span>{doc.title}</span>
                     </label>)}
                     {!knowledgeDocuments.length && <div className="knowledge-doc-list-empty">暂无知识文档</div>}
+                  </div>
+                </div>}
+              </div>
+            </div>
+            <div className="knowledge-filter-row knowledge-doc-filter">
+              <span>分类</span>
+              <div className="knowledge-doc-filter-body">
+                <div className="knowledge-doc-filter-head">
+                  <button type="button" className="knowledge-doc-toggle" onClick={() => setCategoryFilterOpen(open => !open)} aria-expanded={categoryFilterOpen}>
+                    <Tag size={13} />
+                    <span>{selectedCategories.size === 0 ? "全部分类" : `已选 ${selectedCategories.size}/${knowledgeCategories.length} 个`}</span>
+                    <ChevronDown size={12} className={categoryFilterOpen ? "open" : ""} />
+                  </button>
+                  {selectedCategories.size > 0 && <button type="button" className="knowledge-doc-clear" onClick={clearCategories}>清除</button>}
+                </div>
+                {categoryFilterOpen && <div className="knowledge-doc-list">
+                  <div className="knowledge-doc-list-actions">
+                    <input value={categoryFilterQuery} onChange={event => setCategoryFilterQuery(event.target.value)} placeholder="筛选分类名称" />
+                  </div>
+                  <div className="knowledge-doc-list-items">
+                    {knowledgeCategories.filter(category => category.name.toLocaleLowerCase().includes(categoryFilterQuery.trim().toLocaleLowerCase())).map(category => <label key={category.id} className={selectedCategories.has(category.id) ? "active" : ""}>
+                      <input type="checkbox" checked={selectedCategories.has(category.id)} onChange={() => toggleCategory(category.id)} />
+                      <Check size={13} aria-hidden="true" />
+                      <span>{category.name}</span>
+                    </label>)}
+                    {!knowledgeCategories.length && <div className="knowledge-doc-list-empty">暂无分类，可在“知识管理”中创建</div>}
                   </div>
                 </div>}
               </div>

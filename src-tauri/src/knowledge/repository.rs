@@ -88,7 +88,10 @@ pub(super) fn knowledge_db(workspace: &WorkspacePaths) -> Result<Connection, Str
            source_url TEXT, fingerprint TEXT NOT NULL, status TEXT NOT NULL, error TEXT,
            section_count INTEGER NOT NULL DEFAULT 0, chunk_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
            structure_status TEXT NOT NULL DEFAULT 'indexed', original_fingerprint TEXT, normalized_fingerprint TEXT,
-           chunking_version INTEGER NOT NULL DEFAULT 1
+           chunking_version INTEGER NOT NULL DEFAULT 1, category_id TEXT
+         );
+         CREATE TABLE IF NOT EXISTS knowledge_categories(
+           id TEXT PRIMARY KEY, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT NOT NULL DEFAULT ''
          );
          CREATE TABLE IF NOT EXISTS knowledge_sections(
            id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
@@ -119,6 +122,7 @@ pub(super) fn knowledge_db(workspace: &WorkspacePaths) -> Result<Connection, Str
         "ALTER TABLE knowledge_documents ADD COLUMN original_fingerprint TEXT",
         "ALTER TABLE knowledge_documents ADD COLUMN normalized_fingerprint TEXT",
         "ALTER TABLE knowledge_documents ADD COLUMN chunking_version INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE knowledge_documents ADD COLUMN category_id TEXT",
         "ALTER TABLE knowledge_sections ADD COLUMN heading_source TEXT NOT NULL DEFAULT 'markdown'",
         "ALTER TABLE knowledge_sections ADD COLUMN original_line INTEGER",
         "ALTER TABLE knowledge_sections ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0",

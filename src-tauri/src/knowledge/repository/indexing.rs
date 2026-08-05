@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 fn load_document(db: &rusqlite::Connection, id: &str) -> Result<Option<KnowledgeDocument>, String> {
     db.query_row(
-        "SELECT d.id,d.source_type,d.title,d.location,d.source_url,d.fingerprint,d.status,d.error,d.section_count,d.chunk_count,d.updated_at,d.structure_status,COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c WHERE c.document_id=d.id),0) FROM knowledge_documents d WHERE d.id=?1",
+        "SELECT d.id,d.source_type,d.title,d.location,d.source_url,d.fingerprint,d.status,d.error,d.section_count,d.chunk_count,d.updated_at,d.structure_status,COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c WHERE c.document_id=d.id),0),d.category_id FROM knowledge_documents d WHERE d.id=?1",
         [id],
         |row| {
             Ok(KnowledgeDocument {
@@ -25,6 +25,7 @@ fn load_document(db: &rusqlite::Connection, id: &str) -> Result<Option<Knowledge
                 updated_at: row.get(10)?,
                 structure_status: row.get(11)?,
                 char_count: row.get(12)?,
+                category_id: row.get(13)?,
             })
         },
     )

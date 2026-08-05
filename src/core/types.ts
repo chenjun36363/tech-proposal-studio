@@ -159,6 +159,17 @@ export interface KnowledgeDocument {
   charCount: number;
   updatedAt: string;
   structureStatus: "indexed" | "confirmed" | "review_recommended";
+  /** 所属知识分类 id；未分类时为 undefined。 */
+  categoryId?: string;
+}
+/** 知识分类：在知识管理弹出框中维护（名称可编辑、可排序、可删除）。 */
+export interface KnowledgeCategory {
+  id: string;
+  name: string;
+  /** 排序权重，越小越靠前。 */
+  order: number;
+  /** 分类标识色（十六进制），用于分类标签着色。 */
+  color: string;
 }
 export interface KnowledgeSection {
   id: string;

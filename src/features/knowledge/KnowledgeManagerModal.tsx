@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ExternalLink, Eye, FilePlus2, FolderSearch, Globe2, LoaderCircle, Minus, RefreshCw, Search, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, ExternalLink, Eye, FilePlus2, FolderSearch, LoaderCircle, Minus, Plus, RefreshCw, Search, Tag, Tags, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { HeadingReviewModal } from "../../components/HeadingReviewModal";
 import { IconButton } from "../../components/IconButton";
 import { FileUploadPanel } from "../../components/FileUploadPanel";
@@ -7,14 +7,15 @@ import { SourcePreviewModal } from "../../components/SourcePreviewModal";
 import { importWordOrPdfToWorkspace } from "../export/documentImport";
 import {
   analyzeKnowledgeMarkdown, applyKnowledgeHeadings, deleteKnowledgeFile, listKnowledgeBackups,
-  indexPendingKnowledge, listKnowledge, listKnowledgeSectionChunks, listKnowledgeSections, onKnowledgeProgress,
-  removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, searchKnowledge, setKnowledgeSectionQuality,
+  indexPendingKnowledge, listKnowledge, listKnowledgeCategories, listKnowledgeSectionChunks, listKnowledgeSections,
+  onKnowledgeProgress, removeKnowledgeDocument, restoreKnowledgeBackup, scanKnowledge, searchKnowledge,
+  setKnowledgeDocumentCategory, setKnowledgeSectionQuality, deleteKnowledgeCategory, saveKnowledgeCategory,
 } from "./knowledge";
 import { openExternalUrl } from "../../services/system";
 import { countMarkdownWords } from "../editor/markdownDoc";
 import type {
   DocumentBlock, HeadingCandidate, HeadingDetectionResult, HeadingReviewDecision,
-  KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult,
+  KnowledgeCategory, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchResult,
   KnowledgeSection, Project, SourceRecord, WorkspaceMarkdownFile, WorkspacePaths,
 } from "../../core/types";
 import { deleteFile, importMarkdownToWorkspace, pickDocumentFile, pickMarkdownFile, readTextFile } from "../workspace/workspace";
@@ -24,6 +25,7 @@ type BlockUpdater = (updater: (block: DocumentBlock) => DocumentBlock) => void;
 type KnowledgeImportKind = "markdown" | "document";
 const KNOWLEDGE_MARKDOWN_EXTENSIONS = [".md", ".markdown"] as const;
 const KNOWLEDGE_DOCUMENT_EXTENSIONS = [".pdf", ".doc", ".docx"] as const;
+const CATEGORY_COLORS = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#4b5563"] as const;
 
 const resolveWorkspaceLocation = (root: string, location: string) => /^[a-zA-Z]:[\\/]|^\\\\/.test(location)
   ? location
@@ -52,6 +54,16 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [importKind, setImportKind] = useState<KnowledgeImportKind | null>(null);
+  const [categories, setCategories] = useState<KnowledgeCategory[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
+  const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
+  const [categoryFilterQuery, setCategoryFilterQuery] = useState("");
+  const [manageOpen, setManageOpen] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
+  const [categoryColor, setCategoryColor] = useState<string>(CATEGORY_COLORS[0]);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [categoryBusy, setCategoryBusy] = useState(false);
 
   const reload = async () => {
     if (!project.workspace?.root) return;
@@ -65,7 +77,10 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   const pendingDocumentIds = new Set(changed.flatMap(item => item.documentId ? [item.documentId] : []));
   const readyDocuments = documents.filter(document => !pendingDocumentIds.has(document.id));
 
-  useEffect(() => { void reload().catch(error => notify(error instanceof Error ? error.message : "知识库加载失败")); }, [project.workspace?.root]);
+  useEffect(() => {
+    void reload().catch(error => notify(error instanceof Error ? error.message : "知识库加载失败"));
+    void reloadCategories().catch(() => undefined);
+  }, [project.workspace?.root]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void onKnowledgeProgress(setProgress).then(fn => { unlisten = fn; });
@@ -87,13 +102,21 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setSearching(true);
-      void searchKnowledge(project.workspace!, query, ["good", "normal", "bad"], undefined, 50)
+      void searchKnowledge(
+        project.workspace!,
+        query,
+        ["good", "normal", "bad"],
+        undefined,
+        50,
+        undefined,
+        selectedCategories.size ? [...selectedCategories] : undefined,
+      )
         .then(results => { if (!cancelled) setSearchResults(results); })
         .catch(error => { if (!cancelled) notify(error instanceof Error ? error.message : "知识库搜索失败"); })
         .finally(() => { if (!cancelled) setSearching(false); });
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [searchQuery, project.workspace?.root]);
+  }, [searchQuery, project.workspace?.root, selectedCategories]);
 
   const analyze = async (path: string): Promise<boolean> => {
     if (!project.workspace) return false;
@@ -259,16 +282,113 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     finally { setBusy(false); }
   };
 
-  const groups = [
-    { id: "local", label: "本地 Markdown", documents: readyDocuments.filter(item => item.sourceType === "markdown") },
-    { id: "web", label: "网页知识", documents: readyDocuments.filter(item => item.sourceType === "web") },
-  ].filter(group => group.documents.length);
+  const sortedCategories = useMemo(
+    () => [...categories].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
+    [categories],
+  );
+  const categoryGroups = useMemo(() => {
+    const groups = sortedCategories
+      .map(category => ({
+        id: category.id,
+        label: category.name,
+        color: category.color,
+        documents: readyDocuments.filter(item => item.categoryId === category.id),
+      }))
+      .filter(group => group.documents.length > 0);
+    const uncategorized = readyDocuments.filter(item => !item.categoryId);
+    if (uncategorized.length) {
+      groups.push({ id: "__uncategorized__", label: "未分类", color: "", documents: uncategorized });
+    }
+    return groups;
+  }, [sortedCategories, readyDocuments]);
+  const visibleGroups = useMemo(
+    () => selectedCategories.size
+      ? categoryGroups.filter(group => group.id !== "__uncategorized__" && selectedCategories.has(group.id))
+      : categoryGroups,
+    [categoryGroups, selectedCategories],
+  );
+
+  const reloadCategories = async () => {
+    if (!project.workspace?.root) return;
+    try { setCategories(await listKnowledgeCategories(project.workspace)); } catch { /* 知识库不可用时忽略分类加载 */ }
+  };
+  const addCategory = async () => {
+    const name = categoryName.trim();
+    if (!name || !project.workspace) return;
+    setCategoryBusy(true);
+    try {
+      const category: KnowledgeCategory = { id: crypto.randomUUID(), name, order: categories.length, color: categoryColor };
+      const saved = await saveKnowledgeCategory(project.workspace, category);
+      setCategories(current => [...current, saved].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)));
+      setCategoryName("");
+    } catch (error) { notify(error instanceof Error ? error.message : "添加分类失败"); }
+    finally { setCategoryBusy(false); }
+  };
+  const updateCategory = async (category: KnowledgeCategory, patch: Partial<KnowledgeCategory>) => {
+    if (!project.workspace) return;
+    const next = { ...category, ...patch };
+    try {
+      const saved = await saveKnowledgeCategory(project.workspace, next);
+      setCategories(current => current.map(c => c.id === saved.id ? saved : c).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)));
+    } catch (error) { notify(error instanceof Error ? error.message : "更新分类失败"); }
+  };
+  const removeCategory = async (category: KnowledgeCategory) => {
+    if (!project.workspace) return;
+    if (!confirm(`删除分类“${category.name}”？\n\n该分类下的文档会移回“未分类”，分类名称不可恢复。`)) return;
+    setCategoryBusy(true);
+    try {
+      await deleteKnowledgeCategory(project.workspace, category.id);
+      setCategories(current => current.filter(c => c.id !== category.id));
+      setSelectedCategories(current => { const next = new Set(current); next.delete(category.id); return next; });
+      setDocuments(current => current.map(d => d.categoryId === category.id ? { ...d, categoryId: undefined } : d));
+    } catch (error) { notify(error instanceof Error ? error.message : "删除分类失败"); }
+    finally { setCategoryBusy(false); }
+  };
+  const moveCategory = async (category: KnowledgeCategory, direction: -1 | 1) => {
+    if (!project.workspace) return;
+    const index = sortedCategories.findIndex(c => c.id === category.id);
+    const swapWith = sortedCategories[index + direction];
+    if (!swapWith) return;
+    const target = { ...swapWith, order: category.order };
+    const self = { ...category, order: swapWith.order };
+    try {
+      await Promise.all([
+        saveKnowledgeCategory(project.workspace, self),
+        saveKnowledgeCategory(project.workspace, target),
+      ]);
+      setCategories(current => current.map(c => {
+        if (c.id === self.id) return self;
+        if (c.id === target.id) return target;
+        return c;
+      }).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)));
+    } catch (error) { notify(error instanceof Error ? error.message : "调整顺序失败"); }
+  };
+  const assignCategory = async (documentId: string, categoryId: string | null) => {
+    if (!project.workspace) return;
+    try {
+      await setKnowledgeDocumentCategory(project.workspace, documentId, categoryId);
+      setDocuments(current => current.map(d => d.id === documentId ? { ...d, categoryId: categoryId ?? undefined } : d));
+    } catch (error) { notify(error instanceof Error ? error.message : "设置分类失败"); }
+  };
   const headingSourceLabel = (source: KnowledgeSection["headingSource"]) => ({ markdown: "原生标题", toc: "目录匹配", numbering: "编号识别", model: "模型识别", user: "人工确认" }[source] ?? source);
 
   return <div className="modal-backdrop knowledge-manager-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
     <div className="modal knowledge-manager-modal" onMouseDown={event => event.stopPropagation()}>
       <div className="modal-title"><div><BookOpen size={19} /><span>知识管理</span></div><IconButton title="关闭" onClick={() => !busy && close()}><X size={18} /></IconButton></div>
-      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><button disabled={busy} onClick={() => setImportKind("document")} title="通过拖拽或文件路径导入 Word/PDF"><FilePlus2 size={15} />导入 Word/PDF…</button><button className="primary" disabled={busy} onClick={() => setImportKind("markdown")}><FilePlus2 size={15} />导入 Markdown…</button></div></div>
+      <div className="knowledge-manager-toolbar"><div><b>{readyDocuments.length}</b><span>已就绪</span><b>{changed.length}</b><span>待更新</span><b>{unindexed.length}</b><span>未入库</span></div><div>{changed.length > 0 && <button disabled={busy} onClick={() => void rebuildChanged()}><RefreshCw size={14} />更新索引 ({changed.length})</button>}<button disabled={busy} onClick={() => void reload()}><RefreshCw size={14} />扫描目录</button><div className="knowledge-filter-wrap"><button className={selectedCategories.size ? "active" : ""} disabled={busy} onClick={() => setCategoryFilterOpen(open => !open)} title="按分类筛选知识"><Tag size={14} />分类{selectedCategories.size ? `(${selectedCategories.size})` : ""}</button>{categoryFilterOpen && <div className="knowledge-category-pop" onMouseDown={event => { if (event.target === event.currentTarget) setCategoryFilterOpen(false); }}>
+        <div className="knowledge-category-pop-actions">
+          <input value={categoryFilterQuery} onChange={event => setCategoryFilterQuery(event.target.value)} placeholder="筛选分类名称" />
+          {selectedCategories.size > 0 && <button type="button" onClick={() => setSelectedCategories(new Set())}>清除</button>}
+        </div>
+        <div className="knowledge-category-pop-items">
+          {sortedCategories.filter(category => category.name.toLocaleLowerCase().includes(categoryFilterQuery.trim().toLocaleLowerCase())).map(category => <label key={category.id} className={selectedCategories.has(category.id) ? "active" : ""}>
+            <input type="checkbox" checked={selectedCategories.has(category.id)} onChange={() => { const next = new Set(selectedCategories); if (next.has(category.id)) next.delete(category.id); else next.add(category.id); setSelectedCategories(next); }} />
+            <Check size={13} aria-hidden="true" />
+            <span>{category.name}</span>
+          </label>)}
+          {!sortedCategories.length && <div className="knowledge-category-pop-empty">暂无分类，可在“分类管理”中创建</div>}
+        </div>
+      </div>}</div><button disabled={busy} onClick={() => setManageOpen(true)} title="管理知识分类（新增 / 重命名 / 删除 / 排序）"><Tags size={14} />分类管理</button><button disabled={busy} onClick={() => setImportKind("document")} title="通过拖拽或文件路径导入 Word/PDF"><FilePlus2 size={15} />导入 Word/PDF…</button><button className="primary" disabled={busy} onClick={() => setImportKind("markdown")}><FilePlus2 size={15} />导入 Markdown…</button></div></div>
       <label className="knowledge-search"><Search size={16} /><input type="search" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索文档标题、章节和正文" aria-label="搜索知识库" />{searching && <LoaderCircle className="spinning" size={15} />}{searchQuery && !searching && <IconButton title="清空搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton>}</label>
       {progress && busy && !headingReview && <div className="knowledge-progress"><span>{progress.message}</span><b>{progress.stage === "structure_ai" ? `已等待 ${busySeconds} 秒` : progress.total > 1 ? `${progress.current}/${progress.total}` : `已进行 ${busySeconds} 秒`}</b></div>}
       {searchQuery.trim() ? <section className="knowledge-search-results">
@@ -283,13 +403,14 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
           {!pending.length && <div className="knowledge-manager-empty"><Check size={20} /><span>所有知识文档均已就绪</span></div>}
         </div></section>
         <section className="knowledge-manager-column indexed"><div className="knowledge-manager-heading"><span>已就绪</span><b>{readyDocuments.length}</b></div><div className="knowledge-manager-scroll">
-          {groups.map(group => <div className="knowledge-manager-group" key={group.id}><div className="knowledge-section-heading"><div>{group.id === "local" ? <FolderSearch size={14} /> : <Globe2 size={14} />}<b>{group.label}</b><span>{group.documents.length}</span></div></div>
-            {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片 · 全文 {document.charCount.toLocaleString()} 字</span><code title={document.location}>{document.location}</code></div><em className="knowledge-status ready">已就绪</em></div>
+          {visibleGroups.map(group => <div className="knowledge-manager-group" key={group.id}><div className="knowledge-section-heading"><div>{group.color ? <span className="knowledge-group-dot" style={{ background: group.color }} /> : <FolderSearch size={14} />}<b>{group.label}</b><span>{group.documents.length}</span></div></div>
+            {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片 · 全文 {document.charCount.toLocaleString()} 字</span><code title={document.location}>{document.location}</code></div><select className="knowledge-category-select" value={document.categoryId ?? ""} onChange={event => void assignCategory(document.id, event.target.value || null)} title="设置知识分类" aria-label={`${document.title} 所属分类`}><option value="">未分类</option>{sortedCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div>
               {document.error && <p className="knowledge-error">{document.error}</p>}
               <div className="source-item-actions knowledge-actions"><button onClick={() => void previewDocument(document)}><Eye size={12} />预览全文</button>{document.sourceUrl && <button onClick={() => void openExternalUrl(document.sourceUrl!)}><ExternalLink size={12} />原网页</button>}{document.sourceType === "markdown" && <button disabled={busy} onClick={() => void analyze(document.location)}>重新识别</button>}{document.sourceType === "markdown" && <button disabled={busy} onClick={() => void restore(document)}>恢复原文</button>}<button disabled={busy} onClick={() => void removeIndexed(document)}>移出</button><button className="danger" disabled={busy} onClick={() => void deleteIndexed(document)}><Trash2 size={12} />删除</button></div>
               {expanded.has(document.id) && <div className="knowledge-tree">{(sections[document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em className="knowledge-section-char-count">{section.charCount.toLocaleString()} 字</em><em className={`knowledge-quality-badge ${section.quality}`}>{section.quality === "good" ? "优质" : section.quality === "bad" ? "劣质" : "普通"}</em><div className="knowledge-manager-quality" role="group" aria-label={`${section.title}片段状态`}><IconButton title="标记为优质" active={section.quality === "good"} disabled={busy} onClick={() => void markSectionQuality(section, "good")}><ThumbsUp size={12} /></IconButton><IconButton title="标记为普通" active={section.quality === "normal"} disabled={busy} onClick={() => void markSectionQuality(section, "normal")}><Minus size={12} /></IconButton><IconButton title="标记为劣质" active={section.quality === "bad"} disabled={busy} onClick={() => void markSectionQuality(section, "bad")}><ThumbsDown size={12} /></IconButton></div><IconButton title="预览知识片段" onClick={() => void previewSection(document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}
             </article>)}
           </div>)}
+          {selectedCategories.size > 0 && !visibleGroups.length && <div className="knowledge-manager-empty"><Tags size={20} /><span>没有符合所选分类的知识文档</span></div>}
           {!readyDocuments.length && <div className="knowledge-manager-empty"><BookOpen size={20} /><span>暂无已就绪文档</span></div>}
         </div></section>
       </div>}
@@ -315,6 +436,33 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
       close={() => setImportKind(null)}
     />}
     {headingReview && <HeadingReviewModal result={headingReview} candidates={headingCandidates} setCandidates={setHeadingCandidates} busy={busy} progress={progress} busySeconds={busySeconds} close={() => { if (!busy) { setHeadingReview(null); setHeadingCandidates([]); } }} confirm={() => void confirmReview()} />}
+    {manageOpen && project.workspace && <div className="modal-backdrop knowledge-category-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setManageOpen(false); }}>
+      <div className="modal knowledge-category-modal" onMouseDown={event => event.stopPropagation()}>
+        <div className="modal-title"><div><Tags size={19} /><span>知识分类管理</span></div><IconButton title="关闭" onClick={() => setManageOpen(false)}><X size={18} /></IconButton></div>
+        <div className="knowledge-category-manager-body">
+          <div className="knowledge-category-add">
+            <input value={categoryName} onChange={event => setCategoryName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void addCategory(); }} placeholder="新分类名称" aria-label="新分类名称" />
+            <div className="knowledge-category-colors">{CATEGORY_COLORS.map(color => <button key={color} type="button" className={categoryColor === color ? "active" : ""} style={{ background: color }} onClick={() => setCategoryColor(color)} aria-label={`颜色 ${color}`} />)}</div>
+            <button className="primary" disabled={categoryBusy || !categoryName.trim()} onClick={() => void addCategory()}><Plus size={14} />添加</button>
+          </div>
+          <div className="knowledge-category-list">
+            {!sortedCategories.length && <div className="knowledge-manager-empty"><Tags size={20} /><span>还没有分类，先添加一个吧</span></div>}
+            {sortedCategories.map(category => <div className="knowledge-category-row" key={category.id}>
+              <span className="knowledge-category-color" style={{ background: category.color }} />
+              {editingCategoryId === category.id
+                ? <input className="knowledge-category-edit" autoFocus value={editingCategoryName} onChange={event => setEditingCategoryName(event.target.value)} onBlur={() => { const name = editingCategoryName.trim(); setEditingCategoryId(null); if (name && name !== category.name) void updateCategory(category, { name }); else setEditingCategoryName(""); }} onKeyDown={event => { if (event.key === "Enter") (event.target as HTMLInputElement).blur(); else if (event.key === "Escape") { setEditingCategoryId(null); setEditingCategoryName(""); } }} aria-label="重命名分类" />
+                : <span className="knowledge-category-name" title="点击重命名" onClick={() => { setEditingCategoryId(category.id); setEditingCategoryName(category.name); }}>{category.name}</span>}
+              <div className="knowledge-category-row-actions">
+                <div className="knowledge-category-colors inline">{CATEGORY_COLORS.map(color => <button key={color} type="button" className={category.color === color ? "active" : ""} style={{ background: color }} onClick={() => void updateCategory(category, { color })} aria-label={`设为颜色 ${color}`} />)}</div>
+                <IconButton title="上移" disabled={categoryBusy} onClick={() => void moveCategory(category, -1)}><ChevronUp size={14} /></IconButton>
+                <IconButton title="下移" disabled={categoryBusy} onClick={() => void moveCategory(category, 1)}><ChevronDown size={14} /></IconButton>
+                <IconButton title="删除分类" className="danger" disabled={categoryBusy} onClick={() => void removeCategory(category)}><Trash2 size={14} /></IconButton>
+              </div>
+            </div>)}
+          </div>
+        </div>
+      </div>
+    </div>}
     {preview && <SourcePreviewModal source={preview.source} markdown={preview.markdown} loading={preview.loading} error={preview.error} workspaceRoot={project.workspace?.root} notify={notify} close={() => setPreview(null)} />}
   </div>;
 }

@@ -1,7 +1,7 @@
 use super::{find_document_by_location, knowledge_db};
 use crate::knowledge::parser::segmented;
 use crate::knowledge::{
-    KnowledgeChunk, KnowledgeDocument, KnowledgeSearchResult, KnowledgeSection,
+    KnowledgeCategory, KnowledgeChunk, KnowledgeDocument, KnowledgeSearchResult, KnowledgeSection,
     KnowledgeSectionScope, WorkspacePaths,
 };
 use rusqlite::types::Value;
@@ -201,7 +201,7 @@ pub(in crate::knowledge) fn list_documents(
 ) -> Result<Vec<KnowledgeDocument>, String> {
     let db = knowledge_db(workspace)?;
     let mut stmt = db
-        .prepare("SELECT d.id,d.source_type,d.title,d.location,d.source_url,d.fingerprint,d.status,d.error,d.section_count,d.chunk_count,d.updated_at,d.structure_status,COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c WHERE c.document_id=d.id),0) FROM knowledge_documents d ORDER BY d.updated_at DESC,d.title")
+        .prepare("SELECT d.id,d.source_type,d.title,d.location,d.source_url,d.fingerprint,d.status,d.error,d.section_count,d.chunk_count,d.updated_at,d.structure_status,COALESCE((SELECT SUM(LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(c.content,' ',''),char(9),''),char(10),''),char(13),''))) FROM knowledge_chunks c WHERE c.document_id=d.id),0),d.category_id FROM knowledge_documents d ORDER BY d.updated_at DESC,d.title")
         .map_err(|e| e.to_string())?;
     let result = stmt
         .query_map([], |row| {
@@ -219,12 +219,78 @@ pub(in crate::knowledge) fn list_documents(
                 updated_at: row.get(10)?,
                 structure_status: row.get(11)?,
                 char_count: row.get(12)?,
+                category_id: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
     Ok(result)
+}
+
+pub(in crate::knowledge) fn list_categories(
+    workspace: &WorkspacePaths,
+) -> Result<Vec<KnowledgeCategory>, String> {
+    let db = knowledge_db(workspace)?;
+    let mut stmt = db
+        .prepare("SELECT id,name,sort_order,color FROM knowledge_categories ORDER BY sort_order,name")
+        .map_err(|e| e.to_string())?;
+    let result = stmt
+        .query_map([], |row| {
+            Ok(KnowledgeCategory {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                order: row.get(2)?,
+                color: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+pub(in crate::knowledge) fn save_category(
+    workspace: &WorkspacePaths,
+    category: &KnowledgeCategory,
+) -> Result<KnowledgeCategory, String> {
+    let db = knowledge_db(workspace)?;
+    db.execute(
+        "INSERT INTO knowledge_categories(id,name,sort_order,color) VALUES(?1,?2,?3,?4)
+         ON CONFLICT(id) DO UPDATE SET name=?2,sort_order=?3,color=?4",
+        params![category.id, category.name, category.order, category.color],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(category.clone())
+}
+
+pub(in crate::knowledge) fn delete_category(
+    workspace: &WorkspacePaths,
+    category_id: &str,
+) -> Result<(), String> {
+    let db = knowledge_db(workspace)?;
+    db.execute(
+        "UPDATE knowledge_documents SET category_id=NULL WHERE category_id=?1",
+        [category_id],
+    )
+    .map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM knowledge_categories WHERE id=?1", [category_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(in crate::knowledge) fn set_document_category(
+    workspace: &WorkspacePaths,
+    document_id: &str,
+    category_id: Option<&str>,
+) -> Result<(), String> {
+    let db = knowledge_db(workspace)?;
+    db.execute(
+        "UPDATE knowledge_documents SET category_id=?2 WHERE id=?1",
+        params![document_id, category_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(in crate::knowledge) fn list_sections(
@@ -266,6 +332,7 @@ pub(in crate::knowledge) fn search(
     qualities: Option<Vec<String>>,
     fields: Option<Vec<String>>,
     document_ids: Option<Vec<String>>,
+    category_ids: Option<Vec<String>>,
 ) -> Result<Vec<KnowledgeSearchResult>, String> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -306,6 +373,22 @@ pub(in crate::knowledge) fn search(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let category_ids = category_ids
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let category_filter = if category_ids.is_empty() {
+        String::new()
+    } else {
+        let base = 7 + document_ids.len();
+        let placeholders = (0..category_ids.len())
+            .map(|index| format!("?{}", index + base))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(" AND d.category_id IN ({placeholders})")
+    };
     let document_filter = if document_ids.is_empty() {
         String::new()
     } else {
@@ -318,7 +401,7 @@ pub(in crate::knowledge) fn search(
     let db = knowledge_db(workspace)?;
     let requested_limit = limit.unwrap_or(30).min(100);
     let candidate_limit = requested_limit.saturating_mul(4).clamp(20, 100);
-    let sql = format!("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END+CASE c.quality WHEN 'good' THEN -0.6 WHEN 'bad' THEN 2.5 ELSE 0.0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')){document_filter} ORDER BY score,c.position LIMIT ?6");
+    let sql = format!("SELECT c.id,c.document_id,c.section_id,d.title,c.heading_path,c.content,c.position,c.start_char,c.end_char,c.status,c.quality,(bm25(knowledge_chunk_fts,0.0,8.0,6.0,2.0)-CASE WHEN d.title LIKE '%'||?2||'%' THEN 8.0 ELSE 0 END-CASE WHEN c.heading_path LIKE '%'||?2||'%' THEN 5.0 ELSE 0 END-CASE WHEN c.content LIKE '%'||?2||'%' THEN 2.0 ELSE 0 END+CASE c.quality WHEN 'good' THEN -0.6 WHEN 'bad' THEN 2.5 ELSE 0.0 END) AS score,s.level,s.parent_id FROM knowledge_chunk_fts JOIN knowledge_chunks c ON c.id=knowledge_chunk_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id JOIN knowledge_sections s ON s.id=c.section_id WHERE knowledge_chunk_fts MATCH ?1 AND ((?3 AND c.quality='good') OR (?4 AND c.quality='normal') OR (?5 AND c.quality='bad')){document_filter}{category_filter} ORDER BY score,c.position LIMIT ?6");
     let run =
         |expression: &str, stage_penalty: f64| -> Result<Vec<KnowledgeSearchResult>, String> {
             let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
@@ -331,6 +414,7 @@ pub(in crate::knowledge) fn search(
                 Value::Integer(candidate_limit as i64),
             ];
             bind_values.extend(document_ids.iter().cloned().map(Value::Text));
+            bind_values.extend(category_ids.iter().cloned().map(Value::Text));
             let rows = stmt
                 .query_map(params_from_iter(bind_values), |row| {
                     let chunk = chunk_from_row(row)?;

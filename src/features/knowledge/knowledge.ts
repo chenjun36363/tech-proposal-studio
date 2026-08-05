@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope, OpenAICompatibleConfig, WorkspacePaths } from "../../core/types";
+import type { HeadingDetectionResult, HeadingReviewDecision, KnowledgeBackup, KnowledgeCategory, KnowledgeChunk, KnowledgeChunkQuality, KnowledgeDocument, KnowledgeProgress, KnowledgeScanItem, KnowledgeSearchField, KnowledgeSearchResult, KnowledgeSection, KnowledgeSectionScope, OpenAICompatibleConfig, WorkspacePaths } from "../../core/types";
 import { isDesktop } from "../../services/runtime";
 
 function desktopOnly() {
@@ -25,8 +25,20 @@ export async function listKnowledge(workspace: WorkspacePaths): Promise<Knowledg
 export async function listKnowledgeSections(workspace: WorkspacePaths, documentId: string): Promise<KnowledgeSection[]> {
   desktopOnly(); return invoke("knowledge_sections", { workspace, documentId });
 }
-export async function searchKnowledge(workspace: WorkspacePaths, query: string, qualities: KnowledgeChunkQuality[] = ["good", "normal"], fields?: KnowledgeSearchField[], limit = 30, documentIds?: string[]): Promise<KnowledgeSearchResult[]> {
-  desktopOnly(); return invoke("knowledge_search", { workspace, query, qualities, fields, limit, documentIds });
+export async function searchKnowledge(workspace: WorkspacePaths, query: string, qualities: KnowledgeChunkQuality[] = ["good", "normal"], fields?: KnowledgeSearchField[], limit = 30, documentIds?: string[], categoryIds?: string[]): Promise<KnowledgeSearchResult[]> {
+  desktopOnly(); return invoke("knowledge_search", { workspace, query, qualities, fields, limit, documentIds, categoryIds });
+}
+export async function listKnowledgeCategories(workspace: WorkspacePaths): Promise<KnowledgeCategory[]> {
+  desktopOnly(); return invoke("knowledge_list_categories", { workspace });
+}
+export async function saveKnowledgeCategory(workspace: WorkspacePaths, category: KnowledgeCategory): Promise<KnowledgeCategory> {
+  desktopOnly(); return invoke("knowledge_save_category", { workspace, category });
+}
+export async function deleteKnowledgeCategory(workspace: WorkspacePaths, categoryId: string): Promise<void> {
+  desktopOnly(); await invoke("knowledge_delete_category", { workspace, categoryId });
+}
+export async function setKnowledgeDocumentCategory(workspace: WorkspacePaths, documentId: string, categoryId: string | null): Promise<void> {
+  desktopOnly(); await invoke("knowledge_set_document_category", { workspace, documentId, categoryId: categoryId ?? null });
 }
 export async function getKnowledgeSectionScope(workspace: WorkspacePaths, sectionId: string): Promise<KnowledgeSectionScope> {
   desktopOnly(); return invoke("knowledge_section_scope", { workspace, sectionId });
