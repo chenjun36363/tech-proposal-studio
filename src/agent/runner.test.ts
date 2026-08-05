@@ -16,7 +16,7 @@ describe("runProposalAgent", () => {
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "read", arguments: "{\"path\":\"proposal.md\"}" } }] } }] })
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "任务完成" } }] });
     const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } },
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({ path: { type: "string" } }, ["path"]) } },
       execute: () => ({ content: "章节正文", data: { blockId: "section-1" }, isError: false }),
     });
     const events: AgentEvent[] = [];
@@ -38,7 +38,7 @@ describe("runProposalAgent", () => {
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-1", type: "function", function: { name: "write_todo", arguments: '{"todos":[{"content":"搜索资料","status":"in_progress"}]}' } }] } }] })
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
     const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({ todos: { type: "array" } }) } },
       execute: () => ({ content: "计划已更新", isError: false }),
     });
 
@@ -58,7 +58,7 @@ describe("runProposalAgent", () => {
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-fallback", type: "function", function: { name: "write_todo", arguments: '{"todos":[]}' } }] } }] })
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
     const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({ todos: { type: "array" } }) } },
       execute: () => ({ content: "计划已更新", isError: false }),
     });
 
@@ -80,7 +80,7 @@ describe("runProposalAgent", () => {
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-2", type: "function", function: { name: "write_todo", arguments: '{"todos":[]}' } }] } }] })
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
     const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({ todos: { type: "array" } }) } },
       execute: () => ({ content: "计划已更新", isError: false }),
     });
 
@@ -101,7 +101,7 @@ describe("runProposalAgent", () => {
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "任务完成" } }] });
     const execute = vi.fn(args => ({ content: "计划已更新", data: args.todos, isError: false }));
     const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
+      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({ todos: { type: "array" } }) } },
       execute,
     });
     const events: AgentEvent[] = [];
@@ -139,7 +139,7 @@ describe("runProposalAgent", () => {
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已提交" } }] });
     const execute = vi.fn(() => ({ content: "待审批", isError: false }));
     const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "submit", description: "submit", parameters: objectSchema({}) } },
+      definition: { type: "function", function: { name: "submit", description: "submit", parameters: objectSchema({ content: { type: "string" } }, ["content"]) } },
       execute,
     });
 
@@ -157,7 +157,7 @@ describe("runProposalAgent", () => {
     const submit = vi.fn(() => ({ content: "待审批", isError: false }));
     const registry = new AgentToolRegistry()
       .register({ definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({}) } }, execute: () => ({ content: "原文", isError: false }) })
-      .register({ definition: { type: "function", function: { name: "submit", description: "submit", parameters: objectSchema({}) } }, execute: submit });
+      .register({ definition: { type: "function", function: { name: "submit", description: "submit", parameters: objectSchema({ content: { type: "string" } }, ["content"]) } }, execute: submit });
 
     const result = await runProposalAgent({ task: "优化", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
 
@@ -205,8 +205,17 @@ describe("runProposalAgent", () => {
 
     expect(events.some(event => event.type === "tool_call")).toBe(false);
     expect(result.messages).not.toContainEqual(expect.objectContaining({ tool_calls: expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: "search_knowledge" }) })]) }));
-    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.stringContaining("search_knowledge") })]) }));
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.stringMatching(/TOOL_ERROR.*UNKNOWN_TOOL[\s\S]*search_knowledge/) })]) }));
     expect(result.messages).not.toContainEqual(expect.objectContaining({ role: "user", content: expect.stringContaining("search_knowledge") }));
+  });
+
+  it("opens the unavailable-tool circuit breaker on a repeated call", async () => {
+    agentCompletion.mockResolvedValue({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: crypto.randomUUID(), type: "function", function: { name: "missing_tool", arguments: "{}" } }] } }] });
+    const events: AgentEvent[] = [];
+
+    await expect(runProposalAgent({ task: "研究", config, registry: new AgentToolRegistry(), signal: new AbortController().signal, onEvent: event => events.push(event) }))
+      .rejects.toThrow(/连续两次不可用/);
+    expect(events.at(-1)).toEqual(expect.objectContaining({ type: "run_failed", error: expect.stringContaining("UNKNOWN_TOOL") }));
   });
 
   it("supports a low-tool local transport budget and stops unavailable-tool retries", async () => {
@@ -282,6 +291,61 @@ describe("runProposalAgent", () => {
     const result = await runProposalAgent({ task: "读取", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
 
     expect(execute).not.toHaveBeenCalled();
-    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_result_is_error: true, content: expect.stringContaining("有效 JSON") }));
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", tool_result_is_error: true, content: expect.stringContaining("MALFORMED_ARGUMENTS") }));
   });
+
+  it("lets the model repair one invalid parameter call without consuming the execution cap", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "bad", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "fixed", type: "function", function: { name: "read", arguments: '{"path":"proposal.md"}' } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已完成" } }] });
+    const execute = vi.fn(() => ({ content: "章节", isError: false }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({ path: { type: "string" } }, ["path"]) } }, execute,
+    });
+
+    const result = await runProposalAgent({ task: "读取", config, registry, signal: new AbortController().signal, onEvent: () => undefined, maxToolCalls: 1 });
+
+    expect(result.status).toBe("completed");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(agentCompletion).toHaveBeenCalledTimes(3);
+    expect(result.messages).toContainEqual(expect.objectContaining({ role: "tool", content: expect.stringContaining("INVALID_ARGUMENTS") }));
+  });
+
+  it("opens the circuit breaker after the same parameter failure is repeated", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "bad-1", type: "function", function: { name: "read", arguments: "{}" } }] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "bad-2", type: "function", function: { name: "read", arguments: "{}" } }] } }] });
+    const execute = vi.fn(() => ({ content: "不应执行", isError: false }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({ path: { type: "string" } }, ["path"]) } }, execute,
+    });
+
+    await expect(runProposalAgent({ task: "读取", config, registry, signal: new AbortController().signal, onEvent: () => undefined })).rejects.toThrow("连续两次无效");
+    expect(execute).not.toHaveBeenCalled();
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps valid calls in a batch when a sibling call has invalid arguments", async () => {
+    agentCompletion
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [
+        { id: "bad", type: "function", function: { name: "read", arguments: "{}" } },
+        { id: "good", type: "function", function: { name: "status", arguments: "{}" } },
+      ] } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
+    const read = vi.fn(() => ({ content: "不应执行", isError: false }));
+    const status = vi.fn(() => ({ content: "正常执行", isError: false }));
+    const registry = new AgentToolRegistry()
+      .register({ definition: { type: "function", function: { name: "read", description: "read", parameters: objectSchema({ path: { type: "string" } }, ["path"]) } }, execute: read })
+      .register({ definition: { type: "function", function: { name: "status", description: "status", parameters: objectSchema({}) } }, execute: status });
+
+    const result = await runProposalAgent({ task: "批量", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
+
+    expect(result.status).toBe("completed");
+    expect(read).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(result.messages).toContainEqual(expect.objectContaining({ tool_call_id: "bad", content: expect.stringContaining("INVALID_ARGUMENTS") }));
+    expect(result.messages).toContainEqual(expect.objectContaining({ tool_call_id: "good", content: "正常执行" }));
+  });
+
 });

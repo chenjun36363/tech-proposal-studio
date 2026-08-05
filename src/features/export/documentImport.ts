@@ -6,6 +6,7 @@ import { isDesktop } from "../../services/runtime";
 import {
   convertDocumentWithMineru,
   listWorkspaceMarkdown,
+  preserveImportSource,
   uniqueImportedMarkdownName,
   writeTextFile,
 } from "../workspace/workspace";
@@ -50,7 +51,7 @@ export async function importWordOrPdfToWorkspace(
   sourcePath: string,
   workspaceRoot: string,
   mineru?: MinerUConfig | null,
-): Promise<{ path: string; sourceFileName: string; assetRelativeDir: string | null }> {
+): Promise<{ path: string; sourceFileName: string; assetRelativeDir: string | null; originalPath: string | null; originalWarning: string | null }> {
   if (!isDesktop()) throw new Error("Word/PDF 导入仅在桌面端可用");
   if (!workspaceRoot.trim()) throw new Error("请先在设置中配置工作目录");
   if (!isSupportedImportDocument(sourcePath)) {
@@ -71,9 +72,22 @@ export async function importWordOrPdfToWorkspace(
   const separator = workspaceRoot.includes("\\") ? "\\" : "/";
   const destination = `${workspaceRoot.replace(/[\\/]+$/, "")}${separator}${mdName}`;
   const path = await writeTextFile(destination, markdown);
+
+  // Preserve the original PDF / Word separately in the workspace so the user
+  // keeps the source document alongside the generated Markdown.
+  let originalPath: string | null = null;
+  let originalWarning: string | null = null;
+  try {
+    originalPath = await preserveImportSource(sourcePath, workspaceRoot, "imports");
+  } catch (error) {
+    originalWarning = error instanceof Error ? error.message : "原始文件未能保留到工作区";
+  }
+
   return {
     path,
     sourceFileName: sourceName,
     assetRelativeDir: converted.assetRelativeDir,
+    originalPath,
+    originalWarning,
   };
 }

@@ -1386,6 +1386,18 @@
   .tool-settings-summary > span small { color: hsl(var(--muted-foreground)); font-size: 10px; }
   .tool-settings-summary > div { display: flex; gap: 8px; }
   .tool-settings-summary button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 9px; font-size: 10px; }
+  .tool-quality-settings { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid hsl(var(--border)); border-radius: 7px; background: hsl(var(--muted) / .16); }
+  .tool-quality-settings > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tool-quality-settings > header > span, .tool-quality-settings > header > div { display: flex; align-items: center; gap: 7px; }
+  .tool-quality-settings > header b { font-size: 12px; }
+  .tool-quality-settings button { display: inline-flex; align-items: center; gap: 4px; min-height: 27px; padding: 0 8px; font-size: 9px; }
+  .tool-quality-settings > p { margin: 0; color: hsl(var(--muted-foreground)); font-size: 9px; line-height: 1.55; }
+  .tool-quality-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+  .tool-quality-stats > span { display: flex; flex-direction: column; gap: 2px; padding: 7px; border: 1px solid hsl(var(--border)); border-radius: 5px; background: hsl(var(--background)); }
+  .tool-quality-stats b { font-size: 13px; } .tool-quality-stats small { color: hsl(var(--muted-foreground)); font-size: 8px; }
+  .tool-quality-failures { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tool-quality-failures > span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border: 1px solid hsl(var(--border)); border-radius: 4px; background: hsl(var(--background)); font-size: 8px; }
+  .tool-quality-failures code { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tool-quality-failures small { color: hsl(var(--muted-foreground)); }
   .tool-settings-group { display: flex; flex-direction: column; gap: 7px; }
   .tool-settings-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px; }
   .tool-settings-group > header > span { flex: none; color: hsl(var(--muted-foreground)); font-size: 9px; }

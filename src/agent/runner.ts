@@ -2,9 +2,10 @@ import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types"
 import { agentCompletion } from "../services/model";
 import { resolvedFromLegacy } from "../services/llm/resolve";
 import type { AgentEvent, AgentMessage, AgentModelResponse, AgentToolCall } from "./protocol";
-import { AgentToolRegistry } from "./toolRegistry";
+import { AgentToolRegistry, formatToolFailure, toolFailure } from "./toolRegistry";
 import { compactAgentRunContext } from "./contextCompaction";
 import { persistentAgentMessages } from "./messageUtils";
+import { recordToolQualityMetric } from "./toolQualityMetrics";
 
 const makeEventId = () => crypto.randomUUID();
 
@@ -136,6 +137,9 @@ export async function runProposalAgent(params: {
     : null;
   let latestTodos: TrackedTodo[] = [];
   let executedToolCalls = 0;
+  const repairedFailureSignatures = new Set<string>();
+  const unavailableFailureSignatures = new Set<string>();
+  const pendingToolRepairs = new Set<string>();
   const finalizeTodos = async (round: number) => {
     if (executedToolCalls >= maxToolCalls) return;
     if (!registry.has("write_todo") || !latestTodos.some(todo => todo.status !== "completed")) return;
@@ -190,7 +194,9 @@ export async function runProposalAgent(params: {
       const normalized = normalizedAssistant(assistant);
       const exposedToolNames = new Set(roundDefinitions.map(tool => tool.function.name));
       const candidateCalls = normalized.calls.filter(raw => registry.has(raw.function.name));
-      const availableCalls = candidateCalls.filter(raw => exposedToolNames.has(raw.function.name)).slice(0, toolBudgetRemaining);
+      // Keep the whole batch so invalid calls can return their own repair envelopes.
+      // The actual-execution cap is enforced per prepared call below.
+      const availableCalls = candidateCalls.filter(raw => exposedToolNames.has(raw.function.name));
       const unavailableCalls = normalized.calls.filter(raw => !exposedToolNames.has(raw.function.name) || !registry.has(raw.function.name));
       const normalizedMessage = availableCalls.length === normalized.calls.length ? normalized.message : {
         ...normalized.message,
@@ -200,8 +206,43 @@ export async function runProposalAgent(params: {
       const content = normalized.content;
       if (content) emit({ type: "text", round, content });
       const rawCalls = availableCalls;
-      if (unavailableCalls.length && !stopOnUnavailableTools) {
-        messages.push({ role: "user", content: `以下工具当前不可用，不得再次调用：${[...new Set(unavailableCalls.map(call => call.function.name))].join("、")}。请使用当前提供的工具继续，或直接完成任务。`, transient: true });
+      if (unavailableCalls.length) {
+        const unavailableCodes = new Set<string>();
+        for (const raw of unavailableCalls) {
+          const errorCode = registry.has(raw.function.name) ? "TOOL_UNAVAILABLE" : "UNKNOWN_TOOL";
+          unavailableCodes.add(errorCode);
+          void recordToolQualityMetric({
+            protocol: config.protocol,
+            model: config.model,
+            toolName: raw.function.name,
+            resultKind: "execution_failure",
+            errorCode,
+            round,
+            repaired: false,
+            durationMs: 0,
+          }).catch(() => undefined);
+          const signature = `${raw.function.name}:${errorCode}:arguments`;
+          if (unavailableFailureSignatures.has(signature)) {
+            void recordToolQualityMetric({
+              protocol: config.protocol,
+              model: config.model,
+              toolName: raw.function.name,
+              resultKind: "circuit_breaker",
+              errorCode,
+              round,
+              repaired: false,
+              durationMs: 0,
+            }).catch(() => undefined);
+            throw new Error(`工具 ${raw.function.name} 已连续两次不可用（${errorCode}）。已停止任务以避免重复调用。`);
+          }
+          unavailableFailureSignatures.add(signature);
+        }
+        if (!stopOnUnavailableTools) {
+          const failures = [...unavailableCodes].map(code => formatToolFailure(toolFailure(code, {
+            repair: "请仅使用本轮提供的工具；不要再次调用不可用工具。",
+          }))).join("\n");
+          messages.push({ role: "user", content: `${failures}\n以下工具当前不可用，不得再次调用：${[...new Set(unavailableCalls.map(call => call.function.name))].join("、")}。请使用当前提供的工具继续，或直接完成任务。`, transient: true });
+        }
       }
       if (!rawCalls.length) {
         if (requiredFirstTool && roundDefinitions.length) {
@@ -214,16 +255,73 @@ export async function runProposalAgent(params: {
         return { messages: persistentAgentMessages(messages), summary: content, status: "completed" as const };
       }
       for (const raw of rawCalls) {
-        executedToolCalls += 1;
         const parsed = parseArguments(raw.function.arguments);
         const call: AgentToolCall = { id: raw.id || makeEventId(), name: raw.function.name, arguments: parsed.arguments };
         emit({ type: "tool_call", round, call });
         emit({ type: "tool_started", round, callId: call.id });
-        const result = parsed.error
-          ? { content: parsed.error, data: { invalidArguments: raw.function.arguments }, isError: true }
-          : await registry.execute(call, signal);
+        const startedAt = performance.now();
+        const malformedFailure = parsed.error
+          ? toolFailure("MALFORMED_ARGUMENTS", {
+            retryable: true,
+            repair: "工具参数必须是 JSON 对象。仅修正 JSON 格式后，以同一工具重试。",
+          })
+          : undefined;
+        const prepared = malformedFailure ? undefined : registry.prepare(call);
+        const budgetFailure = !malformedFailure && !prepared?.result && executedToolCalls >= maxToolCalls
+          ? toolFailure("TOOL_BUDGET_EXHAUSTED", { repair: "本轮实际工具执行额度已用完，请基于已有工具结果完成任务。" })
+          : undefined;
+        const reachedExecutor = !malformedFailure && !prepared?.result && !budgetFailure;
+        const result = malformedFailure
+          ? { content: formatToolFailure(malformedFailure), data: { failure: malformedFailure }, isError: true, failure: malformedFailure }
+          : prepared?.result
+            ? prepared.result
+            : budgetFailure
+              ? { content: formatToolFailure(budgetFailure), data: { failure: budgetFailure }, isError: true, failure: budgetFailure }
+              : await registry.executePrepared(call.name, prepared!.args!, signal);
+        const durationMs = Math.round(performance.now() - startedAt);
         emit({ type: "tool_result", round, call, result });
         messages.push({ role: "tool", tool_call_id: call.id, content: result.content, tool_result_data: result.data, tool_result_is_error: result.isError });
+
+        const failure = result.failure;
+        const isArgumentFailure = failure?.retryable && (failure.code === "INVALID_ARGUMENTS" || failure.code === "MALFORMED_ARGUMENTS");
+        const repaired = !result.isError && pendingToolRepairs.delete(call.name);
+        const resultKind = failure?.code === "MALFORMED_ARGUMENTS"
+          ? "parse_failure" as const
+          : failure?.code === "INVALID_ARGUMENTS"
+            ? "validation_failure" as const
+            : result.isError ? "execution_failure" as const : "execution_success" as const;
+        void recordToolQualityMetric({
+          protocol: config.protocol,
+          model: config.model,
+          toolName: call.name,
+          resultKind,
+          errorCode: failure?.code,
+          round,
+          repaired,
+          durationMs,
+        }).catch(() => undefined);
+        if (isArgumentFailure) {
+          pendingToolRepairs.add(call.name);
+          const fields = failure.issues.map(item => item.path).sort().join(",") || "arguments";
+          const signature = `${call.name}:${failure.code}:${fields}`;
+          if (repairedFailureSignatures.has(signature)) {
+            void recordToolQualityMetric({
+              protocol: config.protocol,
+              model: config.model,
+              toolName: call.name,
+              resultKind: "circuit_breaker",
+              errorCode: failure.code,
+              round,
+              repaired: false,
+              durationMs: 0,
+            }).catch(() => undefined);
+            throw new Error(`工具 ${call.name} 的参数已连续两次无效（${failure.code}：${fields}）。已停止任务以避免重复调用。`);
+          }
+          repairedFailureSignatures.add(signature);
+        } else if (reachedExecutor) {
+          // Only calls that reached a tool executor consume the execution budget.
+          executedToolCalls += 1;
+        }
         if (call.name === requiredFirstTool && !result.isError) requiredFirstTool = null;
         const nextTodos = !result.isError ? trackedTodos(call) : null;
         if (nextTodos) latestTodos = nextTodos;

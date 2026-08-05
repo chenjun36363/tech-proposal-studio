@@ -1,6 +1,6 @@
 import type { AgentDraft, AgentEditorSelection, AgentGitApprovalRequest, AgentUserQuestion, AgentUserQuestionAnswer } from "./protocol";
 import type { AgentCompletion } from "./runner";
-import { AgentToolRegistry, objectSchema } from "./toolRegistry";
+import { AgentToolRegistry, objectSchema, toolExecutionError, toolFailure } from "./toolRegistry";
 import type { DocumentBlock, Project, ResolvedModelConfig } from "../core/types";
 import { searchWeb } from "../services/search";
 import { applyAgentDraft, parseMarkdownHeadings, sectionBody } from "../features/editor/markdownDoc";
@@ -81,7 +81,13 @@ const KNOWLEDGE_RESULT_MAX_CHARS = 12000;
 
 function knowledgeToolError(code: string, message: string, retryable: boolean, details?: Record<string, unknown>) {
   const payload = { error: { code, message, retryable, ...details } };
-  return { content: JSON.stringify(payload, null, 2), data: payload, isError: code !== "NO_MATCH" };
+  const isError = code !== "NO_MATCH";
+  return {
+    content: JSON.stringify(payload, null, 2),
+    data: payload,
+    isError,
+    ...(isError ? { failure: toolFailure(code, { retryable, repair: "请根据当前知识库状态调整查询或选择有效 section_id 后重试。" }) } : {}),
+  };
 }
 
 function knowledgeSearchContent(results: Awaited<ReturnType<typeof searchKnowledge>>) {
@@ -145,9 +151,13 @@ export function createProposalToolRegistry(params: {
   let currentHeadingId = block.sectionId !== "markdown" ? block.sectionId : undefined;
   let currentSelection = params.selection;
   const findHeading = (id?: string) => id ? parseMarkdownHeadings(currentMarkdown).find(item => item.id === id) : undefined;
-  const requireHeading = (id: string) => {
+  const requireHeading = (id: string, field = "heading_id") => {
     const heading = findHeading(id);
-    if (!heading) throw new Error(`找不到章节：${id}`);
+    if (!heading) throw toolExecutionError("INVALID_HEADING_ID", {
+      retryable: true,
+      issues: [{ path: field, code: "CONTEXT_INVALID", expected: "get_proposal_outline 返回的当前章节 ID" }],
+      repair: "重新调用 get_proposal_outline，使用其返回的当前 ID；结构修改后旧 ID 会失效。",
+    });
     return heading;
   };
   const activeHeading = findHeading(currentHeadingId);
@@ -255,6 +265,7 @@ export function createProposalToolRegistry(params: {
     })
     .register({
       definition: { type: "function", function: { name: "read_proposal_section", description: "按 get_proposal_outline 返回的章节 ID 读取任意方案章节及其子章节。", parameters: objectSchema({ heading_id: { type: "string", description: "目录中的章节 ID" } }, ["heading_id"]) } },
+      normalizeArgs: args => { const { headingId, section_id, sectionId, ...rest } = args; return { ...rest, heading_id: args.heading_id ?? headingId ?? section_id ?? sectionId }; },
       execute: args => {
         const heading = requireHeading(text(args.heading_id, "heading_id"));
         const content = sectionBody(currentMarkdown, heading);
@@ -265,7 +276,7 @@ export function createProposalToolRegistry(params: {
       definition: { type: "function", function: { name: "read_selected_text", description: "读取用户发送任务时在编辑器中选中的非空文本。", parameters: objectSchema({}) } },
       execute: () => currentSelection
         ? { content: currentSelection.text, data: currentSelection, isError: false }
-        : { content: "当前没有非空选区。", isError: true },
+        : { content: "当前没有非空选区。", isError: true, failure: toolFailure("NO_SELECTION", { repair: "当前任务没有可用选区，请改为读取/修改章节，或请用户先选中文本。" }) },
     })
     .register({
       definition: { type: "function", function: { name: "find_document_text", description: "在全文或指定章节中按普通文本查找，返回位置和上下文。", parameters: objectSchema({ query: { type: "string" }, case_sensitive: { type: "boolean" }, scope: { type: "string", enum: ["document", "section"] }, heading_id: { type: "string" } }, ["query"]) } },
@@ -295,7 +306,7 @@ export function createProposalToolRegistry(params: {
     .register({
       definition: { type: "function", function: { name: "insert_heading", description: "在目标标题之前或之后插入 H2-H6 标题，可同时插入正文。", parameters: objectSchema({ target_heading_id: { type: "string" }, position: { type: "string", enum: ["before", "after"] }, level: { type: "integer", minimum: 2, maximum: 6 }, title: { type: "string" }, body: { type: "string" }, instruction: { type: "string" } }, ["target_heading_id", "position", "level", "title"]) } },
       execute: async (args, signal) => {
-        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"));
+        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"), "target_heading_id");
         const level = typeof args.level === "number" ? Math.floor(args.level) : 0;
         if (level < 2 || level > 6) throw new Error("level 必须在 2 到 6 之间");
         const position = text(args.position, "position"); if (position !== "before" && position !== "after") throw new Error("position 必须是 before 或 after");
@@ -317,12 +328,11 @@ export function createProposalToolRegistry(params: {
       execute: async args => {
         const query = text(args.query, "query");
         const normalizedQuery = query.toLocaleLowerCase();
-        if (searchedQueries.has(normalizedQuery)) return { content: "该查询已执行过，请使用之前的搜索结果并继续完成任务。", data: { query, duplicate: true }, isError: true };
-        if (webSearchCalls >= webSearchMaxCalls) return { content: `本次任务已达到 ${webSearchMaxCalls} 次联网搜索上限，请使用已有结果并继续完成任务。`, data: { query, limitReached: true }, isError: true };
+        if (searchedQueries.has(normalizedQuery)) return { content: "该查询已执行过，请使用之前的搜索结果并继续完成任务。", data: { query, duplicate: true }, isError: true, failure: toolFailure("DUPLICATE_WEB_QUERY", { repair: "不要重复同一查询；请使用已有搜索结果或换成不同的核心检索词。" }) };
+        if (webSearchCalls >= webSearchMaxCalls) return { content: `本次任务已达到 ${webSearchMaxCalls} 次联网搜索上限，请使用已有结果并继续完成任务。`, data: { query, limitReached: true }, isError: true, failure: toolFailure("WEB_SEARCH_LIMIT_REACHED", { repair: "本次任务的联网搜索额度已用完，请使用已有资料完成任务。" }) };
         searchedQueries.add(normalizedQuery);
         webSearchCalls += 1;
         const results = await searchWeb(query, project.search);
-        if (webSearchCalls >= webSearchMaxCalls) registry.unregister("web_search");
         const rows = results.map(({ title, url, excerpt }) => ({ title, url, excerpt }));
         rows.forEach(result => searchableWebUrls.add(result.url));
         return { content: rows.length ? JSON.stringify(rows, null, 2) : "联网搜索没有返回结果。", data: { query, approved: true, results: rows }, isError: false };
@@ -332,9 +342,9 @@ export function createProposalToolRegistry(params: {
       definition: { type: "function", function: { name: "read_web_page", description: "读取 web_search 返回的网页正文并转换为 Markdown。只能读取当前任务搜索结果中的 URL。", parameters: objectSchema({ url: { type: "string", description: "web_search 返回的完整 URL" } }, ["url"]) } },
       execute: async args => {
         const url = text(args.url, "url");
-        if (!searchableWebUrls.has(url)) return { content: "只能读取本次 web_search 返回的网页 URL。", data: { url }, isError: true };
-        if (readWebUrls.has(url)) return { content: "该网页已经阅读过，请使用之前返回的正文并继续完成任务。", data: { url, duplicate: true }, isError: true };
-        if (readWebUrls.size >= 3) return { content: "本次任务已达到 3 个网页的阅读上限，请基于已读内容继续完成任务。", data: { url, limitReached: true }, isError: true };
+        if (!searchableWebUrls.has(url)) return { content: "只能读取本次 web_search 返回的网页 URL。", data: { url }, isError: true, failure: toolFailure("INVALID_WEB_URL", { repair: "仅使用本任务 web_search 返回的完整 URL。" }) };
+        if (readWebUrls.has(url)) return { content: "该网页已经阅读过，请使用之前返回的正文并继续完成任务。", data: { url, duplicate: true }, isError: true, failure: toolFailure("DUPLICATE_WEB_PAGE", { repair: "不要重复读取同一网页；请使用先前返回的正文。" }) };
+        if (readWebUrls.size >= 3) return { content: "本次任务已达到 3 个网页的阅读上限，请基于已读内容继续完成任务。", data: { url, limitReached: true }, isError: true, failure: toolFailure("WEB_PAGE_LIMIT_REACHED", { repair: "本次任务网页阅读额度已用完，请使用已读内容完成任务。" }) };
         readWebUrls.add(url);
         const page = await fetchKnowledgeWebPage(url);
         const maxChars = 30000;
@@ -402,7 +412,14 @@ export function createProposalToolRegistry(params: {
       },
     })
     .register({
-      definition: { type: "function", function: { name: "write_todo", description: "创建或更新本次任务的执行计划。每次调用会完整替换旧清单；必须提交全部计划项，且最多一个项目为 in_progress。", parameters: objectSchema({ todos: { type: "array", items: { type: "object", properties: { content: { type: "string", description: "任务的命令式描述" }, status: { type: "string", enum: ["pending", "in_progress", "completed"] }, activeForm: { type: "string", description: "任务进行中时显示的描述" } }, required: ["content", "status", "activeForm"], additionalProperties: false } } }, ["todos"]) } },
+      definition: { type: "function", function: { name: "write_todo", description: "创建或更新本次任务的执行计划。每次调用会完整替换旧清单；必须提交全部计划项，且最多一个项目为 in_progress。", parameters: objectSchema({ todos: { type: "array", items: { type: "object", properties: { content: { type: "string", description: "任务的命令式描述" }, status: { type: "string", enum: ["pending", "in_progress", "completed"] }, active_form: { type: "string", description: "任务进行中时显示的描述" } }, required: ["content", "status", "active_form"], additionalProperties: false } } }, ["todos"]) } },
+      normalizeArgs: args => ({ ...args, todos: Array.isArray(args.todos) ? args.todos.map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+        const todo = { ...(item as Record<string, unknown>) };
+        if (todo.active_form === undefined && typeof todo.activeForm === "string") todo.active_form = todo.activeForm;
+        delete todo.activeForm;
+        return todo;
+      }) : args.todos }),
       execute: args => {
         if (!Array.isArray(args.todos)) throw new Error("write_todo 需要 todos 数组。");
         const todos = args.todos.map<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm: string }>((item, index) => {
@@ -411,10 +428,10 @@ export function createProposalToolRegistry(params: {
           if (typeof todo.content !== "string" || !todo.content.trim()) throw new Error(`todos[${index}].content 不能为空。`);
           const status = todo.status;
           if (status !== "pending" && status !== "in_progress" && status !== "completed") throw new Error(`todos[${index}].status 无效。`);
-          if (typeof todo.activeForm !== "string" || !todo.activeForm.trim()) throw new Error(`todos[${index}].activeForm 不能为空。`);
-          return { content: todo.content.trim(), status, activeForm: todo.activeForm.trim() };
+          if (typeof todo.active_form !== "string" || !todo.active_form.trim()) throw new Error(`todos[${index}].active_form 不能为空。`);
+          return { content: todo.content.trim(), status, activeForm: todo.active_form.trim() };
         });
-        if (todos.filter(todo => todo.status === "in_progress").length > 1) throw new Error("执行计划最多只能有一个 in_progress 项目。");
+        if (todos.filter(todo => todo.status === "in_progress").length > 1) throw toolExecutionError("INVALID_TODO_PLAN", { retryable: true, issues: [{ path: "todos", code: "CONTEXT_INVALID", expected: "最多一个 in_progress 项目" }], repair: "仅保留一个 in_progress 项目后重试 write_todo。" });
         params.onTodos(todos);
         const completed = todos.filter(todo => todo.status === "completed").length;
         return { content: `计划已更新（${completed}/${todos.length} 已完成）。`, data: todos, isError: false };
@@ -425,13 +442,12 @@ export function createProposalToolRegistry(params: {
       execute: async (args, signal) => {
         const requestedId = typeof args.heading_id === "string" && args.heading_id.trim() ? args.heading_id.trim() : currentHeadingId;
         const heading = findHeading(requestedId);
-        if (!heading) throw new Error("当前没有可修改的有效章节");
+        if (!heading) throw toolExecutionError("STALE_DOCUMENT_SNAPSHOT", { retryable: true, repair: "当前章节快照已失效，请重新读取目录或章节后重试。" });
         const after = markdownText(args.markdown ?? args.content, "markdown");
         const revisedHeading = parseMarkdownHeadings(after)[0];
-        if (!revisedHeading || revisedHeading.start !== 0) throw new Error("修改稿必须以目标章节的 Markdown 标题开头");
-        if (revisedHeading.level !== heading.level) throw new Error(`修改稿标题层级与目标章节不一致：需要 H${heading.level}，收到 H${revisedHeading.level}`);
-        if (revisedHeading.title !== heading.title) {
-          throw new Error(`修改稿标题与目标章节不一致：目标为「${heading.title}」，收到「${revisedHeading.title}」。请读取正确章节后重新提交。`);
+        if (!revisedHeading || revisedHeading.start !== 0) throw toolExecutionError("STALE_DOCUMENT_SNAPSHOT", { retryable: true, issues: [{ path: "markdown", code: "CONTEXT_INVALID", expected: "以目标章节的原 Markdown 标题开头" }], repair: "重新读取目标章节并保留其标题后重试。" });
+        if (revisedHeading.level !== heading.level || revisedHeading.title !== heading.title) {
+          throw toolExecutionError("STALE_DOCUMENT_SNAPSHOT", { retryable: true, issues: [{ path: "markdown", code: "CONTEXT_INVALID", expected: "与目标章节相同的标题文本和层级" }], repair: "重新读取目标章节并保留其标题、层级和编号格式后重试。" });
         }
         const before = sectionBody(currentMarkdown, heading);
         const instruction = typeof args.instruction === "string" && args.instruction.trim() ? args.instruction.trim() : "优化当前章节";
@@ -444,9 +460,10 @@ export function createProposalToolRegistry(params: {
     })
     .register({
       definition: { type: "function", function: { name: "propose_selection_update", description: "提交用户当前选区的替换文本，供用户审核。仅在发送任务时存在非空选区时可用。", parameters: objectSchema({ markdown: { type: "string", description: "替换选区的新 Markdown" }, instruction: { type: "string", description: "本次修改的简短说明" } }, ["markdown", "instruction"]) } },
+      normalizeArgs: args => { const { content, ...rest } = args; return { ...rest, markdown: args.markdown ?? content }; },
       execute: async (args, signal) => {
-        if (!currentSelection || currentSelection.start === currentSelection.end) throw new Error("当前没有非空选区");
-        const after = markdownText(args.markdown ?? args.content, "markdown");
+        if (!currentSelection || currentSelection.start === currentSelection.end) throw toolExecutionError("NO_SELECTION", { repair: "当前任务没有可用选区，请改为修改章节，或请用户先选中文本。" });
+        const after = markdownText(args.markdown, "markdown");
         const instruction = text(args.instruction, "instruction");
         const draft: AgentDraft = {
           callId: crypto.randomUUID(), operation: "replace_selection", before: currentSelection.text, after, instruction,
@@ -462,7 +479,7 @@ export function createProposalToolRegistry(params: {
     .register({
       definition: { type: "function", function: { name: "propose_section_insert", description: "在指定章节之前或之后插入一个以 H2-H6 标题开头的新章节提案。", parameters: objectSchema({ target_heading_id: { type: "string", description: "目录中的目标章节 ID" }, position: { type: "string", enum: ["before", "after"] }, markdown: { type: "string", description: "以 H2-H6 标题开头的完整章节 Markdown" }, instruction: { type: "string", description: "插入原因" } }, ["target_heading_id", "position", "markdown", "instruction"]) } },
       execute: async (args, signal) => {
-        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"));
+        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"), "target_heading_id");
         const position = text(args.position, "position");
         if (position !== "before" && position !== "after") throw new Error("position 必须是 before 或 after");
         const snapshot = sectionBody(currentMarkdown, heading);
@@ -476,11 +493,10 @@ export function createProposalToolRegistry(params: {
     .register({
       definition: { type: "function", function: { name: "propose_section_move", description: "提交移动指定章节及其全部子章节的提案，在另一个章节之前或之后放置。文档 H1 不可移动。", parameters: objectSchema({ source_heading_id: { type: "string", description: "要移动的源章节 ID" }, target_heading_id: { type: "string", description: "作为放置参照的目标章节 ID" }, position: { type: "string", enum: ["before", "after"] }, instruction: { type: "string", description: "移动原因" } }, ["source_heading_id", "target_heading_id", "position", "instruction"]) } },
       execute: async (args, signal) => {
-        const source = requireHeading(text(args.source_heading_id, "source_heading_id"));
-        const target = requireHeading(text(args.target_heading_id, "target_heading_id"));
-        if (source.level <= 1) throw new Error("不能移动文档 H1 标题");
-        if (source.id === target.id) throw new Error("不能将章节移动到自身");
-        if (target.start > source.start && target.start < source.end) throw new Error("不能将章节移动到其子章节内");
+        const source = requireHeading(text(args.source_heading_id, "source_heading_id"), "source_heading_id");
+        const target = requireHeading(text(args.target_heading_id, "target_heading_id"), "target_heading_id");
+        if (source.level <= 1) throw toolExecutionError("PROTECTED_DOCUMENT_TITLE", { repair: "文档 H1 不可移动；请选择 H2-H6 章节。" });
+        if (source.id === target.id || (target.start > source.start && target.start < source.end)) throw toolExecutionError("INVALID_MOVE_TARGET", { retryable: true, repair: "目标章节不能是源章节自身或其子章节；请重新选择目标。" });
         const position = text(args.position, "position");
         if (position !== "before" && position !== "after") throw new Error("position 必须是 before 或 after");
         const before = sectionBody(currentMarkdown, source);
@@ -498,8 +514,8 @@ export function createProposalToolRegistry(params: {
     .register({
       definition: { type: "function", function: { name: "propose_section_delete", description: "提交删除指定章节及其全部子章节的提案。文档 H1 不可删除。", parameters: objectSchema({ target_heading_id: { type: "string", description: "目录中的目标章节 ID" }, instruction: { type: "string", description: "删除原因" } }, ["target_heading_id", "instruction"]) } },
       execute: async (args, signal) => {
-        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"));
-        if (heading.level <= 1) throw new Error("不能删除文档 H1 标题");
+        const heading = requireHeading(text(args.target_heading_id, "target_heading_id"), "target_heading_id");
+        if (heading.level <= 1) throw toolExecutionError("PROTECTED_DOCUMENT_TITLE", { repair: "文档 H1 不可删除；请选择 H2-H6 章节。" });
         const before = sectionBody(currentMarkdown, heading);
         const draft: AgentDraft = {
           callId: crypto.randomUUID(), operation: "delete_section", before, after: "", instruction: text(args.instruction, "instruction"),

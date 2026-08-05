@@ -142,8 +142,8 @@ describe("proposal agent web search tool", () => {
     const second = await tools.execute({ id: "search-2", name: "web_search", arguments: { query: "LIMS 规范" } }, new AbortController().signal);
 
     expect(first.isError).toBe(false);
-    expect(second).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("未知工具") }));
-    expect(tools.has("web_search")).toBe(false);
+    expect(second).toEqual(expect.objectContaining({ isError: true, failure: expect.objectContaining({ code: "WEB_SEARCH_LIMIT_REACHED" }) }));
+    expect(tools.has("web_search")).toBe(true);
     expect(searchWeb).toHaveBeenCalledTimes(1);
   });
 });
@@ -305,7 +305,7 @@ describe("proposal agent todo tool", () => {
       { content: "联网搜索", status: "in_progress", activeForm: "正在联网搜索" },
     ] } }, new AbortController().signal);
 
-    expect(result).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("最多只能有一个") }));
+    expect(result).toEqual(expect.objectContaining({ isError: true, failure: expect.objectContaining({ code: "INVALID_TODO_PLAN" }) }));
   });
 });
 
@@ -377,8 +377,8 @@ describe("proposal agent document editing tools", () => {
 
     expect(acceptedTarget.isError).toBe(false);
     expect(reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ before: expect.stringContaining("计划正文"), target: expect.objectContaining({ sectionId: "第7章-实施计划" }) }), signal);
-    expect(wrongChapter).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("标题与目标章节不一致") }));
-    expect(changedNumberStyle).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("标题与目标章节不一致") }));
+    expect(wrongChapter).toEqual(expect.objectContaining({ isError: true, failure: expect.objectContaining({ code: "STALE_DOCUMENT_SNAPSHOT" }) }));
+    expect(changedNumberStyle).toEqual(expect.objectContaining({ isError: true, failure: expect.objectContaining({ code: "STALE_DOCUMENT_SNAPSHOT" }) }));
   });
 
   it("replaces the first or all literal matches through a document draft", async () => {
@@ -493,7 +493,7 @@ describe("proposal agent document editing tools", () => {
 
     expect(reviewDraft).toHaveBeenNthCalledWith(1, expect.objectContaining({ operation: "insert_section", target: expect.objectContaining({ sectionId: "架构", position: "before" }) }), signal);
     expect(reviewDraft).toHaveBeenNthCalledWith(2, expect.objectContaining({ operation: "delete_section", target: expect.objectContaining({ sectionId: "背景" }) }), signal);
-    expect(blocked).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("不能删除文档 H1") }));
+    expect(blocked).toEqual(expect.objectContaining({ isError: true, failure: expect.objectContaining({ code: "PROTECTED_DOCUMENT_TITLE" }) }));
   });
 
   it("creates a chapter move proposal with source and destination snapshots", async () => {
@@ -513,8 +513,8 @@ describe("proposal agent document editing tools", () => {
       before: expect.stringContaining("子正文"),
       target: expect.objectContaining({ sectionId: "背景", destinationSectionId: "架构", position: "after", snapshot: expect.any(String), destinationSnapshot: expect.stringContaining("架构正文") }),
     }), signal);
-    expect(h1.content).toContain("不能移动文档 H1");
-    expect(self.content).toContain("不能将章节移动到自身");
-    expect(descendant.content).toContain("不能将章节移动到其子章节内");
+    expect(h1.failure?.code).toBe("PROTECTED_DOCUMENT_TITLE");
+    expect(self.failure?.code).toBe("INVALID_MOVE_TARGET");
+    expect(descendant.failure?.code).toBe("INVALID_MOVE_TARGET");
   });
 });
