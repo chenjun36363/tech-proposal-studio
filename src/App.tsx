@@ -1618,6 +1618,7 @@ export default function App() {
                 value={activeBody}
                 onChange={setActiveContent}
                 workspaceRoot={workspace?.root}
+                filePath={project.filePath}
                 onSelectionChange={captureAgentSelection}
                 placeholder={editorMode === "full" ? "编辑完整 Markdown…" : "编辑当前章节 Markdown… 支持 Ctrl+V 粘贴图片"}
                 highlights={findOpen ? findHits : []}
@@ -2121,7 +2122,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
       </div>}
       {section === "workspace" && <div className="settings-section-content">
         <div className="agent-title"><FolderOpen size={15} /><span>工作区目录</span></div>
-        <p className="muted">工作目录根下的 `.md` 是可打开/保存的方案正文；知识库目录存放引用资料。粘贴图片会保存到工作目录 `assets/`。API / 搜索配置保存在工作目录 `.gouan/connections.json`（不进 localStorage）。</p>
+        <p className="muted">工作目录根下的 `.md` 是可打开/保存的方案正文；知识库目录存放引用资料。粘贴图片会按文档分目录保存到工作目录 `assets/&lt;文档名&gt;/`。API / 搜索配置保存在工作目录 `.gouan/connections.json`（不进 localStorage）。</p>
         <label className="wide path-field">工作目录
           <div className="path-row">
             <input value={workspace.root} onChange={e => setWorkspace({ root: e.target.value })} placeholder="例如 D:\gouan-workspace" />

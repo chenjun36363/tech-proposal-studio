@@ -385,6 +385,7 @@ fn save_image_to_workspace(
     root: String,
     bytes: Vec<u8>,
     preferred_name: Option<String>,
+    doc_name: Option<String>,
 ) -> Result<SavedImage, String> {
     if root.trim().is_empty() {
         return Err("请先配置工作目录".into());
@@ -393,7 +394,16 @@ fn save_image_to_workspace(
         return Err("图片内容为空".into());
     }
     let assets = PathBuf::from(&root).join("assets");
-    fs::create_dir_all(&assets).map_err(|e| e.to_string())?;
+    // 按当前文档名称分目录存放（assets/<文档名称>/），避免所有粘贴图片混在 assets/ 根下。
+    let doc_dir = doc_name
+        .as_deref()
+        .map(|n| sanitize_filename(n.trim()))
+        .filter(|n| !n.is_empty());
+    let dir = match &doc_dir {
+        Some(name) => assets.join(name),
+        None => assets,
+    };
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ext = preferred_name
         .as_deref()
         .and_then(|n| Path::new(n).extension())
@@ -406,11 +416,15 @@ fn save_image_to_workspace(
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let file_name = format!("paste-{stamp}.{ext}");
-    let path = assets.join(&file_name);
+    let path = dir.join(&file_name);
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    let relative_path = match &doc_dir {
+        Some(name) => format!("assets/{name}/{file_name}"),
+        None => format!("assets/{file_name}"),
+    };
     Ok(SavedImage {
         path: path.to_string_lossy().into(),
-        relative_path: format!("assets/{file_name}"),
+        relative_path,
     })
 }
 

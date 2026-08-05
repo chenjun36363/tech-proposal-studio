@@ -193,6 +193,8 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   value: string;
   onChange: (v: string) => void;
   workspaceRoot?: string;
+  /** 当前打开方案的文件路径，用于决定粘贴图片存放的子目录（assets/<文档名>/） */
+  filePath?: string;
   onImageInserted?: (markdownImage: string) => void;
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   placeholder?: string;
@@ -205,6 +207,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
   value,
   onChange,
   workspaceRoot,
+  filePath,
   onImageInserted,
   onSelectionChange,
   placeholder,
@@ -333,7 +336,8 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
     if (!file) return;
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
-      const saved = await saveImageToWorkspace(workspaceRoot, Array.from(buf), file.name || "paste.png");
+      const docName = filePath ? (filePath.split(/[\\/]/).pop() ?? "").replace(/\.md$/i, "") : "";
+      const saved = await saveImageToWorkspace(workspaceRoot, Array.from(buf), file.name || "paste.png", docName || undefined);
       insertAtCursor(`\n![image](${saved.relativePath.replace(/\\/g, "/")})\n`);
     } catch (err) {
       console.error(err);

@@ -149,9 +149,9 @@ export async function writeLibraryMarkdown(historyDir: string, title: string, co
   return invoke<LibraryFile>("write_library_markdown", { historyDir, title, content });
 }
 
-export async function saveImageToWorkspace(root: string, bytes: number[], preferredName?: string): Promise<{ path: string; relativePath: string }> {
+export async function saveImageToWorkspace(root: string, bytes: number[], preferredName?: string, docName?: string): Promise<{ path: string; relativePath: string }> {
   if (!isDesktop()) throw new Error("请在桌面端粘贴图片");
-  return invoke("save_image_to_workspace", { root, bytes, preferredName: preferredName || null });
+  return invoke("save_image_to_workspace", { root, bytes, preferredName: preferredName || null, docName: docName || null });
 }
 
 export function libraryFileToSource(file: LibraryFile): SourceRecord {
