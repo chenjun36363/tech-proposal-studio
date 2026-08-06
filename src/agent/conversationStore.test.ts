@@ -24,6 +24,7 @@ describe("agent conversation storage", () => {
     expect(conversation.memorySearchEnabled).toBe(false);
     expect(conversation.fullAccessEnabled).toBe(false);
     expect(conversation.fullAccessAcknowledged).toBe(false);
+    expect(conversation.mode).toBe("build");
   });
   it("applies conversation changes without reloading storage", () => {
     const first = createAgentConversation("project-a");

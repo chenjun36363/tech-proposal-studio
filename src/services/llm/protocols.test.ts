@@ -64,7 +64,7 @@ describe("resolveActiveModelConfig", () => {
     const provider = { ...createDefaultProvider(), id: "p1", activeModels: ["m1"], apiKey: "k" };
     const resolved = resolveActiveModelConfig([provider], { providerId: "p1", model: "m1" });
     expect(resolved.model).toBe("m1");
-    expect(resolved.protocol).toBe("openai-completions");
+    expect(resolved.protocol).toBe("openai-responses");
   });
 
   it("rejects calls when project AI master switch is off", () => {
@@ -146,6 +146,16 @@ describe("openai-completions adapter", () => {
     expect(adapter.parseTextSseData('{"choices":[{"delta":{"content":"你好"}}]}')).toBe("你好");
     expect(adapter.parseTextSseData("[DONE]")).toBeNull();
   });
+
+  it("rebuilds streamed text and fragmented tool calls", () => {
+    const stream = adapter.createChatStream();
+    expect(stream.push('{"choices":[{"delta":{"content":"你"}}]}')).toBe("你");
+    expect(stream.push('{"choices":[{"delta":{"content":"好","tool_calls":[{"index":0,"id":"call-1","function":{"name":"write_","arguments":"{\\"todos\\":"}}]}}]}')).toBe("好");
+    stream.push('{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"todo","arguments":"[]}"}}]},"finish_reason":"tool_calls"}]}');
+    const result = stream.finish().choices?.[0];
+    expect(result?.message?.content).toBe("你好");
+    expect(result?.message?.tool_calls?.[0]).toMatchObject({ id: "call-1", function: { name: "write_todo", arguments: '{"todos":[]}' } });
+  });
 });
 
 describe("openai-responses adapter", () => {
@@ -185,6 +195,17 @@ describe("openai-responses adapter", () => {
       type: "response.output_text.delta",
       delta: "修改后的正文",
     }))).toBe("修改后的正文");
+  });
+
+  it("rebuilds Responses text and function arguments from events", () => {
+    const stream = adapter.createChatStream();
+    stream.push(JSON.stringify({ type: "response.output_item.added", item: { type: "function_call", call_id: "fc1", name: "write_todo", arguments: "" } }));
+    expect(stream.push(JSON.stringify({ type: "response.output_text.delta", delta: "完成" }))).toBe("完成");
+    stream.push(JSON.stringify({ type: "response.function_call_arguments.delta", call_id: "fc1", delta: '{"todos":' }));
+    stream.push(JSON.stringify({ type: "response.function_call_arguments.delta", call_id: "fc1", delta: "[]}" }));
+    const message = stream.finish().choices?.[0]?.message;
+    expect(message?.content).toBe("完成");
+    expect(message?.tool_calls?.[0].function).toEqual({ name: "write_todo", arguments: '{"todos":[]}' });
   });
 });
 

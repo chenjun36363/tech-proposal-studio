@@ -54,6 +54,8 @@ export type AgentEvent =
   | { id: string; type: "run_started"; at: number; model: string }
   | { id: string; type: "round_started"; at: number; round: number }
   | { id: string; type: "context_compacted"; at: number; round: number; beforeTokens: number; afterTokens: number; removedMessages: number }
+  | { id: string; type: "stream_started"; at: number; round: number; phase: "thinking" | "output" | "tool" }
+  | { id: string; type: "reasoning"; at: number; round: number; content: string }
   | { id: string; type: "text"; at: number; round: number; content: string }
   | { id: string; type: "tool_call"; at: number; round: number; call: AgentToolCall }
   | { id: string; type: "tool_started"; at: number; round: number; callId: string }
@@ -71,6 +73,7 @@ export interface AgentToolDefinition {
 export interface AgentMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  reasoning_content?: string;
   tool_call_id?: string;
   tool_result_data?: unknown;
   tool_result_is_error?: boolean;

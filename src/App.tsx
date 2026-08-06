@@ -2080,7 +2080,6 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
             <label><input type="checkbox" checked={draft.agent.knowledgeToolsEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, knowledgeToolsEnabled: e.target.checked } })} /><span>新会话默认知识检索</span></label>
             <label><input type="checkbox" checked={draft.agent.webSearchEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, webSearchEnabled: e.target.checked } })} /><span>新会话默认联网搜索</span></label>
             <label><input type="checkbox" checked={draft.agent.autoRemember} disabled={!draft.agent.memoryEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, autoRemember: e.target.checked } })} /><span>允许写入记忆</span></label>
-            <label><input type="checkbox" checked={draft.agent.planningEnabled} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, planningEnabled: e.target.checked } })} /><span>复杂任务使用计划</span></label>
             <label><input type="checkbox" checked={draft.agent.defaultPinnedContextOnly} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, defaultPinnedContextOnly: e.target.checked } })} /><span>新会话默认仅用已引用资料</span></label>
           </div>
           <label className="wide">附加指令<textarea className="agent-instructions" maxLength={4000} value={draft.agent.customInstructions} onChange={e => setDraft({ ...draft, agent: { ...draft.agent, customInstructions: e.target.value } })} placeholder="例如：优先使用本项目术语，风险项采用表格呈现。" /></label>

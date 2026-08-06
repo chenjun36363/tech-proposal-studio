@@ -44,12 +44,16 @@ export function toOpenAICompatible(resolved: ResolvedModelConfig): OpenAICompati
   };
 }
 
-/** Treat a legacy flat config as openai-completions (tests / transitional call sites). */
+/** Official OpenAI legacy configs use Responses; third-party compatible endpoints use Chat Completions. */
 export function resolvedFromLegacy(config: OpenAICompatibleConfig, providerId = LEGACY_PROVIDER_ID): ResolvedModelConfig {
+  let protocol: LlmProtocol = "openai-completions";
+  try {
+    if (new URL(config.baseUrl).hostname.toLowerCase() === "api.openai.com") protocol = "openai-responses";
+  } catch { /* validation reports malformed URLs at request time */ }
   return {
     providerId,
     providerName: "Default",
-    protocol: "openai-completions",
+    protocol,
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
     model: config.model,

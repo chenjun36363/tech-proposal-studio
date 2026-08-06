@@ -3,11 +3,39 @@ import { listen } from "@tauri-apps/api/event";
 import { normalizeModelList } from "../features/settings/modelCatalog";
 import type { AiDraft, DocumentBlock, ModelOption, OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { isDesktop } from "./runtime";
-import { protocolAdapter, type CanonicalChatRequest, type WireHttpRequest } from "./llm";
+import { asRecord, protocolAdapter, type CanonicalChatRequest, type WireHttpRequest } from "./llm";
 import { resolvedFromLegacy } from "./llm/resolve";
 import type { AgentModelResponse } from "../agent/protocol";
 
 type StreamUpdate = (content: string) => void;
+type StreamActivity = (phase: "thinking" | "output" | "tool") => void;
+type StreamReasoning = (content: string) => void;
+
+function streamActivity(data: string): "thinking" | "output" | "tool" {
+  if (/tool_calls|function_call|tool_use|input_json_delta/i.test(data)) return "tool";
+  if (/output_text|"content"\s*:|text_delta/i.test(data)) return "output";
+  return "thinking";
+}
+
+function streamReasoning(data: string): string | null {
+  try {
+    const root = asRecord(JSON.parse(data));
+    if (!root) return null;
+    if (/reasoning|thinking/i.test(String(root.type)) && typeof root.delta === "string") return root.delta;
+    const choice = Array.isArray(root.choices) ? asRecord(root.choices[0]) : null;
+    const choiceDelta = asRecord(choice?.delta);
+    if (typeof choiceDelta?.reasoning_content === "string") return choiceDelta.reasoning_content;
+    if (typeof choiceDelta?.reasoning === "string") return choiceDelta.reasoning;
+    const delta = asRecord(root.delta);
+    if (root.type === "content_block_delta" && typeof delta?.thinking === "string") return delta.thinking;
+    const candidate = Array.isArray(root.candidates) ? asRecord(root.candidates[0]) : null;
+    const content = asRecord(candidate?.content);
+    const parts = Array.isArray(content?.parts) ? content.parts : [];
+    const thought = parts.map(asRecord).filter(part => part?.thought === true && typeof part.text === "string").map(part => part!.text as string).join("");
+    if (thought) return thought;
+    return null;
+  } catch { return null; }
+}
 
 function ensureEnabled(config: ResolvedModelConfig): void {
   if (!config.enabled) throw new Error("当前项目已禁用联网 AI");
@@ -114,14 +142,19 @@ async function browserStreamText(
   config: ResolvedModelConfig,
   onUpdate: StreamUpdate,
   parseLine: (data: string) => string | null,
+  signal?: AbortSignal,
+  onActivity?: StreamActivity,
+  onReasoning?: StreamReasoning,
 ): Promise<string> {
+  const timeoutSignal = AbortSignal.timeout(config.timeoutMs);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   const response = await fetch(request.url, {
     method: request.method,
     headers: request.headers,
     body: request.body === undefined ? undefined : JSON.stringify(request.body),
-    signal: AbortSignal.timeout(config.timeoutMs),
+    signal: combinedSignal,
   });
-  if (!response.ok) throw new Error(`模型服务返回 ${response.status}`);
+  if (!response.ok) return parseJsonResponse(response, "模型服务").then(() => "");
   if (!response.body) throw new Error("模型服务未返回可读取的内容流");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -136,6 +169,9 @@ async function browserStreamText(
     for (const line of lines) {
       const data = line.startsWith("data:") ? line.slice(5).trim() : "";
       if (!data) continue;
+      onActivity?.(streamActivity(data));
+      const reasoning = streamReasoning(data);
+      if (reasoning) onReasoning?.(reasoning);
       const chunk = parseLine(data);
       if (chunk) { after += chunk; onUpdate(chunk); }
     }
@@ -148,13 +184,22 @@ async function desktopStreamText(
   config: ResolvedModelConfig,
   onUpdate: StreamUpdate,
   parseLine: (data: string) => string | null,
+  signal?: AbortSignal,
+  onActivity?: StreamActivity,
+  onReasoning?: StreamReasoning,
 ): Promise<string> {
   const runId = crypto.randomUUID();
+  if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
+  const onAbort = () => { void invoke("model_proxy_cancel", { runId }).catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   let after = "";
   const unlisten = await listen<{ runId: string; content: string }>("session://ai", event => {
     if (event.payload.runId !== runId) return;
     const raw = event.payload.content;
     if (/^(?:event|id|retry):/i.test(raw.trimStart()) || raw.trimStart().startsWith(":")) return;
+    onActivity?.(streamActivity(raw));
+    const reasoning = streamReasoning(raw);
+    if (reasoning) onReasoning?.(reasoning);
     // Proxy emits raw SSE data payloads (without "data:" prefix) or plain text chunks.
     const chunk = parseLine(raw) ?? (raw.trimStart().startsWith("{") ? null : raw);
     if (chunk) {
@@ -178,6 +223,7 @@ async function desktopStreamText(
     });
     return after;
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     unlisten();
   }
 }
@@ -220,6 +266,42 @@ export async function agentCompletion(
   const request = adapter.buildChatRequest(resolved, canonical);
   const raw = await fetchJson(request, resolved, "模型服务", signal);
   return adapter.parseChatResponse(raw) satisfies AgentModelResponse;
+}
+
+export async function agentCompletionStream(
+  payload: Record<string, unknown>,
+  config: ResolvedModelConfig | OpenAICompatibleConfig,
+  onUpdate: StreamUpdate,
+  signal?: AbortSignal,
+  onActivity?: StreamActivity,
+  onReasoning?: StreamReasoning,
+): Promise<AgentModelResponse> {
+  const resolved = normalizeConfig(config);
+  ensureEnabled(resolved);
+  requireKey(resolved);
+  const adapter = protocolAdapter(resolved.protocol);
+  const canonical: CanonicalChatRequest = {
+    model: typeof payload.model === "string" ? payload.model : resolved.model,
+    messages: (payload.messages as CanonicalChatRequest["messages"]) ?? [],
+    tools: payload.tools as CanonicalChatRequest["tools"],
+    tool_choice: payload.tool_choice as CanonicalChatRequest["tool_choice"],
+    temperature: typeof payload.temperature === "number" ? payload.temperature : undefined,
+    stream: true,
+    max_tokens: typeof payload.max_tokens === "number" ? payload.max_tokens : undefined,
+    response_format: payload.response_format,
+  };
+  const request = adapter.buildChatRequest(resolved, canonical);
+  const accumulator = adapter.createChatStream();
+  let lastActivity: "thinking" | "output" | "tool" | null = null;
+  const reportActivity: StreamActivity = phase => {
+    if (phase === lastActivity) return;
+    lastActivity = phase;
+    onActivity?.(phase);
+  };
+  if (isDesktop()) await desktopStreamText(request, resolved, onUpdate, data => accumulator.push(data), signal, reportActivity, onReasoning);
+  else await browserStreamText(request, resolved, onUpdate, data => accumulator.push(data), signal, reportActivity, onReasoning);
+  if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
+  return accumulator.finish();
 }
 
 export async function listModels(config: ResolvedModelConfig | OpenAICompatibleConfig): Promise<ModelOption[]> {

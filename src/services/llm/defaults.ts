@@ -16,8 +16,8 @@ export type ProviderPreset = {
 };
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
-  { name: "OpenAI Completions", protocol: "openai-completions", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4.1-mini" },
   { name: "OpenAI Responses", protocol: "openai-responses", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4.1-mini" },
+  { name: "OpenAI Completions", protocol: "openai-completions", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4.1-mini" },
   { name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-sonnet-4-5" },
   { name: "Google Gemini", protocol: "google-generative-ai", baseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-2.0-flash" },
 ];

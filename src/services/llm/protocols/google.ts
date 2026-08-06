@@ -209,4 +209,25 @@ export const googleGenerativeAiAdapter: ProtocolAdapter = {
       return null;
     }
   },
+
+  createChatStream() {
+    let content = "";
+    const toolCalls: NonNullable<AgentMessage["tool_calls"]> = [];
+    return {
+      push(data) {
+        if (!data || data === "[DONE]") return null;
+        try {
+          const parsed = googleGenerativeAiAdapter.parseChatResponse(JSON.parse(data));
+          const message = parsed.choices?.[0]?.message;
+          const text = typeof message?.content === "string" ? message.content : "";
+          content += text;
+          if (message?.tool_calls?.length) toolCalls.push(...message.tool_calls);
+          return text || null;
+        } catch { return null; }
+      },
+      finish() {
+        return openAiStyleResponse({ role: "assistant", content: content || null, tool_calls: toolCalls.length ? toolCalls : undefined }, toolCalls.length ? "tool_calls" : "stop");
+      },
+    };
+  },
 };

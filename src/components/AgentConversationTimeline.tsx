@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, BookOpen, Check, ChevronRight, Circle, Copy, ExternalLink, FilePenLine, ListChecks, LoaderCircle, Search, UserRound, X } from "lucide-react";
+import { Bot, BookOpen, Brain, Check, ChevronRight, Circle, Copy, ExternalLink, FilePenLine, ListChecks, LoaderCircle, Search, UserRound, X } from "lucide-react";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
@@ -289,8 +289,15 @@ function PersistedTimeline({ messages }: { messages: AgentMessage[] }) {
   return <>{messages.map((message, index) => {
     const previous = messages[index - 1];
     const startsAgentTurn = message.role !== "user" && (!previous || previous.role === "user");
-    if ((message.role === "user" || message.role === "assistant") && typeof message.content === "string" && message.content.trim()) {
-      return <div className="agent-timeline-entry" key={`message-${index}`}>{startsAgentTurn && <AgentTurnLabel />}<MessageBubble role={message.role} content={message.content} showLabel={message.role === "user"} /></div>;
+    if (message.role === "assistant" && ((typeof message.content === "string" && message.content.trim()) || message.reasoning_content?.trim())) {
+      return <div className="agent-timeline-entry" key={`message-${index}`}>
+        {startsAgentTurn && <AgentTurnLabel />}
+        {message.reasoning_content?.trim() && <ReasoningBlock content={message.reasoning_content} />}
+        {typeof message.content === "string" && message.content.trim() && <MessageBubble role="assistant" content={message.content} showLabel={false} />}
+      </div>;
+    }
+    if (message.role === "user" && typeof message.content === "string" && message.content.trim()) {
+      return <div className="agent-timeline-entry" key={`message-${index}`}><MessageBubble role="user" content={message.content} /></div>;
     }
     if (message.role === "tool" && message.tool_call_id) {
       const call = calls.get(message.tool_call_id) ?? { id: message.tool_call_id, name: "tool", arguments: {} };
@@ -301,11 +308,31 @@ function PersistedTimeline({ messages }: { messages: AgentMessage[] }) {
   })}</>;
 }
 
+function ReasoningBlock({ content }: { content: string }) {
+  const [open, setOpen] = useState(true);
+  return <details className="agent-reasoning" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary><Brain size={12} />推理过程<ChevronRight size={12} /></summary>
+    <AgentMarkdown content={content} />
+  </details>;
+}
+
 function LiveTimeline({ events }: { events: AgentEvent[] }) {
   const completed = new Set(events.filter(event => event.type === "tool_result").map(event => event.type === "tool_result" ? event.call.id : ""));
-  const visible = events.some(event => event.type === "text" || event.type === "tool_call" || event.type === "tool_result" || event.type === "context_compacted");
-  return <>{visible && <AgentTurnLabel />}{events.map(event => {
+  const visible = events.some(event => event.type === "text" || event.type === "reasoning" || event.type === "tool_call" || event.type === "tool_result" || event.type === "context_compacted");
+  const entries: AgentEvent[] = [];
+  for (const event of events) {
+    const previous = entries[entries.length - 1];
+    if (event.type === "text" && previous?.type === "text" && previous.round === event.round) {
+      entries[entries.length - 1] = { ...previous, content: previous.content + event.content };
+    } else if (event.type === "reasoning" && previous?.type === "reasoning" && previous.round === event.round) {
+      entries[entries.length - 1] = { ...previous, content: previous.content + event.content };
+    } else {
+      entries.push(event);
+    }
+  }
+  return <>{visible && <AgentTurnLabel />}{entries.map(event => {
     if (event.type === "context_compacted") return <div className="agent-context-compacted" key={event.id}>已自动压缩上下文：{event.beforeTokens.toLocaleString()} → {event.afterTokens.toLocaleString()} tokens</div>;
+    if (event.type === "reasoning") return <ReasoningBlock key={event.id} content={event.content} />;
     if (event.type === "text") return <MessageBubble key={event.id} role="assistant" content={event.content} showLabel={false} />;
     if (event.type === "tool_call" && !completed.has(event.call.id)) return <ToolStep key={event.id} call={event.call} pending />;
     if (event.type === "tool_result") {
@@ -317,10 +344,20 @@ function LiveTimeline({ events }: { events: AgentEvent[] }) {
 
 export function AgentConversationTimeline({ messages, events, running }: { messages: AgentMessage[]; events: AgentEvent[]; running: boolean }) {
   const hasHistory = messages.some(message => message.role === "user" || message.role === "assistant" || message.role === "tool");
+  let streamPhase: Extract<AgentEvent, { type: "stream_started" }> | undefined;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].type === "stream_started") {
+      streamPhase = events[index] as Extract<AgentEvent, { type: "stream_started" }>;
+      break;
+    }
+  }
+  const waitingLabel = streamPhase?.type === "stream_started"
+    ? streamPhase.phase === "tool" ? "Agent 正在准备工具调用" : streamPhase.phase === "output" ? "Agent 正在生成" : "Agent 正在推理"
+    : "Agent 正在连接模型";
   return <>
     <PersistedTimeline messages={messages} />
     <LiveTimeline events={events} />
-    {running && !events.some(event => event.type === "tool_call" || event.type === "text") && <div className="agent-chat-working"><LoaderCircle className="spinning" size={14} /><span>Agent 正在思考</span></div>}
+    {running && !events.some(event => event.type === "tool_call" || event.type === "text" || event.type === "reasoning") && <div className="agent-chat-working"><LoaderCircle className="spinning" size={14} /><span>{waitingLabel}</span></div>}
     {!hasHistory && !running && null}
   </>;
 }

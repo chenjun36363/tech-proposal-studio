@@ -30,6 +30,13 @@ export interface ProtocolAdapter {
   extractText(payload: unknown): string;
   /** Parse one SSE data payload (already without the `data:` prefix). */
   parseTextSseData(data: string): string | null;
+  /** Collect streamed chat events into text deltas and one final canonical response. */
+  createChatStream(): ChatStreamAccumulator;
+}
+
+export interface ChatStreamAccumulator {
+  push(data: string): string | null;
+  finish(): AgentModelResponse;
 }
 
 export function baseUrl(config: ResolvedModelConfig): string {

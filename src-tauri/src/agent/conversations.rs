@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::{fs, path::PathBuf, time::Duration};
 use tauri::{AppHandle, Emitter};
 
-const DB_VERSION: i64 = 3;
+const DB_VERSION: i64 = 4;
 const CHANGE_EVENT: &str = "agent-conversations:changed";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +17,8 @@ pub struct AgentConversation {
     messages: Vec<Value>,
     #[serde(default)]
     summary: String,
+    #[serde(default = "default_agent_mode")]
+    mode: String,
     #[serde(default)]
     pinned_context_only: bool,
     #[serde(default)]
@@ -45,6 +47,18 @@ fn default_true() -> bool {
     true
 }
 
+fn default_agent_mode() -> String {
+    "build".into()
+}
+
+fn normalize_agent_mode(mode: &str) -> String {
+    if mode == "plan" {
+        "plan".into()
+    } else {
+        "build".into()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationPatch {
@@ -52,6 +66,8 @@ pub struct ConversationPatch {
     project_id: String,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
     #[serde(default)]
     pinned_context_only: Option<bool>,
     #[serde(default)]
@@ -110,6 +126,7 @@ fn open_db(workspace_root: &str) -> Result<Connection, String> {
            project_id TEXT NOT NULL,
            title TEXT NOT NULL,
            summary TEXT NOT NULL DEFAULT '',
+           mode TEXT NOT NULL DEFAULT 'build',
            pinned_context_only INTEGER NOT NULL DEFAULT 0,
            web_search_enabled INTEGER NOT NULL DEFAULT 0,
            knowledge_search_enabled INTEGER NOT NULL DEFAULT 0,
@@ -148,6 +165,7 @@ fn open_db(workspace_root: &str) -> Result<Connection, String> {
     )?;
     ensure_column(&conn, "memory_search_enabled", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(&conn, "enabled_skills", "TEXT NOT NULL DEFAULT '[]'")?;
+    ensure_column(&conn, "mode", "TEXT NOT NULL DEFAULT 'build'")?;
     conn.pragma_update(None, "user_version", DB_VERSION)
         .map_err(|e| e.to_string())?;
     migrate_json(&mut conn, workspace_root)?;
@@ -222,24 +240,25 @@ fn row_to_conversation(
         title: row.get(2)?,
         messages: Vec::new(),
         summary: row.get(3)?,
-        pinned_context_only: row.get::<_, i64>(4)? != 0,
-        web_search_enabled: row.get::<_, i64>(5)? != 0,
-        knowledge_search_enabled: row.get::<_, i64>(6)? != 0,
-        full_access_enabled: row.get::<_, i64>(7)? != 0,
-        full_access_acknowledged: row.get::<_, i64>(8)? != 0,
-        memory_search_enabled: row.get::<_, i64>(9)? != 0,
-        enabled_skills: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
-        revision: row.get(13)?,
+        mode: row.get(4)?,
+        pinned_context_only: row.get::<_, i64>(5)? != 0,
+        web_search_enabled: row.get::<_, i64>(6)? != 0,
+        knowledge_search_enabled: row.get::<_, i64>(7)? != 0,
+        full_access_enabled: row.get::<_, i64>(8)? != 0,
+        full_access_acknowledged: row.get::<_, i64>(9)? != 0,
+        memory_search_enabled: row.get::<_, i64>(10)? != 0,
+        enabled_skills: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+        revision: row.get(14)?,
         messages_loaded,
-        message_count: row.get(14)?,
+        message_count: row.get(15)?,
     })
 }
 
 fn get_sync(conn: &Connection, id: &str) -> Result<AgentConversation, String> {
     let mut conversation = conn.query_row(
-        "SELECT id,project_id,title,summary,pinned_context_only,web_search_enabled,knowledge_search_enabled,full_access_enabled,full_access_acknowledged,memory_search_enabled,enabled_skills,created_at,updated_at,revision,(SELECT COUNT(*) FROM agent_conversation_message m WHERE m.conversation_id=agent_conversation.id AND m.role IN ('user','assistant')) FROM agent_conversation WHERE id=?1",
+        "SELECT id,project_id,title,summary,mode,pinned_context_only,web_search_enabled,knowledge_search_enabled,full_access_enabled,full_access_acknowledged,memory_search_enabled,enabled_skills,created_at,updated_at,revision,(SELECT COUNT(*) FROM agent_conversation_message m WHERE m.conversation_id=agent_conversation.id AND m.role IN ('user','assistant')) FROM agent_conversation WHERE id=?1",
         [id], |row| row_to_conversation(row, true)
     ).optional().map_err(|e| e.to_string())?.ok_or_else(|| "会话不存在".to_string())?;
     let mut stmt = conn.prepare("SELECT message_json FROM agent_conversation_message WHERE conversation_id=?1 ORDER BY sequence")
@@ -275,14 +294,14 @@ fn upsert_tx(
     }
     let revision = existing.unwrap_or(0) + 1;
     tx.execute(
-        "INSERT INTO agent_conversation(id,project_id,title,summary,pinned_context_only,web_search_enabled,knowledge_search_enabled,full_access_enabled,full_access_acknowledged,memory_search_enabled,enabled_skills,created_at,updated_at,revision)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+        "INSERT INTO agent_conversation(id,project_id,title,summary,mode,pinned_context_only,web_search_enabled,knowledge_search_enabled,full_access_enabled,full_access_acknowledged,memory_search_enabled,enabled_skills,created_at,updated_at,revision)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
          ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,title=excluded.title,summary=excluded.summary,
-           pinned_context_only=excluded.pinned_context_only,web_search_enabled=excluded.web_search_enabled,
+           mode=excluded.mode,pinned_context_only=excluded.pinned_context_only,web_search_enabled=excluded.web_search_enabled,
            knowledge_search_enabled=excluded.knowledge_search_enabled,full_access_enabled=excluded.full_access_enabled,
            full_access_acknowledged=excluded.full_access_acknowledged,memory_search_enabled=excluded.memory_search_enabled,
            enabled_skills=excluded.enabled_skills,updated_at=excluded.updated_at,revision=excluded.revision",
-        params![input.id,input.project_id,input.title,input.summary,input.pinned_context_only as i64,input.web_search_enabled as i64,input.knowledge_search_enabled as i64,input.full_access_enabled as i64,input.full_access_acknowledged as i64,input.memory_search_enabled as i64,serde_json::to_string(&input.enabled_skills).map_err(|e|e.to_string())?,input.created_at,input.updated_at,revision]
+        params![input.id,input.project_id,input.title,input.summary,input.mode,input.pinned_context_only as i64,input.web_search_enabled as i64,input.knowledge_search_enabled as i64,input.full_access_enabled as i64,input.full_access_acknowledged as i64,input.memory_search_enabled as i64,serde_json::to_string(&input.enabled_skills).map_err(|e|e.to_string())?,input.created_at,input.updated_at,revision]
     ).map_err(|e| e.to_string())?;
     tx.execute(
         "DELETE FROM agent_conversation_message WHERE conversation_id=?1",
@@ -307,7 +326,7 @@ pub fn agent_conversation_list(
     project_id: String,
 ) -> Result<Vec<AgentConversation>, String> {
     let conn = open_db(&workspace_root)?;
-    let mut stmt = conn.prepare("SELECT id,project_id,title,summary,pinned_context_only,web_search_enabled,knowledge_search_enabled,full_access_enabled,full_access_acknowledged,memory_search_enabled,enabled_skills,created_at,updated_at,revision,(SELECT COUNT(*) FROM agent_conversation_message m WHERE m.conversation_id=agent_conversation.id AND m.role IN ('user','assistant')) FROM agent_conversation WHERE project_id=?1 ORDER BY updated_at DESC")
+    let mut stmt = conn.prepare("SELECT id,project_id,title,summary,mode,pinned_context_only,web_search_enabled,knowledge_search_enabled,full_access_enabled,full_access_acknowledged,memory_search_enabled,enabled_skills,created_at,updated_at,revision,(SELECT COUNT(*) FROM agent_conversation_message m WHERE m.conversation_id=agent_conversation.id AND m.role IN ('user','assistant')) FROM agent_conversation WHERE project_id=?1 ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([project_id], |row| row_to_conversation(row, false))
@@ -330,6 +349,7 @@ pub fn agent_conversation_upsert(
     workspace_root: String,
     mut conversation: AgentConversation,
 ) -> Result<AgentConversation, String> {
+    conversation.mode = normalize_agent_mode(&conversation.mode);
     let mut conn = open_db(&workspace_root)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     conversation.revision = upsert_tx(&tx, &conversation, true)?;
@@ -361,8 +381,13 @@ pub fn agent_conversation_patch(
         return Err("会话已在其他位置更新，请重新加载该会话".into());
     }
     let revision = current.revision + 1;
-    tx.execute("UPDATE agent_conversation SET title=?2,pinned_context_only=?3,web_search_enabled=?4,knowledge_search_enabled=?5,full_access_enabled=?6,full_access_acknowledged=?7,memory_search_enabled=?8,enabled_skills=?9,updated_at=?10,revision=?11 WHERE id=?1 AND project_id=?12",
-        params![patch.id,patch.title.unwrap_or(current.title),patch.pinned_context_only.unwrap_or(current.pinned_context_only) as i64,patch.web_search_enabled.unwrap_or(current.web_search_enabled) as i64,patch.knowledge_search_enabled.unwrap_or(current.knowledge_search_enabled) as i64,patch.full_access_enabled.unwrap_or(current.full_access_enabled) as i64,patch.full_access_acknowledged.unwrap_or(current.full_access_acknowledged) as i64,patch.memory_search_enabled.unwrap_or(current.memory_search_enabled) as i64,serde_json::to_string(&patch.enabled_skills.unwrap_or(current.enabled_skills)).map_err(|e|e.to_string())?,current.updated_at,revision,patch.project_id])
+    let mode = patch
+        .mode
+        .as_deref()
+        .map(normalize_agent_mode)
+        .unwrap_or(current.mode.clone());
+    tx.execute("UPDATE agent_conversation SET title=?2,mode=?3,pinned_context_only=?4,web_search_enabled=?5,knowledge_search_enabled=?6,full_access_enabled=?7,full_access_acknowledged=?8,memory_search_enabled=?9,enabled_skills=?10,updated_at=?11,revision=?12 WHERE id=?1 AND project_id=?13",
+        params![patch.id,patch.title.unwrap_or(current.title),mode,patch.pinned_context_only.unwrap_or(current.pinned_context_only) as i64,patch.web_search_enabled.unwrap_or(current.web_search_enabled) as i64,patch.knowledge_search_enabled.unwrap_or(current.knowledge_search_enabled) as i64,patch.full_access_enabled.unwrap_or(current.full_access_enabled) as i64,patch.full_access_acknowledged.unwrap_or(current.full_access_acknowledged) as i64,patch.memory_search_enabled.unwrap_or(current.memory_search_enabled) as i64,serde_json::to_string(&patch.enabled_skills.unwrap_or(current.enabled_skills)).map_err(|e|e.to_string())?,current.updated_at,revision,patch.project_id])
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     let updated = get_sync(&conn, &patch.id)?;
@@ -422,7 +447,7 @@ mod tests {
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE agent_conversation(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',pinned_context_only INTEGER NOT NULL DEFAULT 0,web_search_enabled INTEGER NOT NULL DEFAULT 0,knowledge_search_enabled INTEGER NOT NULL DEFAULT 0,memory_search_enabled INTEGER NOT NULL DEFAULT 0,full_access_enabled INTEGER NOT NULL DEFAULT 0,full_access_acknowledged INTEGER NOT NULL DEFAULT 0,enabled_skills TEXT NOT NULL DEFAULT '[]',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1); CREATE TABLE agent_conversation_message(conversation_id TEXT NOT NULL,sequence INTEGER NOT NULL,role TEXT NOT NULL,message_json TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(conversation_id,sequence),FOREIGN KEY(conversation_id) REFERENCES agent_conversation(id) ON DELETE CASCADE);").unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE agent_conversation(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',mode TEXT NOT NULL DEFAULT 'build',pinned_context_only INTEGER NOT NULL DEFAULT 0,web_search_enabled INTEGER NOT NULL DEFAULT 0,knowledge_search_enabled INTEGER NOT NULL DEFAULT 0,memory_search_enabled INTEGER NOT NULL DEFAULT 0,full_access_enabled INTEGER NOT NULL DEFAULT 0,full_access_acknowledged INTEGER NOT NULL DEFAULT 0,enabled_skills TEXT NOT NULL DEFAULT '[]',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1); CREATE TABLE agent_conversation_message(conversation_id TEXT NOT NULL,sequence INTEGER NOT NULL,role TEXT NOT NULL,message_json TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(conversation_id,sequence),FOREIGN KEY(conversation_id) REFERENCES agent_conversation(id) ON DELETE CASCADE);").unwrap();
         conn
     }
 
@@ -433,6 +458,7 @@ mod tests {
             title: "T".into(),
             messages: vec![serde_json::json!({"role":"user","content":"hi"})],
             summary: String::new(),
+            mode: "build".into(),
             pinned_context_only: false,
             web_search_enabled: false,
             knowledge_search_enabled: true,
@@ -527,6 +553,7 @@ mod tests {
             "INTEGER NOT NULL DEFAULT 0",
         )
         .unwrap();
+        ensure_column(&conn, "mode", "TEXT NOT NULL DEFAULT 'build'").unwrap();
         let mut stmt = conn
             .prepare("PRAGMA table_info(agent_conversation)")
             .unwrap();
@@ -537,5 +564,6 @@ mod tests {
             .unwrap();
         assert!(names.contains(&"full_access_enabled".to_string()));
         assert!(names.contains(&"full_access_acknowledged".to_string()));
+        assert!(names.contains(&"mode".to_string()));
     }
 }

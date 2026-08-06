@@ -4,6 +4,36 @@ import type { AgentMessage } from "../agent/protocol";
 import { AgentConversationTimeline } from "./AgentConversationTimeline";
 
 describe("AgentConversationTimeline", () => {
+  it("merges live text deltas into one assistant message", () => {
+    const events = [
+      { id: "start", type: "run_started" as const, at: 1, model: "test" },
+      { id: "a", type: "text" as const, at: 2, round: 1, content: "正在" },
+      { id: "b", type: "text" as const, at: 3, round: 1, content: "生成" },
+    ];
+    const html = renderToStaticMarkup(<AgentConversationTimeline messages={[]} events={events} running />);
+    expect(html).toContain("正在生成");
+    expect(html.match(/agent-chat-message assistant/g)).toHaveLength(1);
+  });
+
+  it("renders streamed reasoning in a collapsible section", () => {
+    const events = [
+      { id: "reason-1", type: "reasoning" as const, at: 1, round: 1, content: "先检查约束" },
+      { id: "reason-2", type: "reasoning" as const, at: 2, round: 1, content: "，再生成方案" },
+    ];
+    const html = renderToStaticMarkup(<AgentConversationTimeline messages={[]} events={events} running />);
+    expect(html).toContain("推理过程");
+    expect(html).toContain("先检查约束，再生成方案");
+    expect(html).toMatch(/<details[^>]*open/);
+  });
+
+  it("keeps persisted reasoning collapsible after completion", () => {
+    const messages: AgentMessage[] = [{ role: "assistant", reasoning_content: "检查接口兼容性", content: "已完成检查。" }];
+    const html = renderToStaticMarkup(<AgentConversationTimeline messages={messages} events={[]} running={false} />);
+    expect(html).toContain("推理过程");
+    expect(html).toContain("检查接口兼容性");
+    expect(html).toContain("已完成检查。");
+  });
+
   it("renders persisted tool activity inline with conversation messages", () => {
     const messages: AgentMessage[] = [
       { role: "user", content: "查一下部署约束" },

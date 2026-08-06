@@ -18,6 +18,8 @@ export interface AgentConversation {
   title: string;
   messages: AgentMessage[];
   summary: string;
+  /** Agent execution policy for this conversation. Legacy conversations default to build. */
+  mode?: AgentMode;
   pinnedContextOnly?: boolean;
   webSearchEnabled?: boolean;
   knowledgeSearchEnabled?: boolean;
@@ -33,7 +35,9 @@ export interface AgentConversation {
   lastMessagePreview?: string;
 }
 
-export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "memorySearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged">>;
+export type AgentMode = "plan" | "build";
+
+export type AgentConversationPatch = Partial<Pick<AgentConversation, "title" | "mode" | "pinnedContextOnly" | "webSearchEnabled" | "knowledgeSearchEnabled" | "memorySearchEnabled" | "fullAccessEnabled" | "fullAccessAcknowledged">>;
 
 export type AgentConversationChange =
   | { projectId: string; type: "saved"; conversation: AgentConversation }
@@ -65,7 +69,9 @@ function parseConversations(raw: string | null): AgentConversation[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(item => item && typeof item.id === "string" && typeof item.projectId === "string") : [];
+    return Array.isArray(parsed) ? parsed
+      .filter(item => item && typeof item.id === "string" && typeof item.projectId === "string")
+      .map(item => ({ ...item, mode: item.mode === "plan" ? "plan" : "build" })) : [];
   } catch {
     return [];
   }
@@ -125,6 +131,7 @@ async function upsertDesktopConversation(conversation: AgentConversation, worksp
         candidate = {
           ...candidate,
           revision: latest.revision,
+          mode: latest.mode,
           pinnedContextOnly: latest.pinnedContextOnly,
           webSearchEnabled: latest.webSearchEnabled,
           knowledgeSearchEnabled: latest.knowledgeSearchEnabled,
@@ -197,7 +204,7 @@ export function createAgentConversation(projectId: string, defaults: Conversatio
     memorySearchEnabled = false,
   } = defaults;
   const now = Date.now();
-  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", pinnedContextOnly, webSearchEnabled, knowledgeSearchEnabled, memorySearchEnabled, fullAccessEnabled: false, fullAccessAcknowledged: false, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
+  return { id: crypto.randomUUID(), projectId, title: "新会话", messages: [], summary: "", mode: "build", pinnedContextOnly, webSearchEnabled, knowledgeSearchEnabled, memorySearchEnabled, fullAccessEnabled: false, fullAccessAcknowledged: false, createdAt: now, updatedAt: now, revision: 0, messagesLoaded: true };
 }
 
 export async function saveAgentConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {

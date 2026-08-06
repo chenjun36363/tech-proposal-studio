@@ -174,4 +174,34 @@ export const anthropicMessagesAdapter: ProtocolAdapter = {
       return null;
     }
   },
+
+  createChatStream() {
+    let content = "";
+    const calls = new Map<number, { id: string; name: string; arguments: string }>();
+    return {
+      push(data) {
+        if (!data || data === "[DONE]") return null;
+        try {
+          const event = asRecord(JSON.parse(data));
+          const index = typeof event?.index === "number" ? event.index : 0;
+          const block = asRecord(event?.content_block);
+          if (event?.type === "content_block_start" && block?.type === "tool_use") {
+            calls.set(index, { id: typeof block.id === "string" ? block.id : crypto.randomUUID(), name: typeof block.name === "string" ? block.name : "", arguments: "" });
+          }
+          const delta = asRecord(event?.delta);
+          if (event?.type === "content_block_delta" && delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
+            const call = calls.get(index);
+            if (call) call.arguments += delta.partial_json;
+          }
+          const text = event?.type === "content_block_delta" && delta?.type === "text_delta" && typeof delta.text === "string" ? delta.text : "";
+          content += text;
+          return text || null;
+        } catch { return null; }
+      },
+      finish() {
+        const toolCalls = [...calls.values()].filter(call => call.name).map(call => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments || "{}" } }));
+        return openAiStyleResponse({ role: "assistant", content: content || null, tool_calls: toolCalls.length ? toolCalls : undefined }, toolCalls.length ? "tool_calls" : "stop");
+      },
+    };
+  },
 };

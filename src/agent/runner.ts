@@ -1,5 +1,5 @@
 import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
-import { agentCompletion } from "../services/model";
+import { agentCompletion, agentCompletionStream } from "../services/model";
 import { resolvedFromLegacy } from "../services/llm/resolve";
 import type { AgentEvent, AgentMessage, AgentModelResponse, AgentToolCall } from "./protocol";
 import { AgentToolRegistry } from "./toolRegistry";
@@ -78,12 +78,6 @@ function completedMessages(messages: AgentMessage[]): AgentMessage[] {
     if (!tool_calls.length && !message.content) return [];
     return [{ ...message, tool_calls: tool_calls.length ? tool_calls : undefined }];
   });
-}
-
-function isForcedToolChoiceRejected(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return false;
-  const message = error instanceof Error ? error.message : String(error);
-  return /tool[_\s-]*choice|ToolChoiceFunction|field\s+function|invalid_request_error/i.test(message);
 }
 
 type TrackedTodo = { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string };
@@ -172,19 +166,22 @@ export async function runProposalAgent(params: {
       if (!compaction.fitsBudget) {
         throw new Error(`Agent 上下文压缩后仍超出预算 ${compaction.overflowTokens.toLocaleString()} tokens；请减少本轮超长输入、附加资料或工具定义，或提高上下文压缩阈值。`);
       }
-      const toolChoice = requiredFirstTool && roundDefinitions.length
-        ? { type: "function" as const, function: { name: requiredFirstTool } }
-        : "auto" as const;
-      const request = { model: config.model, messages: messagesForModel(messages), tools: roundDefinitions, tool_choice: toolChoice, stream: false, temperature: params.temperature };
-      let response: AgentModelResponse;
-      try {
-        response = await complete(request, config, signal);
-      } catch (error) {
-        // Some OpenAI-compatible gateways support tools but reject a forced tool_choice.
-        // Keep the native forced request as the default, then fall back to the prompt-enforced auto mode.
-        if (!requiredFirstTool || !isForcedToolChoiceRejected(error)) throw error;
-        response = await complete({ ...request, tool_choice: "auto" }, config, signal);
-      }
+      const request = { model: config.model, messages: messagesForModel(messages), tools: roundDefinitions, tool_choice: "auto" as const, stream: false, temperature: params.temperature };
+      const streamed = params.completion === undefined;
+      let streamedReasoning = "";
+      const response: AgentModelResponse = streamed
+        ? await agentCompletionStream(
+          request,
+          config,
+          content => emit({ type: "text", round, content }),
+          signal,
+          phase => emit({ type: "stream_started", round, phase }),
+          content => {
+            streamedReasoning += content;
+            emit({ type: "reasoning", round, content });
+          },
+        )
+        : await complete(request, config, signal);
       const assistant = response.choices?.[0]?.message;
       if (!assistant) throw new Error("模型未返回有效消息");
       const normalized = normalizedAssistant(assistant);
@@ -196,9 +193,9 @@ export async function runProposalAgent(params: {
         ...normalized.message,
         tool_calls: availableCalls.length ? availableCalls : undefined,
       };
-      if (normalizedMessage.content || normalizedMessage.tool_calls?.length) messages.push(normalizedMessage);
+      if (normalizedMessage.content || normalizedMessage.tool_calls?.length || streamedReasoning) messages.push(streamedReasoning ? { ...normalizedMessage, reasoning_content: streamedReasoning } : normalizedMessage);
       const content = normalized.content;
-      if (content) emit({ type: "text", round, content });
+      if (content && !streamed) emit({ type: "text", round, content });
       const rawCalls = availableCalls;
       if (unavailableCalls.length && !stopOnUnavailableTools) {
         messages.push({ role: "user", content: `以下工具当前不可用，不得再次调用：${[...new Set(unavailableCalls.map(call => call.function.name))].join("、")}。请使用当前提供的工具继续，或直接完成任务。`, transient: true });

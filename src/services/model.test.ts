@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentCompletion, improveBlockStream } from "./model";
+import { agentCompletion, agentCompletionStream, improveBlockStream } from "./model";
 import type { DocumentBlock, OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -92,6 +92,41 @@ describe("Tauri model adapter", () => {
 
     expect(updates).toEqual(["修改后的正文"]);
     expect(result.after).toBe("修改后的正文");
+  });
+
+  it("streams Agent text while rebuilding the final tool call", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    let eventCallback: ((event: { payload: { runId: string; content: string } }) => void) | null = null;
+    vi.mocked(listen).mockImplementation(async (_event, callback) => {
+      eventCallback = callback as typeof eventCallback;
+      return vi.fn();
+    });
+    vi.mocked(invoke).mockImplementation(async (cmd, args: any) => {
+      if (cmd === "model_proxy_stream" && eventCallback) {
+        eventCallback({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"reasoning_content":"分析约束"}}]}' } });
+        eventCallback({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"content":"正在"}}]}' } });
+        eventCallback({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"content":"处理","tool_calls":[{"index":0,"id":"call-1","function":{"name":"write_todo","arguments":"{\\"todos\\":[]}"}}]},"finish_reason":"tool_calls"}]}' } });
+      }
+      return undefined;
+    });
+    const updates: string[] = [];
+    const reasoning: string[] = [];
+    const response = await agentCompletionStream({
+      model: "example-model",
+      messages: [{ role: "user", content: "制定计划" }],
+      tools: [{ type: "function", function: { name: "write_todo", description: "plan", parameters: { type: "object" } } }],
+      tool_choice: "auto",
+    }, config, chunk => updates.push(chunk), undefined, undefined, chunk => reasoning.push(chunk));
+
+    expect(updates).toEqual(["正在", "处理"]);
+    expect(reasoning).toEqual(["分析约束"]);
+    expect(response.choices?.[0]?.message).toMatchObject({
+      content: "正在处理",
+      tool_calls: [{ id: "call-1", function: { name: "write_todo", arguments: '{"todos":[]}' } }],
+    });
+    expect(invoke).toHaveBeenCalledWith("model_proxy_stream", expect.objectContaining({
+      request: expect.objectContaining({ body: expect.objectContaining({ stream: true }) }),
+    }));
   });
 
   it("cancels an in-flight desktop JSON proxy request", async () => {

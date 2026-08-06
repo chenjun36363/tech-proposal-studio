@@ -65,8 +65,20 @@ function inferProtocol(baseUrl: string): LlmProtocol {
   const lower = baseUrl.toLowerCase();
   if (lower.includes("api.anthropic.com")) return "anthropic-messages";
   if (lower.includes("generativelanguage.googleapis.com")) return "google-generative-ai";
+  if (lower.includes("api.openai.com")) return "openai-responses";
   if (/\/responses(?:\/|$)/i.test(baseUrl)) return "openai-responses";
   return "openai-completions";
+}
+
+function migrateOfficialOpenAiProtocol(protocol: LlmProtocol, baseUrl: string): LlmProtocol {
+  if (protocol !== "openai-completions") return protocol;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === "api.openai.com"
+      ? "openai-responses"
+      : protocol;
+  } catch {
+    return protocol;
+  }
 }
 
 function inferProviderName(baseUrl: string, protocol: LlmProtocol): string {
@@ -153,10 +165,11 @@ function normalizeCatalog(raw: unknown): ModelOption[] | undefined {
 export function normalizeProvider(raw: Partial<LlmProvider> | null | undefined): LlmProvider {
   const fallback = createDefaultProvider(makeId());
   const id = typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : fallback.id;
-  const protocol = isLlmProtocol(raw?.protocol) ? raw.protocol : "openai-completions";
   const baseUrl = typeof raw?.baseUrl === "string" && raw.baseUrl.trim()
     ? stripEndpointSuffix(raw.baseUrl)
     : fallback.baseUrl;
+  const configuredProtocol = isLlmProtocol(raw?.protocol) ? raw.protocol : fallback.protocol;
+  const protocol = migrateOfficialOpenAiProtocol(configuredProtocol, baseUrl);
   const activeModels = Array.isArray(raw?.activeModels)
     ? raw!.activeModels.filter(m => typeof m === "string" && m.trim()).map(m => m.trim())
     : [];

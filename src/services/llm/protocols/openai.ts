@@ -33,7 +33,7 @@ export const openaiCompletionsAdapter: ProtocolAdapter = {
   buildChatRequest(config, request) {
     const body: Record<string, unknown> = {
       model: request.model || config.model,
-      messages: request.messages,
+      messages: request.messages.map(({ reasoning_content: _reasoning, ...message }) => message),
       stream: Boolean(request.stream),
     };
     if (typeof request.temperature === "number") body.temperature = request.temperature;
@@ -79,6 +79,43 @@ export const openaiCompletionsAdapter: ProtocolAdapter = {
     } catch {
       return null;
     }
+  },
+
+  createChatStream() {
+    let content = "";
+    let finishReason: string | null = null;
+    const calls = new Map<number, { id: string; name: string; arguments: string }>();
+    return {
+      push(data) {
+        if (!data || data === "[DONE]") return null;
+        try {
+          const root = asRecord(JSON.parse(data));
+          const choice = Array.isArray(root?.choices) ? asRecord(root.choices[0]) : null;
+          const delta = asRecord(choice?.delta);
+          if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason;
+          for (const raw of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
+            const call = asRecord(raw);
+            const index = typeof call?.index === "number" ? call.index : calls.size;
+            const fn = asRecord(call?.function);
+            const current = calls.get(index) ?? { id: "", name: "", arguments: "" };
+            if (typeof call?.id === "string") current.id = call.id;
+            if (typeof fn?.name === "string") current.name += fn.name;
+            if (typeof fn?.arguments === "string") current.arguments += fn.arguments;
+            calls.set(index, current);
+          }
+          const text = typeof delta?.content === "string" ? delta.content : "";
+          content += text;
+          return text || null;
+        } catch { return null; }
+      },
+      finish() {
+        const toolCalls = [...calls.values()].filter(call => call.name).map(call => ({
+          id: call.id || crypto.randomUUID(), type: "function" as const,
+          function: { name: call.name, arguments: call.arguments || "{}" },
+        }));
+        return openAiStyleResponse({ role: "assistant", content: content || null, tool_calls: toolCalls.length ? toolCalls : undefined }, finishReason ?? (toolCalls.length ? "tool_calls" : "stop"));
+      },
+    };
   },
 };
 
@@ -222,6 +259,51 @@ export const openaiResponsesAdapter: ProtocolAdapter = {
     } catch {
       return null;
     }
+  },
+
+  createChatStream() {
+    let content = "";
+    const calls = new Map<string, { id: string; name: string; arguments: string }>();
+    const chatFallback = openaiCompletionsAdapter.createChatStream();
+    let usesChatFallback = false;
+    return {
+      push(data) {
+        if (!data || data === "[DONE]") return null;
+        try {
+          const event = asRecord(JSON.parse(data));
+          if (!event) return null;
+          if (Array.isArray(event.choices)) {
+            usesChatFallback = true;
+            return chatFallback.push(data);
+          }
+          if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+            content += event.delta;
+            return event.delta;
+          }
+          const item = asRecord(event.item);
+          if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && item?.type === "function_call") {
+            const key = typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : crypto.randomUUID();
+            const current = calls.get(key) ?? { id: key, name: "", arguments: "" };
+            if (typeof item.name === "string") current.name = item.name;
+            if (typeof item.arguments === "string") current.arguments = item.arguments;
+            calls.set(key, current);
+          }
+          if ((event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") && typeof event.call_id === "string") {
+            const current = calls.get(event.call_id) ?? { id: event.call_id, name: "", arguments: "" };
+            if (typeof event.name === "string") current.name = event.name;
+            if (event.type === "response.function_call_arguments.delta" && typeof event.delta === "string") current.arguments += event.delta;
+            if (event.type === "response.function_call_arguments.done" && typeof event.arguments === "string") current.arguments = event.arguments;
+            calls.set(event.call_id, current);
+          }
+          return null;
+        } catch { return null; }
+      },
+      finish() {
+        if (usesChatFallback) return chatFallback.finish();
+        const toolCalls = [...calls.values()].filter(call => call.name).map(call => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments || "{}" } }));
+        return openAiStyleResponse({ role: "assistant", content: content || null, tool_calls: toolCalls.length ? toolCalls : undefined }, toolCalls.length ? "tool_calls" : "stop");
+      },
+    };
   },
 };
 

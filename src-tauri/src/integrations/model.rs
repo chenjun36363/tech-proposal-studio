@@ -436,63 +436,59 @@ pub(crate) async fn model_proxy_stream(
     app: AppHandle,
     run_id: String,
     request: ModelProxyRequest,
+    state: State<'_, ModelProxyState>,
 ) -> Result<(), String> {
-    let response = build_proxy_request(&request)?
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(upstream_error("模型服务返回", status, &body));
-    }
+    let Some(cancel_rx) = state.register(&run_id)? else {
+        return Err("模型请求已取消".into());
+    };
+    let stream_future = async {
+        let response = build_proxy_request(&request)?
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(upstream_error("模型服务返回", status, &body));
+        }
 
-    let mut stream = response.bytes_stream();
-    let mut pending = String::new();
-    while let Some(chunk) = stream.next().await {
-        pending.push_str(&String::from_utf8_lossy(
-            &chunk.map_err(|error| error.to_string())?,
-        ));
-        while let Some(index) = pending.find('\n') {
-            let line = pending[..index].trim_end_matches('\r').to_string();
-            pending.drain(..=index);
-            if line.is_empty() {
-                continue;
+        let mut stream = response.bytes_stream();
+        let mut pending = String::new();
+        while let Some(chunk) = stream.next().await {
+            pending.push_str(&String::from_utf8_lossy(
+                &chunk.map_err(|error| error.to_string())?,
+            ));
+            while let Some(index) = pending.find('\n') {
+                let line = pending[..index].trim_end_matches('\r').to_string();
+                pending.drain(..=index);
+                if line.is_empty() {
+                    continue;
+                }
+                let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line.trim());
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                let _ = app.emit("session://ai", StreamEvent {
+                    run_id: run_id.clone(), channel: "output".into(), content: data.to_string(),
+                });
             }
-            let data = line
-                .strip_prefix("data:")
-                .map(str::trim)
-                .unwrap_or(line.trim());
-            if data.is_empty() || data == "[DONE]" {
-                continue;
+        }
+        if !pending.trim().is_empty() {
+            let data = pending.strip_prefix("data:").map(str::trim).unwrap_or(pending.trim());
+            if data != "[DONE]" && !data.is_empty() {
+                let _ = app.emit("session://ai", StreamEvent {
+                    run_id: run_id.clone(), channel: "output".into(), content: data.to_string(),
+                });
             }
-            let _ = app.emit(
-                "session://ai",
-                StreamEvent {
-                    run_id: run_id.clone(),
-                    channel: "output".into(),
-                    content: data.to_string(),
-                },
-            );
         }
-    }
-    if !pending.trim().is_empty() {
-        let data = pending
-            .strip_prefix("data:")
-            .map(str::trim)
-            .unwrap_or(pending.trim());
-        if data != "[DONE]" && !data.is_empty() {
-            let _ = app.emit(
-                "session://ai",
-                StreamEvent {
-                    run_id: run_id.clone(),
-                    channel: "output".into(),
-                    content: data.to_string(),
-                },
-            );
-        }
-    }
-    Ok(())
+        Ok(())
+    };
+    let result = tokio::select! {
+        result = stream_future => result,
+        _ = cancel_rx => Err("模型请求已取消".into()),
+    };
+    state.finish(&run_id);
+    result
 }
 
 #[cfg(test)]

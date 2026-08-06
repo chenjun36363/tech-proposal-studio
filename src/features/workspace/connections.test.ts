@@ -64,6 +64,52 @@ describe("workspace connections", () => {
     expect(gemini.providers[0].protocol).toBe("google-generative-ai");
   });
 
+  it("uses Responses for new and existing official OpenAI connections", () => {
+    expect(createProject().providers[0].protocol).toBe("openai-responses");
+
+    const legacy = normalizeConnections({
+      model: { baseUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4.1-mini", apiKey: "k" },
+    });
+    expect(legacy.providers[0].protocol).toBe("openai-responses");
+    expect(legacy.providers[0].baseUrl).toBe("https://api.openai.com/v1");
+
+    const existing = normalizeConnections({
+      version: 2,
+      providers: [{
+        id: "openai",
+        name: "OpenAI",
+        protocol: "openai-completions",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "k",
+        timeoutMs: 60000,
+        headers: {},
+        enabled: true,
+        activeModels: ["gpt-4.1-mini"],
+      }],
+      selectedModel: { providerId: "openai", model: "gpt-4.1-mini" },
+    });
+    expect(existing.providers[0].protocol).toBe("openai-responses");
+  });
+
+  it("keeps third-party OpenAI-compatible connections on Completions", () => {
+    const conn = normalizeConnections({
+      version: 2,
+      providers: [{
+        id: "gateway",
+        name: "Gateway",
+        protocol: "openai-completions",
+        baseUrl: "https://gateway.example.com/v1",
+        apiKey: "k",
+        timeoutMs: 60000,
+        headers: {},
+        enabled: true,
+        activeModels: ["model"],
+      }],
+      selectedModel: { providerId: "gateway", model: "model" },
+    });
+    expect(conn.providers[0].protocol).toBe("openai-completions");
+  });
+
   it("repairs invalid selectedModel against activeModels", () => {
     const conn = normalizeConnections({
       version: 2,

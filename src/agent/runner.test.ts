@@ -4,7 +4,10 @@ import { AgentToolRegistry, objectSchema } from "./toolRegistry";
 import type { AgentEvent, AgentMessage } from "./protocol";
 
 const agentCompletion = vi.fn();
-vi.mock("../services/model", () => ({ agentCompletion: (...args: unknown[]) => agentCompletion(...args) }));
+vi.mock("../services/model", () => ({
+  agentCompletion: (...args: unknown[]) => agentCompletion(...args),
+  agentCompletionStream: (payload: unknown, modelConfig: unknown, _onUpdate: unknown, signal: unknown) => agentCompletion(payload, modelConfig, signal),
+}));
 
 const config = { baseUrl: "http://localhost:1234/v1", apiKey: "", model: "test-model", timeoutMs: 1000, headers: {}, enabled: true };
 
@@ -33,7 +36,7 @@ describe("runProposalAgent", () => {
     expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({ temperature: 0.7 }));
   });
 
-  it("forces the configured planning tool in the first model round, then returns to auto", async () => {
+  it("uses auto tool choice while exposing only the configured first-round tool", async () => {
     agentCompletion
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-1", type: "function", function: { name: "write_todo", arguments: '{"todos":[{"content":"搜索资料","status":"in_progress"}]}' } }] } }] })
       .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
@@ -46,32 +49,10 @@ describe("runProposalAgent", () => {
 
     expect(agentCompletion).toHaveBeenCalledTimes(2);
     expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({
-      tool_choice: { type: "function", function: { name: "write_todo" } },
-      tools: [expect.objectContaining({ function: expect.objectContaining({ name: "write_todo" }) })],
-    }));
-    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ tool_choice: "auto" }));
-  });
-
-  it("falls back to auto when a gateway rejects forced tool choice", async () => {
-    agentCompletion
-      .mockRejectedValueOnce(new Error("模型服务返回 429：Upstream request failed: [invalid_request_error] Failed to deserialize the JSON body into the target type: tool_choice: field 'function': invalid type: null, expected struct ToolChoiceFunction (free model rate limit)"))
-      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "plan-fallback", type: "function", function: { name: "write_todo", arguments: '{"todos":[]}' } }] } }] })
-      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "完成" } }] });
-    const registry = new AgentToolRegistry().register({
-      definition: { type: "function", function: { name: "write_todo", description: "plan", parameters: objectSchema({}) } },
-      execute: () => ({ content: "计划已更新", isError: false }),
-    });
-
-    await runProposalAgent({ task: "完成任务", config, registry, signal: new AbortController().signal, onEvent: () => undefined, firstRoundToolName: "write_todo" });
-
-    expect(agentCompletion).toHaveBeenCalledTimes(3);
-    expect(agentCompletion.mock.calls[0][0]).toEqual(expect.objectContaining({
-      tool_choice: { type: "function", function: { name: "write_todo" } },
-    }));
-    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({
       tool_choice: "auto",
       tools: [expect.objectContaining({ function: expect.objectContaining({ name: "write_todo" }) })],
     }));
+    expect(agentCompletion.mock.calls[1][0]).toEqual(expect.objectContaining({ tool_choice: "auto" }));
   });
 
   it("retries planning when the model returns text before the required first tool", async () => {
