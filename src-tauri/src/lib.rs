@@ -26,6 +26,8 @@ mod knowledge;
 mod long_writing;
 #[path = "agent/memory.rs"]
 mod memory;
+#[path = "agent/tool_metrics.rs"]
+mod tool_metrics;
 #[path = "integrations/mineru.rs"]
 mod mineru;
 #[path = "integrations/model.rs"]
@@ -373,6 +375,66 @@ fn delete_file(path: String) -> Result<(), String> {
     fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))
 }
 
+/// Copy an imported source file (PDF / Word) into a dedicated workspace
+/// sub-directory so the original is preserved separately from the converted
+/// Markdown. Returns the absolute path of the stored original (with a unique
+/// name on collision). Fails if the source is not a regular file.
+#[tauri::command]
+fn preserve_import_source(
+    source: String,
+    root: String,
+    sub_dir: String,
+) -> Result<String, String> {
+    if source.trim().is_empty() || root.trim().is_empty() {
+        return Err("文件路径为空".into());
+    }
+    let src = PathBuf::from(&source);
+    if !src.is_file() {
+        return Err(format!("源文件不存在: {}", source));
+    }
+    let file_name = src
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| sanitize_filename(name))
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "无法解析源文件名".to_string())?;
+    let mut dir = PathBuf::from(&root);
+    let trimmed = sub_dir.trim().trim_start_matches(['/', '\\']);
+    if !trimmed.is_empty() {
+        dir = dir.join(trimmed);
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("创建导入目录失败: {e}"))?;
+    let target = unique_import_target(&dir, &file_name);
+    fs::copy(&src, &target).map_err(|e| format!("复制原始文件失败: {e}"))?;
+    Ok(target.to_string_lossy().into())
+}
+
+/// Resolve a non-colliding path inside `dir` for `file_name`, appending
+/// ` (n)` before the extension when a file with the same name already exists.
+fn unique_import_target(dir: &Path, file_name: &str) -> PathBuf {
+    let candidate = dir.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("imported")
+        .to_string();
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| format!(".{s}"))
+        .unwrap_or_default();
+    for index in 1.. {
+        let next = dir.join(format!("{stem} ({index}){ext}"));
+        if !next.exists() {
+            return next;
+        }
+    }
+    candidate
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedImage {
@@ -697,6 +759,7 @@ pub fn run() {
             agent_conversations::agent_conversation_clear_project,
             rename_file,
             delete_file,
+            preserve_import_source,
             write_library_markdown,
             save_image_to_workspace,
             privileged::privileged_file_operation,
@@ -708,6 +771,9 @@ pub fn run() {
             drafts::save_workspace_document_draft,
             drafts::list_workspace_document_drafts,
             drafts::delete_workspace_document_draft,
+            tool_metrics::record_agent_tool_quality_metric,
+            tool_metrics::list_agent_tool_quality_metrics,
+            tool_metrics::clear_agent_tool_quality_metrics,
             ccswitch::list_ccswitch_providers,
             knowledge::knowledge_scan,
             knowledge::knowledge_import_markdown,

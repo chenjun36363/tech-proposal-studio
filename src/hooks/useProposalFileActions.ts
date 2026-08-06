@@ -235,10 +235,14 @@ export function useProposalFileActions({
     if (connections) setProject(current => applyConnections(current, connections));
     setImportingDocument(true);
     try {
-      const { path, sourceFileName, assetRelativeDir } = await importWordOrPdfToWorkspace(sourcePath, workspace.root, connections?.mineru ?? project.mineru);
+      const { path, sourceFileName, assetRelativeDir, originalPath, originalWarning } = await importWordOrPdfToWorkspace(sourcePath, workspace.root, connections?.mineru ?? project.mineru);
       const opened = await openPath(path, true);
       await refreshWorkspaceDocs();
-      if (opened) notify(`已通过 MinerU 导入：${sourceFileName} → ${path.split(/[\\/]/).pop()}${assetRelativeDir ? `，图片 → ${assetRelativeDir}` : ""}`);
+      const parts = [`已通过 MinerU 导入：${sourceFileName} → ${path.split(/[\\/]/).pop()}`];
+      if (assetRelativeDir) parts.push(`图片 → ${assetRelativeDir}`);
+      if (originalPath) parts.push(`原文件已保留 → imports/${originalPath.split(/[\\/]/).pop()}`);
+      else if (originalWarning) parts.push(`原文件未保留：${originalWarning}`);
+      if (opened) notify(parts.join("，"));
       return opened;
     } catch (error) {
       notify(error instanceof Error ? error.message : "Word/PDF 导入失败");

@@ -16,7 +16,11 @@ export interface AgentGitApprovalRequest {
 export interface TodoItem { content: string; status: "pending" | "in_progress" | "completed"; activeForm: string; }
 
 export interface AgentToolCall { id: string; name: string; arguments: Record<string, unknown>; }
-export interface AgentToolResult { content: string; data?: unknown; isError: boolean; }
+export type ToolArgumentIssueCode = "REQUIRED" | "UNKNOWN_FIELD" | "INVALID_TYPE" | "INVALID_ENUM" | "OUT_OF_RANGE" | "TOO_SHORT" | "TOO_LONG" | "CONTEXT_INVALID";
+export interface ToolArgumentIssue { path: string; code: ToolArgumentIssueCode; expected: string; actual?: string; }
+export interface ToolArgumentValidation { valid: boolean; issues: ToolArgumentIssue[]; }
+export interface AgentToolFailure { code: string; retryable: boolean; issues: ToolArgumentIssue[]; repair: string; }
+export interface AgentToolResult { content: string; data?: unknown; isError: boolean; failure?: AgentToolFailure; }
 export type AgentEditOperation = "replace_section" | "replace_selection" | "replace_document" | "insert_section" | "delete_section" | "move_section";
 export interface AgentDraftTarget {
   sectionId?: string;

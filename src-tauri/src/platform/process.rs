@@ -49,6 +49,7 @@ pub(crate) fn init_db(app: &AppHandle) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     crate::connections::initialize_schema(&db)?;
+    crate::tool_metrics::initialize_schema(&db)?;
     crate::drafts::initialize_schema(&db)
 }
 

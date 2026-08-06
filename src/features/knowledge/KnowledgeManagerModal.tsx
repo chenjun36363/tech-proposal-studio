@@ -156,7 +156,11 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
         cleanupWarning = `；工作区临时文件 ${converted.path.split(/[\\/]/).pop()} 未能删除`;
       }
       await refreshWorkspaceDocs(project.workspace);
-      notify(`已解析 ${converted.sourceFileName}，请确认知识库章节结构${converted.assetRelativeDir ? `；图片已保存到 ${converted.assetRelativeDir}` : ""}${cleanupWarning}`);
+      const notes = [converted.assetRelativeDir ? `图片已保存到 ${converted.assetRelativeDir}` : ""];
+      if (converted.originalPath) notes.push(`原文件已保留到 imports/${converted.originalPath.split(/[\\/]/).pop()}`);
+      else if (converted.originalWarning) notes.push(`原文件未保留：${converted.originalWarning}`);
+      if (cleanupWarning) notes.push(cleanupWarning);
+      notify(`已解析 ${converted.sourceFileName}，请确认知识库章节结构${notes.filter(Boolean).length ? `；${notes.filter(Boolean).join("；")}` : ""}`);
       return true;
     } catch (error) {
       if (temporaryPath) await refreshWorkspaceDocs(project.workspace).catch(() => undefined);
@@ -287,7 +291,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     [categories],
   );
   const categoryGroups = useMemo(() => {
-    const groups = sortedCategories
+    const namedGroups = sortedCategories
       .map(category => ({
         id: category.id,
         label: category.name,
@@ -296,9 +300,11 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
       }))
       .filter(group => group.documents.length > 0);
     const uncategorized = readyDocuments.filter(item => !item.categoryId);
+    const groups: typeof namedGroups = [];
     if (uncategorized.length) {
       groups.push({ id: "__uncategorized__", label: "未分类", color: "", documents: uncategorized });
     }
+    groups.push(...namedGroups);
     return groups;
   }, [sortedCategories, readyDocuments]);
   const visibleGroups = useMemo(
@@ -419,7 +425,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
       title={importKind === "markdown" ? "导入 Markdown 到知识库" : "导入 Word / PDF 到知识库"}
       description={importKind === "markdown"
         ? "拖入 Markdown，或选择完整文件路径。导入后将先识别章节结构，再由你确认入库。"
-        : "拖入 Word / PDF，或选择完整文件路径。MinerU 转换完成后将进入章节结构确认。"}
+        : "拖入 Word / PDF，或选择完整文件路径。MinerU 转换完成后将进入章节结构确认；原始文件会复制到工作区 imports 目录保留。"}
       extensions={importKind === "markdown" ? KNOWLEDGE_MARKDOWN_EXTENSIONS : KNOWLEDGE_DOCUMENT_EXTENSIONS}
       extensionLabel={importKind === "markdown" ? "Markdown（.md / .markdown）" : "Word / PDF（.doc / .docx / .pdf）"}
       destination={project.workspace.historyDir}

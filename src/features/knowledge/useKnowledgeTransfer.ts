@@ -2,6 +2,7 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 import { moveWorkspaceMarkdownToKnowledge } from "./knowledge";
 import type { Project, WorkspaceMarkdownFile, WorkspacePaths } from "../../core/types";
 import { sameDocumentPath } from "../workspace/documentSafety";
+import { defaultProposalMarkdown } from "../editor/markdownDoc";
 
 interface KnowledgeTransferOptions {
   project: Project;
@@ -41,7 +42,15 @@ export function useKnowledgeTransfer({
       const imported = await moveWorkspaceMarkdownToKnowledge(workspace, document.path);
       if (isCurrent) {
         markCurrentUnsaved();
-        setProject(current => ({ ...current, filePath: undefined, updatedAt: new Date().toISOString() }));
+        // 转移当前文档后重置为空白新文档：清空内存内容并断开 filePath，
+        // 避免保存时按"标题.md"回退路径把已移走的文档重新写回工作区。
+        setProject(current => ({
+          ...current,
+          markdown: defaultProposalMarkdown(),
+          name: "未命名技术方案",
+          filePath: undefined,
+          updatedAt: new Date().toISOString(),
+        }));
       }
       await refreshWorkspaceDocs(workspace);
       await refreshLibrary(workspace);

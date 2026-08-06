@@ -117,6 +117,16 @@ export async function deleteFile(path: string): Promise<void> {
   await invoke("delete_file", { path });
 }
 
+/**
+ * Copy an imported source file (PDF / Word) into a dedicated workspace
+ * sub-directory so the original is preserved separately from the converted
+ * Markdown. Returns the absolute path of the stored original.
+ */
+export async function preserveImportSource(sourcePath: string, root: string, subDir: string): Promise<string> {
+  if (!isDesktop()) throw new Error("请先在桌面端打开工作目录");
+  return invoke<string>("preserve_import_source", { source: sourcePath, root, subDir });
+}
+
 export function uniqueImportedMarkdownName(sourceName: string, existingNames: string[]): string {
   const normalized = sourceName.replace(/\.markdown$/i, ".md").replace(/[<>:"/\\|?*]/g, "_");
   const safeName = /\.md$/i.test(normalized) ? normalized : `${normalized || "导入文档"}.md`;

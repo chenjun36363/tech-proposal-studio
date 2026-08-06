@@ -1879,7 +1879,7 @@ export default function App() {
     />}
     {workspaceImportKind && <FileUploadPanel
       title="导入 Word / PDF 到工作区"
-      description="拖入 Word / PDF，或选择文件路径。构案将通过 MinerU 转换为 Markdown，并把图片写入工作区 assets。"
+      description="拖入 Word / PDF，或选择文件路径。构案将通过 MinerU 转换为 Markdown，并把图片写入工作区 assets；原始文件会一并复制到工作区 imports 目录保留。"
       extensions={DOCUMENT_UPLOAD_EXTENSIONS}
       extensionLabel="Word / PDF（.doc / .docx / .pdf）"
       destination={workspace?.root}
