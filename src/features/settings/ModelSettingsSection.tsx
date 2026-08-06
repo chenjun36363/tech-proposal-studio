@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Plus, RefreshCw, Trash2, Pencil, Globe2, Download, X } from "lucide-react";
-import type { LlmProvider, LlmProtocol, ModelOption, Project, SelectedModel } from "../../core/types";
+import type { LlmProvider, LlmProtocol, ModelOption, Project, ReasoningEffort, SelectedModel } from "../../core/types";
 import { listModels } from "../../services/model";
 import { LLM_PROTOCOL_LABELS, PROVIDER_PRESETS, createDefaultProvider } from "../../services/llm/defaults";
+import { REASONING_EFFORT_LABELS } from "../../services/llm/thinking";
 import { deriveModelSnapshot, encodeModelValue, parseModelValue, repairSelectionForProviders, resolvedFromLegacy } from "../../services/llm/resolve";
 import type { ResolvedModelConfig } from "../../core/types";
 import { ModelSelect } from "../../components/ModelSelect";
@@ -45,6 +46,7 @@ function providerToResolved(provider: LlmProvider, model = ""): ResolvedModelCon
     timeoutMs: provider.timeoutMs,
     headers: { ...provider.headers },
     enabled: provider.enabled,
+    reasoningEffort: provider.reasoningEffort,
   };
 }
 
@@ -215,6 +217,13 @@ function ProviderEditModal({
         <label className="wide">API 地址<input value={draft.baseUrl} onChange={e => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" /></label>
         <label className="wide">API Key<ApiKeyField value={draft.apiKey} onChange={v => setDraft({ ...draft, apiKey: v })} placeholder="写入工作区 .gouan/connections.json" /></label>
         <label>超时（ms）<input type="number" min={5000} step={1000} value={draft.timeoutMs} onChange={e => setDraft({ ...draft, timeoutMs: Number(e.target.value) || 60000 })} /></label>
+        <label>思考等级
+          <select value={draft.reasoningEffort ?? "off"} onChange={e => setDraft({ ...draft, reasoningEffort: e.target.value as ReasoningEffort })}>
+            {(Object.keys(REASONING_EFFORT_LABELS) as ReasoningEffort[]).map(level => (
+              <option value={level} key={level}>{REASONING_EFFORT_LABELS[level]}</option>
+            ))}
+          </select>
+        </label>
         <label className="checkbox-inline"><span>启用</span><input type="checkbox" checked={draft.enabled} onChange={e => setDraft({ ...draft, enabled: e.target.checked })} /></label>
         <div className="wide">
           <div className="provider-subsection-title">自定义请求头</div>
@@ -435,6 +444,9 @@ export function ModelSettingsSection({
           <div className="provider-row-main">
             <b>{provider.name}</b>
             <span className="provider-protocol-badge">{LLM_PROTOCOL_LABELS[provider.protocol]}</span>
+            {provider.reasoningEffort && provider.reasoningEffort !== "off" && (
+              <span className="provider-effort-badge" title="思考等级">思考 · {REASONING_EFFORT_LABELS[provider.reasoningEffort]}</span>
+            )}
             <small>{provider.baseUrl || "未填写地址"}</small>
             <em>{provider.activeModels.length} 个可用模型</em>
           </div>

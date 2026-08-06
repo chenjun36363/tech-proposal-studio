@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "../../agent/protocol";
-import type { LlmProtocol, ResolvedModelConfig } from "../../core/types";
+import type { LlmProtocol, ReasoningEffort, ResolvedModelConfig } from "../../core/types";
 
 export type HttpMethod = "GET" | "POST";
 
@@ -19,6 +19,7 @@ export interface CanonicalChatRequest {
   stream?: boolean;
   max_tokens?: number;
   response_format?: unknown;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface ProtocolAdapter {

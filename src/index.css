@@ -1099,6 +1099,31 @@
     border-left: 1px solid hsl(var(--border));
     box-shadow: -1px 0 0 hsl(224 40% 10% / 0.02);
   }
+  .left-rail {
+    width: 36px;
+    border: 0;
+    border-right: 1px solid hsl(var(--border));
+    background: hsl(var(--sidebar-bg));
+    color: hsl(var(--primary));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 14px 0;
+    min-height: 0;
+    cursor: pointer;
+  }
+  .left-rail:hover {
+    background: hsl(var(--muted));
+  }
+  .left-rail span {
+    writing-mode: vertical-rl;
+    letter-spacing: 0.12em;
+    font-size: 11px;
+    font-weight: 650;
+    color: hsl(var(--muted-foreground));
+  }
   .right-rail {
     width: 36px;
     border: 0;
@@ -1248,6 +1273,37 @@
     min-height: 0;
     overflow: auto;
     margin-top: 6px;
+  }
+  .trash-modal {
+    display: flex;
+    flex-direction: column;
+    max-height: 82vh;
+  }
+  .trash-modal .modal-title .modal-title-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .trash-empty-btn {
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--card));
+    color: hsl(var(--destructive));
+    border-radius: 10px;
+    padding: 7px 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .trash-empty-btn:hover:not(:disabled) {
+    background: hsl(var(--muted));
+  }
+  .trash-empty-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .trash-modal .trash-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
   }
   .modal.wide.settings-modal {
     display: flex;
@@ -2008,6 +2064,15 @@
     border-radius: 4px;
     background: hsl(var(--muted));
     color: hsl(var(--muted-foreground));
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .provider-effort-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: color-mix(in srgb, hsl(var(--accent)) 14%, transparent);
+    color: hsl(var(--accent));
     font-size: 10px;
     font-weight: 500;
     white-space: nowrap;
@@ -3336,7 +3401,7 @@
   }
   .knowledge-document-head {
     display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) auto;
+    grid-template-columns: 24px minmax(0, 1fr) auto auto;
     align-items: start;
     gap: 6px;
   }

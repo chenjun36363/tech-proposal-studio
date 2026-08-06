@@ -199,6 +199,9 @@ fn ensure_workspace(paths: WorkspacePaths) -> Result<WorkspacePaths, String> {
     fs::create_dir_all(&history).map_err(|e| format!("创建知识库目录失败: {e}"))?;
     let assets = root.join("assets");
     fs::create_dir_all(&assets).map_err(|e| format!("创建资源目录失败: {e}"))?;
+    // 回收站目录（隐藏目录，回收站中的文档仍保留在工作区下）。
+    let trash = root.join(".trash");
+    fs::create_dir_all(&trash).map_err(|e| format!("创建回收站目录失败: {e}"))?;
     // Convenience README for first-time users
     let readme = history.join("README.md");
     if !readme.exists() {
@@ -373,6 +376,149 @@ fn delete_file(path: String) -> Result<(), String> {
         return Err("文件不存在".into());
     }
     fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))
+}
+
+/// 回收站目录，隐藏子目录，仍位于工作区 root 下。
+fn trash_dir(root: &Path) -> PathBuf {
+    root.join(".trash")
+}
+
+fn markdown_file_desc(path: &Path) -> LibraryFile {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let meta = fs::metadata(path);
+    LibraryFile {
+        title: path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("未命名")
+            .to_string(),
+        path: path.to_string_lossy().into(),
+        excerpt: content
+            .chars()
+            .filter(|c| *c != '\r')
+            .take(280)
+            .collect::<String>()
+            .replace('#', "")
+            .trim()
+            .to_string(),
+        updated_at: meta
+            .as_ref()
+            .map(file_updated_at)
+            .unwrap_or_else(|_| "0".into()),
+        size: meta.map(|m| m.len()).unwrap_or(0),
+    }
+}
+
+/// 列出回收站中的 Markdown 文件（回收站中的文档仍保留在工作区下）。
+#[tauri::command]
+fn list_workspace_trash(root: String) -> Result<Vec<LibraryFile>, String> {
+    if root.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let dir = trash_dir(&PathBuf::from(&root));
+    if !dir.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut items = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let is_md = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
+            .unwrap_or(false);
+        if !is_md {
+            continue;
+        }
+        items.push(markdown_file_desc(&path));
+    }
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(items)
+}
+
+/// 把工作区根目录下的 Markdown 文件移入回收站（`.trash`），重名时自动加序号。
+#[tauri::command]
+fn move_to_trash(root: String, path: String) -> Result<String, String> {
+    if root.trim().is_empty() {
+        return Err("工作目录不能为空".into());
+    }
+    let root_path = PathBuf::from(&root);
+    let src = PathBuf::from(&path);
+    if !src.exists() {
+        return Err("文件不存在".into());
+    }
+    if !src.starts_with(&root_path) {
+        return Err("只能把工作区根目录下的文件移入回收站".into());
+    }
+    let trash = trash_dir(&root_path);
+    fs::create_dir_all(&trash).map_err(|e| format!("创建回收站目录失败: {e}"))?;
+    let file_name = src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("未命名.md");
+    let target = unique_import_target(&trash, file_name);
+    fs::rename(&src, &target).map_err(|e| format!("移入回收站失败: {e}"))?;
+    Ok(target.to_string_lossy().into())
+}
+
+/// 把回收站中的 Markdown 恢复到工作区根目录，重名时自动加序号。
+#[tauri::command]
+fn restore_from_trash(root: String, path: String) -> Result<String, String> {
+    if root.trim().is_empty() {
+        return Err("工作目录不能为空".into());
+    }
+    let root_path = PathBuf::from(&root);
+    let src = PathBuf::from(&path);
+    if !src.exists() {
+        return Err("文件不存在".into());
+    }
+    if !src.starts_with(&trash_dir(&root_path)) {
+        return Err("只能从回收站恢复文档".into());
+    }
+    let file_name = src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("未命名.md");
+    let target = unique_import_target(&root_path, file_name);
+    fs::rename(&src, &target).map_err(|e| format!("恢复到工作区失败: {e}"))?;
+    Ok(target.to_string_lossy().into())
+}
+
+/// 永久删除回收站中的单个文档。
+#[tauri::command]
+fn delete_trash_file(root: String, path: String) -> Result<(), String> {
+    let trash = trash_dir(&PathBuf::from(&root));
+    let target = PathBuf::from(&path);
+    if !target.starts_with(&trash) {
+        return Err("只能删除回收站中的文件".into());
+    }
+    if !target.exists() {
+        return Err("文件不存在".into());
+    }
+    fs::remove_file(&target).map_err(|e| format!("删除失败: {e}"))
+}
+
+/// 清空回收站（删除其中所有文件）。
+#[tauri::command]
+fn empty_workspace_trash(root: String) -> Result<(), String> {
+    if root.trim().is_empty() {
+        return Ok(());
+    }
+    let trash = trash_dir(&PathBuf::from(&root));
+    if !trash.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&trash).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.path().is_file() {
+            fs::remove_file(entry.path()).map_err(|e| format!("清空回收站失败: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Copy an imported source file (PDF / Word) into a dedicated workspace
@@ -759,6 +905,11 @@ pub fn run() {
             agent_conversations::agent_conversation_clear_project,
             rename_file,
             delete_file,
+            list_workspace_trash,
+            move_to_trash,
+            restore_from_trash,
+            delete_trash_file,
+            empty_workspace_trash,
             preserve_import_source,
             write_library_markdown,
             save_image_to_workspace,

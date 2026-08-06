@@ -8,9 +8,10 @@ import { runProposalAgent } from "../agent/runner";
 import { buildAgentPreferencePrompt, normalizeAgentSettings, type AgentSettings } from "../agent/settings";
 import { estimateAgentContextTokens, estimateAgentTextTokens } from "../agent/contextCompaction";
 import { listProjectMemories } from "../agent/memoryService";
-import type { DocumentBlock, Project, ResolvedModelConfig, SelectedModel } from "../core/types";
+import type { DocumentBlock, Project, ReasoningEffort, ResolvedModelConfig, SelectedModel } from "../core/types";
 import { resolveModelConfigChain } from "../services/llm/resolve";
 import { runWithModelFallback } from "../services/llm/fallback";
+import { REASONING_EFFORT_LABELS } from "../services/llm/thinking";
 import { ModelSelect } from "./ModelSelect";
 import { OpenCodeModelSelect } from "../features/longWriting/OpenCodeModelSelect";
 import type { CliAgentConnection, CliAgentProvider, CliAgentRuntimeStatus } from "../agent/cliAgentService";
@@ -113,6 +114,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const [composerCursor, setComposerCursor] = useState(0);
   const [skillSuggestionIndex, setSkillSuggestionIndex] = useState(0);
   const [skillSuggestionsDismissed, setSkillSuggestionsDismissed] = useState(false);
+  const [reasoningEffortOverride, setReasoningEffortOverride] = useState<ReasoningEffort | "inherit">("inherit");
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
   const localMode = Boolean(localAgent);
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
@@ -571,6 +573,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
         onEvent: event => setEvents(current => [...current, event]),
         contextCompressionTokens: agentSettings.contextCompressionTokens,
         temperature: agentSettings.temperature,
+        reasoningEffort: reasoningEffortOverride === "inherit" ? undefined : reasoningEffortOverride,
         firstRoundToolName: planningToolEnabled ? "write_todo" : undefined,
         maxRounds: agentSettings.maxRounds,
         maxToolCalls: localAgent ? 1 : undefined,
@@ -739,6 +742,17 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       <span><FileSearch size={13} /><b>已捕获选区</b><small>{editorSelection.text.length.toLocaleString()} 字 · {editorSelection.sectionTitle ?? (editorSelection.scope === "document" ? "全文" : "当前章节")}</small></span>
       <button type="button" title="清除已捕获选区" onClick={clearEditorSelection} disabled={running}><X size={13} /></button>
     </div>}
+    <div className="agent-composer-options">
+      <label className="agent-effort-select" title="思考等级：越高推理越深入，消耗更多 token。跟随提供方=使用 AI 设置中该模型的思考等级">
+        <span>思考等级</span>
+        <select value={reasoningEffortOverride} disabled={running} onChange={event => setReasoningEffortOverride(event.target.value as ReasoningEffort | "inherit")}>
+          <option value="inherit">跟随提供方</option>
+          {(["off", "low", "medium", "high"] as ReasoningEffort[]).map(level => (
+            <option value={level} key={level}>{REASONING_EFFORT_LABELS[level]}</option>
+          ))}
+        </select>
+      </label>
+    </div>
     <div className="agent-chat-composer">
       {slashQuery && skillSuggestions.length > 0 && <div className="agent-skill-suggestions" role="listbox" aria-label="Skill 建议">
         {skillSuggestions.map((skill, index) => <button type="button" role="option" aria-selected={index === skillSuggestionIndex} className={index === skillSuggestionIndex ? "selected" : ""} key={`${skill.scope}:${skill.name}`} onMouseDown={event => { event.preventDefault(); chooseSkillSuggestion(skill); }}>

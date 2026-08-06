@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, Lock, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, Lock, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
@@ -52,6 +52,7 @@ import {
   withWorkspace,
   writeLibraryMarkdown,
   deleteFile,
+  moveToTrash,
 } from "./features/workspace/workspace";
 import { firstWorkspaceDocumentAfterDelete, readTextFileSnapshot, runDocumentChangeGuard, sameDocumentPath, writeTextFileChecked, type TextFileSnapshot } from "./features/workspace/documentSafety";
 import { normalizeAgentSettings } from "./agent/settings";
@@ -82,6 +83,7 @@ import { WebSearchModal } from "./features/search/WebSearchModal";
 import { EnvironmentModal } from "./features/environment/EnvironmentModal";
 import { WordExportModal } from "./components/WordExportModal";
 import { SourceImportModal } from "./features/workspace/SourceImportModal";
+import { TrashModal } from "./features/workspace/TrashModal";
 import { GitDiffView, GitSidebar, type GitDiffSelection } from "./features/git/GitWorkspace";
 import {
   applyConnections,
@@ -114,7 +116,7 @@ const RIGHT_PANEL_MAX = 720;
 const RIGHT_PANEL_DEFAULT = 400;
 const LEFT_PANEL_MIN = 180;
 const LEFT_PANEL_MAX = 480;
-const LEFT_PANEL_DEFAULT = 220;
+const LEFT_PANEL_DEFAULT = 260;
 const SEARXNG_ENGINE_OPTIONS = [
   ["baidu", "百度"],
   ["360search", "360 搜索"],
@@ -184,10 +186,12 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(getAppliedTheme);
   const [rightWidth, setRightWidth] = useState(RIGHT_PANEL_DEFAULT);
   const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_DEFAULT);
+  const [leftOpen, setLeftOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [workspaceImportKind, setWorkspaceImportKind] = useState<WorkspaceImportKind | null>(null);
   const [knowledgeManagerOpen, setKnowledgeManagerOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const [webSearchOpen, setWebSearchOpen] = useState(false);
   const [envOpen, setEnvOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -209,14 +213,11 @@ export default function App() {
   const [headingContextMenu, setHeadingContextMenu] = useState<HeadingContextMenu | null>(null);
   const [headingMoveTarget, setHeadingMoveTarget] = useState<HeadingMoveTarget>(null);
   const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenu | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [workspaceDocsCollapsed, setWorkspaceDocsCollapsed] = useState(false);
   const [leftView, setLeftView] = useState<"outline" | "git">("outline");
   const [gitDiff, setGitDiff] = useState<GitDiffSelection | null>(null);
   const [gitDiffActive, setGitDiffActive] = useState(false);
   const [agentSelection, setAgentSelection] = useState<AgentEditorSelection | undefined>(undefined);
-  const confirmDeleteRef = useRef<number>(0);
-  const allowCloseRef = useRef(false);
   const closePendingRef = useRef(false);
   const sourcePreview = useSourcePreview();
   const rightDrag = useRef<{ startX: number; startW: number } | null>(null);
@@ -821,12 +822,13 @@ export default function App() {
     notify(`已删除章节：${h.title}`);
   };
 
-  const deleteWorkspaceDoc = async (doc: WorkspaceMarkdownFile) => {
-    if (!desktop) return notify("删除文件仅在桌面端可用");
+  const moveWorkspaceDocToTrash = async (doc: WorkspaceMarkdownFile) => {
+    if (!desktop) return notify("移入回收站仅在桌面端可用");
+    if (!workspace?.root) return notify("请先在设置中配置工作目录");
     const isCurrent = sameDocumentPath(project.filePath, doc.path);
     if (isCurrent && !(await beforeDocumentChange("delete"))) return;
     try {
-      await deleteFile(doc.path);
+      await moveToTrash(workspace.root, doc.path);
       const remainingDocuments = await refreshWorkspaceDocs();
       if (isCurrent) {
         await safety.clearHandledDrafts();
@@ -839,11 +841,10 @@ export default function App() {
           setProject(blank);
           resetHistory();
         }
-      }
-      setPendingDelete(null);
-      notify(`已删除：${doc.title}`);
+}
+      notify(`已移入回收站：${doc.title}`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "删除失败");
+      notify(error instanceof Error ? error.message : "移入回收站失败");
     }
   };
 
@@ -965,6 +966,7 @@ export default function App() {
       y: Math.max(8, Math.min(window.innerHeight / 2 - menuHeight / 2, window.innerHeight - menuHeight - 8)),
       source: headingNode,
     });
+    locateHeadingInFullText(headingNode.heading);
   };
 
   const confirmMoveHeading = (source: HeadingNode, target: MdHeading, position: "before" | "after") => {
@@ -1081,7 +1083,6 @@ export default function App() {
     void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
       const appWindow = getCurrentWindow();
       unlisten = await appWindow.onCloseRequested(async event => {
-        if (allowCloseRef.current) return;
         event.preventDefault();
         if (closePendingRef.current) return;
         closePendingRef.current = true;
@@ -1093,18 +1094,19 @@ export default function App() {
             beforeDocumentChange("close"),
             new Promise<boolean>((resolve) => {
               forceCloseTimer = window.setTimeout(() => {
-                allowCloseRef.current = true;
                 resolve(true);
               }, 8000);
             }),
           ]);
           if (!allowed) return;
           safety.suppressNextUnloadDraftFlush();
-          allowCloseRef.current = true;
-          await appWindow.close();
+          // `close()` would emit another close-request event while this guard is
+          // still handling the original one. Destroy only after the user has
+          // approved the guard so the final close cannot be intercepted again.
+          await appWindow.destroy();
         } finally {
           if (forceCloseTimer) window.clearTimeout(forceCloseTimer);
-          if (!allowCloseRef.current) closePendingRef.current = false;
+          closePendingRef.current = false;
         }
       });
       if (disposed) unlisten();
@@ -1250,8 +1252,8 @@ export default function App() {
   };
 
   const workspaceGridStyle = rightOpen
-    ? { gridTemplateColumns: `${leftWidth}px 5px 1fr 5px ${rightWidth}px`, gridTemplateRows: "minmax(0, 1fr)" }
-    : { gridTemplateColumns: `${leftWidth}px 5px 1fr 36px`, gridTemplateRows: "minmax(0, 1fr)" };
+    ? { gridTemplateColumns: `${leftOpen ? `${leftWidth}px 5px ` : "36px "}1fr 5px ${rightWidth}px`, gridTemplateRows: "minmax(0, 1fr)" }
+    : { gridTemplateColumns: `${leftOpen ? `${leftWidth}px 5px ` : "36px "}1fr 36px`, gridTemplateRows: "minmax(0, 1fr)" };
 
   // 桌面端必须配置工作目录后才能进入：初始化未完成时先等待；确认无目录则引导设置。
   const root = project.workspace?.root ?? "";
@@ -1316,6 +1318,13 @@ export default function App() {
           </div>}
         </div>
         <IconButton
+          title={leftOpen ? "收起左侧面板" : "打开左侧面板"}
+          active={leftOpen}
+          onClick={() => setLeftOpen(value => !value)}
+        >
+          {leftOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+        </IconButton>
+        <IconButton
           title={rightOpen ? "收起右侧面板" : "打开右侧面板"}
           active={rightOpen}
           onClick={() => {
@@ -1341,6 +1350,7 @@ export default function App() {
       className={`workspace ${rightOpen ? "with-right" : "right-collapsed"}`}
       style={workspaceGridStyle}
     >
+      {leftOpen ? <>
       <aside className="left-panel">
         <div className="panel-heading">
           <span>{leftView === "outline" ? "目录" : "源代码管理"}</span>
@@ -1421,10 +1431,6 @@ export default function App() {
                     <b>{doc.title}</b>
                     <span>{doc.path.split(/[\/]/).pop()}</span>
                   </button>
-                  {pendingDelete === doc.path && <div className="workspace-doc-confirm-delete">
-                    <button type="button" className="workspace-doc-confirm-yes" onClick={() => { confirmDeleteRef.current += 1; void deleteWorkspaceDoc(doc); }}>确认</button>
-                    <button type="button" className="workspace-doc-confirm-no" onClick={() => setPendingDelete(null)}>取消</button>
-                  </div>}
                   {knowledgeTransferPath === doc.path && <span className="workspace-doc-status"><RefreshCw className="spinning" size={13} />转入中…</span>}
                 </div>;
               })}
@@ -1440,6 +1446,12 @@ export default function App() {
         />}
       </aside>
       <div className="left-splitter" onMouseDown={onLeftResizeStart} title="拖动调整左侧面板宽度" />
+      </> : (
+        <button className="left-rail" title="打开左侧目录" onClick={() => setLeftOpen(true)}>
+          <PanelLeftOpen size={16} />
+          <span>目录</span>
+        </button>
+      )}
       <main className={`editor-area ${longWritingLocked ? "long-task-locked" : ""}`}>
         {longWritingLocked && <div className="long-task-lock-banner">长任务正在按章节安全写入。正文编辑、手动保存、标题操作、文件切换、重命名和删除已锁定；仍可预览已完成章节。</div>}
         <div className="editor-title">
@@ -1766,6 +1778,15 @@ export default function App() {
           disabled={!workspace?.root}
           onClick={() => {
             setWorkspaceContextMenu(null);
+            setTrashOpen(true);
+          }}
+        ><Trash2 size={14} />打开回收站</button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspace?.root}
+          onClick={() => {
+            setWorkspaceContextMenu(null);
             if (workspace?.root) void openWorkspaceDirectory(workspace.root).catch(error => notify(String(error)));
           }}
         ><FolderOpen size={14} />在资源管理器中打开工作区</button>
@@ -1808,8 +1829,8 @@ export default function App() {
           role="menuitem"
           className="danger"
           disabled={sameDocumentPath(project.filePath, workspaceContextMenu.doc.path) && (longWritingLocked || safety.status === "checking")}
-          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); setPendingDelete(document.path); }}
-        ><Trash2 size={14} />删除文件</button>
+          onClick={() => { const document = workspaceContextMenu.doc; setWorkspaceContextMenu(null); void moveWorkspaceDocToTrash(document); }}
+        ><Trash2 size={14} />移入回收站</button>
       </>}
     </div>}
     {sourcePreview.source && <SourcePreviewModal
@@ -1871,6 +1892,12 @@ export default function App() {
       openMarkdownPath={openMarkdownPath}
       notify={notify}
       close={() => setKnowledgeManagerOpen(false)}
+    />}
+    {trashOpen && workspace?.root && <TrashModal
+      root={workspace.root}
+      notify={notify}
+      close={() => setTrashOpen(false)}
+      onChanged={() => void refreshWorkspaceDocs()}
     />}
     {webSearchOpen && <WebSearchModal
       project={project}

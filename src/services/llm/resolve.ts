@@ -41,6 +41,7 @@ export function toOpenAICompatible(resolved: ResolvedModelConfig): OpenAICompati
     timeoutMs: resolved.timeoutMs,
     headers: { ...resolved.headers },
     enabled: resolved.enabled,
+    reasoningEffort: resolved.reasoningEffort,
   };
 }
 
@@ -60,6 +61,7 @@ export function resolvedFromLegacy(config: OpenAICompatibleConfig, providerId = 
     timeoutMs: config.timeoutMs,
     headers: { ...config.headers },
     enabled: config.enabled,
+    reasoningEffort: config.reasoningEffort,
   };
 }
 
@@ -97,6 +99,7 @@ export function resolveActiveModelConfig(
     model: selection.model,
     timeoutMs: provider.timeoutMs,
     headers: { ...provider.headers },
+    reasoningEffort: provider.reasoningEffort,
     // Keep provider availability separate from the project-level AI master switch.
     enabled: true,
   };

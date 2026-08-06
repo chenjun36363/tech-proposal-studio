@@ -7,6 +7,7 @@ import {
   openAiStyleResponse,
   type ProtocolAdapter,
 } from "../types";
+import { openaiReasoningEffort } from "../thinking";
 
 function bearerAuth(config: ResolvedModelConfig): Record<string, string> {
   if (!config.apiKey.trim()) return {};
@@ -41,6 +42,8 @@ export const openaiCompletionsAdapter: ProtocolAdapter = {
     if (request.tools?.length) body.tools = request.tools;
     if (request.tool_choice) body.tool_choice = request.tool_choice;
     if (request.response_format) body.response_format = request.response_format;
+    const effort = openaiReasoningEffort(request.reasoningEffort ?? config.reasoningEffort);
+    if (effort) body.reasoning_effort = effort;
     return {
       url: `${baseUrl(config)}/chat/completions`,
       method: "POST",
@@ -225,6 +228,8 @@ export const openaiResponsesAdapter: ProtocolAdapter = {
           ? { type: "function", name: request.tool_choice.function.name }
           : "auto";
     }
+    const effort = openaiReasoningEffort(request.reasoningEffort ?? config.reasoningEffort);
+    if (effort) body.reasoning = { effort };
     return {
       url: `${baseUrl(config)}/responses`,
       method: "POST",

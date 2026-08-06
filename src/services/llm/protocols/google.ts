@@ -8,6 +8,7 @@ import {
   type CanonicalChatRequest,
   type ProtocolAdapter,
 } from "../types";
+import { GEMINI_THINKING_BUDGETS, openaiReasoningEffort } from "../thinking";
 
 function geminiAuth(config: ResolvedModelConfig): Record<string, string> {
   if (!config.apiKey.trim()) return {};
@@ -130,12 +131,12 @@ export const googleGenerativeAiAdapter: ProtocolAdapter = {
     const { systemInstruction, contents } = toGeminiContents(request.messages);
     const body: Record<string, unknown> = { contents };
     if (systemInstruction) body.systemInstruction = systemInstruction;
-    if (typeof request.temperature === "number" || typeof request.max_tokens === "number") {
-      body.generationConfig = {
-        ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
-        ...(typeof request.max_tokens === "number" ? { maxOutputTokens: request.max_tokens } : {}),
-      };
-    }
+    const generationConfig: Record<string, unknown> = {};
+    if (typeof request.temperature === "number") generationConfig.temperature = request.temperature;
+    if (typeof request.max_tokens === "number") generationConfig.maxOutputTokens = request.max_tokens;
+    const effort = openaiReasoningEffort(request.reasoningEffort ?? config.reasoningEffort);
+    if (effort) generationConfig.thinkingConfig = { thinkingBudget: GEMINI_THINKING_BUDGETS[effort] };
+    if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;
     const tools = geminiTools(request.tools);
     if (tools) {
       body.tools = tools;

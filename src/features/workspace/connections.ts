@@ -14,6 +14,7 @@ import { isDesktop } from "../../services/runtime";
 import { invoke } from "@tauri-apps/api/core";
 import { isLlmProtocol, deriveModelSnapshot, LEGACY_PROVIDER_ID } from "../../services/llm/resolve";
 import { createDefaultProvider, createDefaultSelection } from "../../services/llm/defaults";
+import { normalizeReasoningEffort } from "../../services/llm/thinking";
 
 const BROWSER_CONNECTIONS_KEY = "tech-proposal-studio.connections.v1";
 
@@ -101,6 +102,7 @@ function normalizeModel(raw: Partial<OpenAICompatibleConfig> | undefined): OpenA
     timeoutMs: typeof raw?.timeoutMs === "number" && raw.timeoutMs > 0 ? raw.timeoutMs : d.timeoutMs,
     headers: raw?.headers && typeof raw.headers === "object" ? { ...raw.headers } : {},
     enabled: typeof raw?.enabled === "boolean" ? raw.enabled : d.enabled,
+    reasoningEffort: normalizeReasoningEffort(raw?.reasoningEffort),
   };
 }
 
@@ -186,6 +188,7 @@ export function normalizeProvider(raw: Partial<LlmProvider> | null | undefined):
     timeoutMs: typeof raw?.timeoutMs === "number" && raw.timeoutMs > 0 ? Math.trunc(raw.timeoutMs) : 60000,
     headers,
     enabled: typeof raw?.enabled === "boolean" ? raw.enabled : true,
+    reasoningEffort: normalizeReasoningEffort(raw?.reasoningEffort),
     activeModels,
     catalog,
   };
@@ -219,6 +222,7 @@ function migrateV1Model(legacyRaw: Partial<OpenAICompatibleConfig> | undefined):
     timeoutMs: legacy.timeoutMs,
     headers: { ...legacy.headers },
     enabled: legacy.enabled,
+    reasoningEffort: legacy.reasoningEffort,
     activeModels: legacy.model ? [legacy.model] : [],
     catalog: legacy.model ? [{ id: legacy.model, displayName: legacy.model }] : undefined,
   };

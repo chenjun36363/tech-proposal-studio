@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentCompletion, agentCompletionStream, improveBlockStream } from "./model";
+import { agentCompletion, agentCompletionStream, improveBlockStream, isRetryableStreamError, runStreamAttemptWithRetry } from "./model";
 import type { DocumentBlock, OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -149,5 +149,110 @@ describe("Tauri model adapter", () => {
     const cancelCall = vi.mocked(invoke).mock.calls.find(([command]) => command === "model_proxy_cancel");
     expect(jsonCall?.[1]).toEqual(expect.objectContaining({ runId: expect.any(String) }));
     expect(cancelCall?.[1]).toEqual(expect.objectContaining({ runId: (jsonCall?.[1] as { runId: string }).runId }));
+  });
+});
+
+describe("stream retry (withStreamRetry semantics)", () => {
+  afterEach(() => {
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    vi.clearAllMocks();
+  });
+
+  const fast = { maxAttempts: 3, backoffMs: () => 1 };
+
+  it("retries a transient failure before any content commits and discards the failed attempt", async () => {
+    let calls = 0;
+    const updates: string[] = [];
+    const retries: string[] = [];
+    const after = await runStreamAttemptWithRetry(async emitter => {
+      calls += 1;
+      if (calls === 1) {
+        emitter.reasoning("内部推理（应被丢弃）");
+        throw new Error("模型服务请求失败：temporarily unavailable");
+      }
+      emitter.reasoning("第二次推理");
+      emitter.content("新");
+      emitter.content("正文");
+    }, {
+      ...fast,
+      onUpdate: chunk => updates.push(chunk),
+      onReasoning: chunk => retries.push(chunk),
+      onRetry: () => undefined,
+    });
+
+    expect(calls).toBe(2);
+    expect(after).toBe("新正文");
+    expect(updates).toEqual(["新", "正文"]);
+    expect(retries).toEqual(["第二次推理"]);
+  });
+
+  it("does not retry once content has committed", async () => {
+    let calls = 0;
+    await expect(runStreamAttemptWithRetry(async emitter => {
+      calls += 1;
+      emitter.content("已开始输出");
+      throw new Error("模型服务请求失败：temporarily unavailable");
+    }, { ...fast, onUpdate: () => undefined })).rejects.toThrow("temporarily unavailable");
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry non-transient errors", async () => {
+    let calls = 0;
+    await expect(runStreamAttemptWithRetry(async () => {
+      calls += 1;
+      throw new Error("模型服务返回 401：Invalid API key");
+    }, { ...fast, onUpdate: () => undefined })).rejects.toThrow("Invalid API key");
+    expect(calls).toBe(1);
+  });
+
+  it("exhausts the retry budget and rethrows the last error", async () => {
+    let calls = 0;
+    await expect(runStreamAttemptWithRetry(async () => {
+      calls += 1;
+      throw new Error("fetch failed");
+    }, { maxAttempts: 2, backoffMs: () => 1, onUpdate: () => undefined })).rejects.toThrow("fetch failed");
+    expect(calls).toBe(2);
+  });
+
+  it("isRetryableStreamError rejects abort and auth failures", () => {
+    expect(isRetryableStreamError(new DOMException("模型请求已取消", "AbortError"))).toBe(false);
+    expect(isRetryableStreamError(new Error("Invalid API key"))).toBe(false);
+    expect(isRetryableStreamError(new Error("模型服务返回 500：upstream error"))).toBe(true);
+    expect(isRetryableStreamError(new Error("fetch failed"))).toBe(true);
+    expect(isRetryableStreamError(new Error("connection reset by peer"))).toBe(true);
+  });
+
+  it("retries through agentCompletionStream over the desktop proxy", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    let eventCallback: ((event: { payload: { runId: string; content: string } }) => void) | null = null;
+    vi.mocked(listen).mockImplementation(async (_event, callback) => {
+      eventCallback = callback as typeof eventCallback;
+      return vi.fn();
+    });
+    let streamCalls = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd, args: any) => {
+      if (cmd === "model_proxy_stream") {
+        streamCalls += 1;
+        if (streamCalls === 1) throw new Error("模型服务请求失败：connection reset");
+        eventCallback?.({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"content":"新"}}]}' } });
+        eventCallback?.({ payload: { runId: args.runId, content: '{"choices":[{"delta":{"content":"正文"}}]}' } });
+      }
+      return undefined;
+    });
+    const updates: string[] = [];
+
+    const response = await agentCompletionStream(
+      { model: "example-model", messages: [{ role: "user", content: "x" }] },
+      config,
+      chunk => updates.push(chunk),
+      undefined,
+      undefined,
+      undefined,
+      fast,
+    );
+
+    expect(streamCalls).toBe(2);
+    expect(updates).toEqual(["新", "正文"]);
+    expect(response.choices?.[0]?.message).toMatchObject({ content: "新正文" });
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, ExternalLink, Eye, FilePlus2, FolderSearch, LoaderCircle, Minus, Plus, RefreshCw, Search, Tag, Tags, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, Eye, FilePlus2, FolderSearch, LoaderCircle, Minus, Plus, RefreshCw, Search, Tag, Tags, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { HeadingReviewModal } from "../../components/HeadingReviewModal";
 import { IconButton } from "../../components/IconButton";
 import { FileUploadPanel } from "../../components/FileUploadPanel";
@@ -51,6 +51,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   const [headingCandidates, setHeadingCandidates] = useState<HeadingCandidate[]>([]);
   const [preview, setPreview] = useState<{ source: SourceRecord; markdown: string; loading: boolean; error: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"document" | "snippet">("document");
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [importKind, setImportKind] = useState<KnowledgeImportKind | null>(null);
@@ -92,6 +93,11 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     return () => window.clearInterval(timer);
   }, [busy]);
   useEffect(() => {
+    if (searchMode !== "snippet") {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
     const query = searchQuery.trim();
     if (!query || !project.workspace) {
       setSearchResults([]);
@@ -116,7 +122,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
         .finally(() => { if (!cancelled) setSearching(false); });
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [searchQuery, project.workspace?.root, selectedCategories]);
+  }, [searchQuery, project.workspace?.root, selectedCategories, searchMode]);
 
   const analyze = async (path: string): Promise<boolean> => {
     if (!project.workspace) return false;
@@ -314,6 +320,19 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     [categoryGroups, selectedCategories],
   );
 
+  const documentResults = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (searchMode !== "document" || !query) return [] as Array<{ kind: "document"; document: KnowledgeDocument } | { kind: "pending"; item: KnowledgeScanItem }>;
+    const matches = (text: string) => text.toLocaleLowerCase().includes(query);
+    const documents = readyDocuments
+      .filter(document => matches(document.title) || matches(document.location))
+      .map(document => ({ kind: "document" as const, document }));
+    const pendingFiles = pending
+      .filter(item => matches(item.title) || matches(item.path))
+      .map(item => ({ kind: "pending" as const, item }));
+    return [...documents, ...pendingFiles];
+  }, [searchMode, searchQuery, readyDocuments, pending]);
+
   const reloadCategories = async () => {
     if (!project.workspace?.root) return;
     try { setCategories(await listKnowledgeCategories(project.workspace)); } catch { /* 知识库不可用时忽略分类加载 */ }
@@ -377,6 +396,13 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     } catch (error) { notify(error instanceof Error ? error.message : "设置分类失败"); }
   };
   const headingSourceLabel = (source: KnowledgeSection["headingSource"]) => ({ markdown: "原生标题", toc: "目录匹配", numbering: "编号识别", model: "模型识别", user: "人工确认" }[source] ?? source);
+  const copyPath = (path: string) => void navigator.clipboard.writeText(path).then(() => notify("已复制文件路径")).catch(() => notify("复制失败，请检查剪贴板权限"));
+  const copyResultPath = (result: KnowledgeSearchResult) => {
+    const document = documents.find(item => item.id === result.chunk.documentId);
+    const location = document?.location;
+    if (!location || !project.workspace) return;
+    copyPath(resolveWorkspaceLocation(project.workspace.root, location));
+  };
 
   return <div className="modal-backdrop knowledge-manager-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
     <div className="modal knowledge-manager-modal" onMouseDown={event => event.stopPropagation()}>
@@ -395,22 +421,33 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
           {!sortedCategories.length && <div className="knowledge-category-pop-empty">暂无分类，可在“分类管理”中创建</div>}
         </div>
       </div>}</div><button disabled={busy} onClick={() => setManageOpen(true)} title="管理知识分类（新增 / 重命名 / 删除 / 排序）"><Tags size={14} />分类管理</button><button disabled={busy} onClick={() => setImportKind("document")} title="通过拖拽或文件路径导入 Word/PDF"><FilePlus2 size={15} />导入 Word/PDF…</button><button className="primary" disabled={busy} onClick={() => setImportKind("markdown")}><FilePlus2 size={15} />导入 Markdown…</button></div></div>
-      <label className="knowledge-search"><Search size={16} /><input type="search" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索文档标题、章节和正文" aria-label="搜索知识库" />{searching && <LoaderCircle className="spinning" size={15} />}{searchQuery && !searching && <IconButton title="清空搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton>}</label>
+      <label className="knowledge-search"><Search size={16} /><div className="knowledge-search-mode" role="group" aria-label="搜索范围"><button type="button" className={searchMode === "document" ? "active" : ""} onClick={() => setSearchMode("document")} title="按文件名称/标题搜索知识文档">文档</button><button type="button" className={searchMode === "snippet" ? "active" : ""} onClick={() => setSearchMode("snippet")} title="按片段全文搜索知识片段">片段</button></div><input type="search" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder={searchMode === "document" ? "按文档标题或文件名搜索文档" : "按片段全文搜索知识片段"} aria-label="搜索知识库" />{searchMode === "snippet" && searching && <LoaderCircle className="spinning" size={15} />}{searchQuery && !searching && <IconButton title="清空搜索" onClick={() => setSearchQuery("")}><X size={14} /></IconButton>}</label>
       {progress && busy && !headingReview && <div className="knowledge-progress"><span>{progress.message}</span><b>{progress.stage === "structure_ai" ? `已等待 ${busySeconds} 秒` : progress.total > 1 ? `${progress.current}/${progress.total}` : `已进行 ${busySeconds} 秒`}</b></div>}
-      {searchQuery.trim() ? <section className="knowledge-search-results">
+      {searchQuery.trim() && searchMode === "snippet" ? <section className="knowledge-search-results">
         <div className="knowledge-manager-heading"><span>搜索结果</span><b>{searchResults.length}</b></div>
         <div className="knowledge-manager-scroll">
-          {searchResults.map(result => <button className="knowledge-search-result" key={result.chunk.id} onClick={() => previewSearchResult(result)}><div><b>{result.chunk.documentTitle}</b><span>{result.chunk.headingPath}</span><small>{countMarkdownWords(result.chunk.content).toLocaleString()} 字</small></div><p>{result.excerpt}</p><Eye size={14} /></button>)}
-          {!searching && !searchResults.length && <div className="knowledge-manager-empty"><Search size={20} /><span>没有找到匹配的知识内容</span></div>}
+          {searchResults.map(result => <button className="knowledge-search-result" key={result.chunk.id} onClick={() => previewSearchResult(result)}><div><b>{result.chunk.documentTitle}</b><span>{result.chunk.headingPath}</span><small>{countMarkdownWords(result.chunk.content).toLocaleString()} 字</small></div><p>{result.excerpt}</p><span className="knowledge-search-copy" onClick={event => { event.stopPropagation(); copyResultPath(result); }} title="复制文件路径"><Copy size={13} /></span><Eye size={14} /></button>)}
+          {!searching && !searchResults.length && <div className="knowledge-manager-empty"><Search size={20} /><span>没有找到匹配的知识片段</span></div>}
+        </div>
+      </section> : searchQuery.trim() && searchMode === "document" ? <section className="knowledge-search-results">
+        <div className="knowledge-manager-heading"><span>搜索结果</span><b>{documentResults.length}</b></div>
+        <div className="knowledge-manager-scroll">
+          {documentResults.map(result => result.kind === "document"
+            ? <article className="knowledge-document knowledge-document-result" key={result.document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(result.document.id)}>{expanded.has(result.document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{result.document.title}</b><span>{result.document.sectionCount} 章 · {result.document.chunkCount} 片 · 全文 {result.document.charCount.toLocaleString()} 字</span><code title={result.document.location}>{result.document.location}</code></div><IconButton title="复制文件路径" onClick={() => copyPath(resolveWorkspaceLocation(project.workspace!.root, result.document.location))}><Copy size={12} /></IconButton><select className="knowledge-category-select" value={result.document.categoryId ?? ""} onChange={event => void assignCategory(result.document.id, event.target.value || null)} title="设置知识分类" aria-label={`${result.document.title} 所属分类`}><option value="">未分类</option>{sortedCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div>
+              <div className="source-item-actions knowledge-actions"><button onClick={() => void previewDocument(result.document)}><Eye size={12} />预览全文</button>{result.document.sourceUrl && <button onClick={() => void openExternalUrl(result.document.sourceUrl!)}><ExternalLink size={12} />原网页</button>}<button disabled={busy} onClick={() => void removeIndexed(result.document)}>移出</button><button className="danger" disabled={busy} onClick={() => void deleteIndexed(result.document)}><Trash2 size={12} />删除</button></div>
+              {expanded.has(result.document.id) && <div className="knowledge-tree">{(sections[result.document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em className="knowledge-section-char-count">{section.charCount.toLocaleString()} 字</em><em className={`knowledge-quality-badge ${section.quality}`}>{section.quality === "good" ? "优质" : section.quality === "bad" ? "劣质" : "普通"}</em><div className="knowledge-manager-quality" role="group" aria-label={`${section.title}片段状态`}><IconButton title="标记为优质" active={section.quality === "good"} disabled={busy} onClick={() => void markSectionQuality(section, "good")}><ThumbsUp size={12} /></IconButton><IconButton title="标记为普通" active={section.quality === "normal"} disabled={busy} onClick={() => void markSectionQuality(section, "normal")}><Minus size={12} /></IconButton><IconButton title="标记为劣质" active={section.quality === "bad"} disabled={busy} onClick={() => void markSectionQuality(section, "bad")}><ThumbsDown size={12} /></IconButton></div><IconButton title="预览知识片段" onClick={() => void previewSection(result.document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}
+            </article>
+            : <article className="knowledge-manager-pending" key={result.item.path}><div><b>{result.item.title}</b><span title={result.item.path}>{result.item.path}</span></div><div className="knowledge-pending-path"><IconButton title="复制文件路径" onClick={() => copyPath(resolveWorkspaceLocation(project.workspace!.root, result.item.path))}><Copy size={12} /></IconButton><em className={`knowledge-file-state ${result.item.state}`}>{result.item.state === "changed" ? "索引待更新" : "尚未入库"}</em></div><div className="knowledge-pending-actions"><button disabled={busy} onClick={() => void analyze(result.item.path)}>{result.item.state === "changed" ? "重新识别" : "识别结构"}</button><button disabled={busy} onClick={() => void returnPendingToWorkspace(result.item)}><Undo2 size={13} />转回工作区</button><IconButton title="删除知识副本" disabled={busy} onClick={() => void deletePending(result.item)}><Trash2 size={13} /></IconButton></div></article>)}
+          {!documentResults.length && <div className="knowledge-manager-empty"><Search size={20} /><span>没有找到匹配的知识文档</span></div>}
         </div>
       </section> : <div className="knowledge-manager-body">
         <section className="knowledge-manager-column"><div className="knowledge-manager-heading"><span>待处理与更新</span><b>{pending.length}</b></div><div className="knowledge-manager-scroll">
-          {pending.map(item => <article className="knowledge-manager-pending" key={item.path}><div><b>{item.title}</b><span title={item.path}>{item.path}</span></div><em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "索引待更新" : "尚未入库"}</em><div className="knowledge-pending-actions"><button disabled={busy} onClick={() => void analyze(item.path)}>{item.state === "changed" ? "重新识别" : "识别结构"}</button><button disabled={busy} onClick={() => void returnPendingToWorkspace(item)}><Undo2 size={13} />转回工作区</button><IconButton title="删除知识副本" disabled={busy} onClick={() => void deletePending(item)}><Trash2 size={13} /></IconButton></div></article>)}
+          {pending.map(item => <article className="knowledge-manager-pending" key={item.path}><div><b>{item.title}</b><span title={item.path}>{item.path}</span></div><div className="knowledge-pending-path"><IconButton title="复制文件路径" onClick={() => copyPath(resolveWorkspaceLocation(project.workspace!.root, item.path))}><Copy size={12} /></IconButton><em className={`knowledge-file-state ${item.state}`}>{item.state === "changed" ? "索引待更新" : "尚未入库"}</em></div><div className="knowledge-pending-actions"><button disabled={busy} onClick={() => void analyze(item.path)}>{item.state === "changed" ? "重新识别" : "识别结构"}</button><button disabled={busy} onClick={() => void returnPendingToWorkspace(item)}><Undo2 size={13} />转回工作区</button><IconButton title="删除知识副本" disabled={busy} onClick={() => void deletePending(item)}><Trash2 size={13} /></IconButton></div></article>)}
           {!pending.length && <div className="knowledge-manager-empty"><Check size={20} /><span>所有知识文档均已就绪</span></div>}
         </div></section>
         <section className="knowledge-manager-column indexed"><div className="knowledge-manager-heading"><span>已就绪</span><b>{readyDocuments.length}</b></div><div className="knowledge-manager-scroll">
           {visibleGroups.map(group => <div className="knowledge-manager-group" key={group.id}><div className="knowledge-section-heading"><div>{group.color ? <span className="knowledge-group-dot" style={{ background: group.color }} /> : <FolderSearch size={14} />}<b>{group.label}</b><span>{group.documents.length}</span></div></div>
-            {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片 · 全文 {document.charCount.toLocaleString()} 字</span><code title={document.location}>{document.location}</code></div><select className="knowledge-category-select" value={document.categoryId ?? ""} onChange={event => void assignCategory(document.id, event.target.value || null)} title="设置知识分类" aria-label={`${document.title} 所属分类`}><option value="">未分类</option>{sortedCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div>
+            {group.documents.map(document => <article className="knowledge-document" key={document.id}><div className="knowledge-document-head"><button className="knowledge-expand" title="展开章节" onClick={() => void toggleDocument(document.id)}>{expanded.has(document.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button><div><b>{document.title}</b><span>{document.sectionCount} 章 · {document.chunkCount} 片 · 全文 {document.charCount.toLocaleString()} 字</span><code title={document.location}>{document.location}</code></div><IconButton title="复制文件路径" onClick={() => copyPath(resolveWorkspaceLocation(project.workspace!.root, document.location))}><Copy size={12} /></IconButton><select className="knowledge-category-select" value={document.categoryId ?? ""} onChange={event => void assignCategory(document.id, event.target.value || null)} title="设置知识分类" aria-label={`${document.title} 所属分类`}><option value="">未分类</option>{sortedCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div>
               {document.error && <p className="knowledge-error">{document.error}</p>}
               <div className="source-item-actions knowledge-actions"><button onClick={() => void previewDocument(document)}><Eye size={12} />预览全文</button>{document.sourceUrl && <button onClick={() => void openExternalUrl(document.sourceUrl!)}><ExternalLink size={12} />原网页</button>}{document.sourceType === "markdown" && <button disabled={busy} onClick={() => void analyze(document.location)}>重新识别</button>}{document.sourceType === "markdown" && <button disabled={busy} onClick={() => void restore(document)}>恢复原文</button>}<button disabled={busy} onClick={() => void removeIndexed(document)}>移出</button><button className="danger" disabled={busy} onClick={() => void deleteIndexed(document)}><Trash2 size={12} />删除</button></div>
               {expanded.has(document.id) && <div className="knowledge-tree">{(sections[document.id] ?? []).map(section => <div className="knowledge-manager-section" key={section.id} style={{ paddingLeft: `${8 + Math.max(0, section.level - 1) * 14}px` }}><i>H{section.level || 1}</i><span>{section.title}</span><small>{headingSourceLabel(section.headingSource)}</small><em className="knowledge-section-char-count">{section.charCount.toLocaleString()} 字</em><em className={`knowledge-quality-badge ${section.quality}`}>{section.quality === "good" ? "优质" : section.quality === "bad" ? "劣质" : "普通"}</em><div className="knowledge-manager-quality" role="group" aria-label={`${section.title}片段状态`}><IconButton title="标记为优质" active={section.quality === "good"} disabled={busy} onClick={() => void markSectionQuality(section, "good")}><ThumbsUp size={12} /></IconButton><IconButton title="标记为普通" active={section.quality === "normal"} disabled={busy} onClick={() => void markSectionQuality(section, "normal")}><Minus size={12} /></IconButton><IconButton title="标记为劣质" active={section.quality === "bad"} disabled={busy} onClick={() => void markSectionQuality(section, "bad")}><ThumbsDown size={12} /></IconButton></div><IconButton title="预览知识片段" onClick={() => void previewSection(document, section)}><Eye size={13} /></IconButton><em>{section.chunkCount}</em></div>)}</div>}

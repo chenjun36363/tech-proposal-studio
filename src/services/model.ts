@@ -5,6 +5,7 @@ import type { AiDraft, DocumentBlock, ModelOption, OpenAICompatibleConfig, Resol
 import { isDesktop } from "./runtime";
 import { asRecord, protocolAdapter, type CanonicalChatRequest, type WireHttpRequest } from "./llm";
 import { resolvedFromLegacy } from "./llm/resolve";
+import { isReasoningEffort } from "./llm/thinking";
 import type { AgentModelResponse } from "../agent/protocol";
 
 type StreamUpdate = (content: string) => void;
@@ -35,6 +36,141 @@ function streamReasoning(data: string): string | null {
     if (thought) return thought;
     return null;
   } catch { return null; }
+}
+
+/** 对齐 LiveAgent `withStreamRetry` 的流式重连：commit 语义 + 指数退避。 */
+export const DEFAULT_STREAM_RETRY_MAX_ATTEMPTS = 3;
+
+const STREAM_RETRY_BASE_DELAY_MS = 500;
+const STREAM_RETRY_BACKOFF_FACTOR = 2;
+
+/** Codex 风格退避：base * factor^(attempt-1) * uniform(0.9, 1.1)，无上限。 */
+export function computeStreamRetryBackoffMs(attempt: number): number {
+  const base = STREAM_RETRY_BASE_DELAY_MS * STREAM_RETRY_BACKOFF_FACTOR ** (attempt - 1);
+  return base * (0.9 + Math.random() * 0.2);
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new DOMException("模型请求已取消", "AbortError"));
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("模型请求已取消", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** 瞬态传输/服务错误可安全重连；认证与客户端错误不重试。 */
+export function isRetryableStreamError(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name === "AbortError") return false;
+  return /5\d\d|429|rate limit|too many requests|econnreset|econnrefused|etimedout|networkerror|fetch failed|network timeout|socket|connection|timeout|timed out|temporar(?:ily|y)|unexpected server error|超时|暂时|不可用|网络|限流|网关|bad gateway/i.test(error.message);
+}
+
+type StreamEmitter = {
+  content: (chunk: string) => void;
+  reasoning: (reasoning: string) => void;
+  activity: (phase: "thinking" | "output" | "tool") => void;
+};
+
+/**
+ * 首个内容提交前缓冲推理内容，提交后才转发给下游。失败的未提交尝试整体丢弃，
+ * 由重连循环重新发起，避免把半截输出暴露给 UI（对应 LiveAgent streamRetry.ts 的 commit 语义）。
+ */
+class BufferedStreamEmitter {
+  private committed = false;
+  private buffered: { reasoning?: string }[] = [];
+  after = "";
+  constructor(
+    private readonly onContent: (chunk: string) => void,
+    private readonly onReasoning?: (reasoning: string) => void,
+  ) {}
+  get hasCommitted() { return this.committed; }
+  content(chunk: string) {
+    if (!this.committed) {
+      this.committed = true;
+      for (const item of this.buffered.splice(0)) this.onReasoning?.(item.reasoning!);
+    }
+    this.after += chunk;
+    this.onContent(chunk);
+  }
+  reasoning(reasoning: string) {
+    if (!this.committed) { this.buffered.push({ reasoning }); return; }
+    this.onReasoning?.(reasoning);
+  }
+  /** 流正常结束时冲刷尚未提交的缓冲内容（纯推理输出等）。 */
+  drain() {
+    if (this.committed) return;
+    for (const item of this.buffered.splice(0)) this.onReasoning?.(item.reasoning!);
+  }
+}
+
+type StreamAttempt = (emitter: StreamEmitter) => Promise<void>;
+
+export interface StreamRetryOptions {
+  signal?: AbortSignal;
+  maxAttempts?: number;
+  onUpdate: (chunk: string) => void;
+  onReasoning?: (reasoning: string) => void;
+  onActivity?: StreamActivity;
+  onRetry?: (attempt: number, maxAttempts: number, errorMessage: string) => void;
+  onRetryRecovered?: () => void;
+  backoffMs?: (attempt: number) => number;
+}
+
+/**
+ * 包装一次流式请求：未提交前遇到可重试的瞬态错误，丢弃本次输出并以指数退避重连；
+ * 一旦开始输出内容（或推理）即视为已提交，不再重试，避免重复生成。
+ */
+export async function runStreamAttemptWithRetry(
+  run: StreamAttempt,
+  options: StreamRetryOptions,
+): Promise<string> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_STREAM_RETRY_MAX_ATTEMPTS);
+  const signal = options.signal;
+  const backoff = options.backoffMs ?? computeStreamRetryBackoffMs;
+  let lastActivity: "thinking" | "output" | "tool" | null = null;
+  let retried = false;
+  const onContent: (chunk: string) => void = chunk => {
+    if (retried) {
+      retried = false;
+      options.onRetryRecovered?.();
+    }
+    options.onUpdate(chunk);
+  };
+  for (let attempt = 1; ; attempt += 1) {
+    const emitter = new BufferedStreamEmitter(onContent, options.onReasoning);
+    const streamEmitter: StreamEmitter = {
+      content: chunk => emitter.content(chunk),
+      reasoning: reasoning => emitter.reasoning(reasoning),
+      activity: phase => {
+        if (phase === lastActivity) return;
+        lastActivity = phase;
+        options.onActivity?.(phase);
+      },
+    };
+    try {
+      await run(streamEmitter);
+      emitter.drain();
+      return emitter.after;
+    } catch (error) {
+      if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
+      if (emitter.hasCommitted || attempt >= maxAttempts || !isRetryableStreamError(error)) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      options.onRetry?.(attempt, maxAttempts - 1, message);
+      retried = true;
+      try {
+        await sleepWithAbort(backoff(attempt), signal);
+      } catch {
+        throw new DOMException("模型请求已取消", "AbortError");
+      }
+    }
+  }
 }
 
 function ensureEnabled(config: ResolvedModelConfig): void {
@@ -140,12 +276,10 @@ async function fetchJson(request: WireHttpRequest, config: ResolvedModelConfig, 
 async function browserStreamText(
   request: WireHttpRequest,
   config: ResolvedModelConfig,
-  onUpdate: StreamUpdate,
+  emitter: StreamEmitter,
   parseLine: (data: string) => string | null,
   signal?: AbortSignal,
-  onActivity?: StreamActivity,
-  onReasoning?: StreamReasoning,
-): Promise<string> {
+): Promise<void> {
   const timeoutSignal = AbortSignal.timeout(config.timeoutMs);
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   const response = await fetch(request.url, {
@@ -154,12 +288,11 @@ async function browserStreamText(
     body: request.body === undefined ? undefined : JSON.stringify(request.body),
     signal: combinedSignal,
   });
-  if (!response.ok) return parseJsonResponse(response, "模型服务").then(() => "");
+  if (!response.ok) { await parseJsonResponse(response, "模型服务"); return; }
   if (!response.body) throw new Error("模型服务未返回可读取的内容流");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
-  let after = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -169,43 +302,36 @@ async function browserStreamText(
     for (const line of lines) {
       const data = line.startsWith("data:") ? line.slice(5).trim() : "";
       if (!data) continue;
-      onActivity?.(streamActivity(data));
+      emitter.activity(streamActivity(data));
       const reasoning = streamReasoning(data);
-      if (reasoning) onReasoning?.(reasoning);
+      if (reasoning) emitter.reasoning(reasoning);
       const chunk = parseLine(data);
-      if (chunk) { after += chunk; onUpdate(chunk); }
+      if (chunk) emitter.content(chunk);
     }
   }
-  return after;
 }
 
 async function desktopStreamText(
   request: WireHttpRequest,
   config: ResolvedModelConfig,
-  onUpdate: StreamUpdate,
+  emitter: StreamEmitter,
   parseLine: (data: string) => string | null,
   signal?: AbortSignal,
-  onActivity?: StreamActivity,
-  onReasoning?: StreamReasoning,
-): Promise<string> {
+): Promise<void> {
   const runId = crypto.randomUUID();
   if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
   const onAbort = () => { void invoke("model_proxy_cancel", { runId }).catch(() => undefined); };
   signal?.addEventListener("abort", onAbort, { once: true });
-  let after = "";
   const unlisten = await listen<{ runId: string; content: string }>("session://ai", event => {
     if (event.payload.runId !== runId) return;
     const raw = event.payload.content;
     if (/^(?:event|id|retry):/i.test(raw.trimStart()) || raw.trimStart().startsWith(":")) return;
-    onActivity?.(streamActivity(raw));
+    emitter.activity(streamActivity(raw));
     const reasoning = streamReasoning(raw);
-    if (reasoning) onReasoning?.(reasoning);
+    if (reasoning) emitter.reasoning(reasoning);
     // Proxy emits raw SSE data payloads (without "data:" prefix) or plain text chunks.
     const chunk = parseLine(raw) ?? (raw.trimStart().startsWith("{") ? null : raw);
-    if (chunk) {
-      after += chunk;
-      onUpdate(chunk);
-    }
+    if (chunk) emitter.content(chunk);
   });
   try {
     await invoke("model_proxy_stream", {
@@ -221,7 +347,6 @@ async function desktopStreamText(
         providerId: config.providerId,
       },
     });
-    return after;
   } finally {
     signal?.removeEventListener("abort", onAbort);
     unlisten();
@@ -262,6 +387,7 @@ export async function agentCompletion(
     stream: false,
     max_tokens: typeof payload.max_tokens === "number" ? payload.max_tokens : undefined,
     response_format: payload.response_format,
+    reasoningEffort: isReasoningEffort(payload.reasoningEffort) ? payload.reasoningEffort : undefined,
   };
   const request = adapter.buildChatRequest(resolved, canonical);
   const raw = await fetchJson(request, resolved, "模型服务", signal);
@@ -275,6 +401,7 @@ export async function agentCompletionStream(
   signal?: AbortSignal,
   onActivity?: StreamActivity,
   onReasoning?: StreamReasoning,
+  retry?: { maxAttempts?: number; backoffMs?: (attempt: number) => number },
 ): Promise<AgentModelResponse> {
   const resolved = normalizeConfig(config);
   ensureEnabled(resolved);
@@ -289,17 +416,23 @@ export async function agentCompletionStream(
     stream: true,
     max_tokens: typeof payload.max_tokens === "number" ? payload.max_tokens : undefined,
     response_format: payload.response_format,
+    reasoningEffort: isReasoningEffort(payload.reasoningEffort) ? payload.reasoningEffort : undefined,
   };
   const request = adapter.buildChatRequest(resolved, canonical);
   const accumulator = adapter.createChatStream();
-  let lastActivity: "thinking" | "output" | "tool" | null = null;
-  const reportActivity: StreamActivity = phase => {
-    if (phase === lastActivity) return;
-    lastActivity = phase;
-    onActivity?.(phase);
+  const run: StreamAttempt = async emitter => {
+    if (isDesktop()) await desktopStreamText(request, resolved, emitter, data => accumulator.push(data), signal);
+    else await browserStreamText(request, resolved, emitter, data => accumulator.push(data), signal);
   };
-  if (isDesktop()) await desktopStreamText(request, resolved, onUpdate, data => accumulator.push(data), signal, reportActivity, onReasoning);
-  else await browserStreamText(request, resolved, onUpdate, data => accumulator.push(data), signal, reportActivity, onReasoning);
+  await runStreamAttemptWithRetry(run, {
+    signal,
+    onUpdate,
+    onReasoning,
+    onActivity,
+    onRetry: () => onActivity?.("thinking"),
+    maxAttempts: retry?.maxAttempts,
+    backoffMs: retry?.backoffMs,
+  });
   if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
   return accumulator.finish();
 }
@@ -359,9 +492,11 @@ export async function improveBlockStream(
   const canonical = draftRequest(block, instruction, context, true);
   canonical.model = resolved.model;
   const request = adapter.buildChatRequest(resolved, { ...canonical, stream: true });
-  const after = isDesktop()
-    ? await desktopStreamText(request, resolved, onUpdate, data => adapter.parseTextSseData(data))
-    : await browserStreamText(request, resolved, onUpdate, data => adapter.parseTextSseData(data));
+  const run: StreamAttempt = async emitter => {
+    if (isDesktop()) await desktopStreamText(request, resolved, emitter, data => adapter.parseTextSseData(data));
+    else await browserStreamText(request, resolved, emitter, data => adapter.parseTextSseData(data));
+  };
+  const after = await runStreamAttemptWithRetry(run, { onUpdate });
   return { blockId: block.id, before: block.content, after, instruction };
 }
 

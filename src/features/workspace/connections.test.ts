@@ -164,4 +164,33 @@ describe("workspace connections", () => {
     expect(loaded?.search.endpoint).toBe("http://searx");
     expect(loaded?.search.engines).toEqual(["baidu", "360search", "bing"]);
   });
+
+  it("normalizes and persists the thinking level (reasoningEffort)", async () => {
+    const conn = normalizeConnections({
+      version: 2,
+      providers: [{
+        id: "p1",
+        name: "Deep",
+        protocol: "openai-completions",
+        baseUrl: "https://gateway.example.com/v1",
+        apiKey: "k",
+        timeoutMs: 60000,
+        headers: {},
+        enabled: true,
+        reasoningEffort: "high",
+        activeModels: ["deep-model"],
+      }],
+      selectedModel: { providerId: "p1", model: "deep-model" },
+    });
+    expect(conn.providers[0].reasoningEffort).toBe("high");
+    expect(conn.model.reasoningEffort).toBe("high");
+
+    const invalid = normalizeConnections({ ...conn, providers: [{ ...conn.providers[0], reasoningEffort: "extreme" }] });
+    expect(invalid.providers[0].reasoningEffort).toBe("off");
+
+    conn.providers[0].reasoningEffort = "medium";
+    await saveWorkspaceConnections(undefined, conn);
+    const loaded = await loadWorkspaceConnections();
+    expect(loaded?.providers[0].reasoningEffort).toBe("medium");
+  });
 });

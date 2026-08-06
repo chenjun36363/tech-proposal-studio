@@ -285,3 +285,47 @@ describe("google-generative-ai adapter", () => {
     expect(parsed.choices?.[0]?.message?.tool_calls?.[0]?.function.name).toBe("write_todo");
   });
 });
+
+describe("reasoning effort (思考等级)", () => {
+  it("omits thinking fields when effort is off or unset", () => {
+    const req = toolsRequest();
+    for (const protocol of ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as const) {
+      const body = protocolAdapter(protocol).buildChatRequest(baseConfig(protocol), req).body as any;
+      expect(body.reasoning_effort).toBeUndefined();
+      expect(body.reasoning).toBeUndefined();
+      expect(body.thinking).toBeUndefined();
+      expect(body.generationConfig?.thinkingConfig).toBeUndefined();
+    }
+  });
+
+  it("maps OpenAI Completions reasoning_effort", () => {
+    const config = { ...baseConfig("openai-completions"), reasoningEffort: "high" as const };
+    const body = protocolAdapter("openai-completions").buildChatRequest(config, toolsRequest()).body as any;
+    expect(body.reasoning_effort).toBe("high");
+  });
+
+  it("maps OpenAI Responses reasoning.effort", () => {
+    const config = { ...baseConfig("openai-responses"), reasoningEffort: "medium" as const };
+    const body = protocolAdapter("openai-responses").buildChatRequest(config, toolsRequest()).body as any;
+    expect(body.reasoning).toEqual({ effort: "medium" });
+  });
+
+  it("maps Anthropic thinking budget and raises max_tokens", () => {
+    const config = { ...baseConfig("anthropic-messages"), reasoningEffort: "high" as const };
+    const body = protocolAdapter("anthropic-messages").buildChatRequest(config, toolsRequest()).body as any;
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 16384 });
+    expect(body.max_tokens).toBe(8192 + 16384);
+  });
+
+  it("maps Gemini thinkingBudget", () => {
+    const config = { ...baseConfig("google-generative-ai"), reasoningEffort: "low" as const };
+    const body = protocolAdapter("google-generative-ai").buildChatRequest(config, toolsRequest()).body as any;
+    expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 2048 });
+  });
+
+  it("lets request-level effort override config", () => {
+    const config = { ...baseConfig("openai-completions"), reasoningEffort: "off" as const };
+    const body = protocolAdapter("openai-completions").buildChatRequest(config, { ...toolsRequest(), reasoningEffort: "low" }).body as any;
+    expect(body.reasoning_effort).toBe("low");
+  });
+});

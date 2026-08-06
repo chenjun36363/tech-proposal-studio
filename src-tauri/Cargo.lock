@@ -4730,7 +4730,7 @@ dependencies = [
 
 [[package]]
 name = "tech-proposal-studio"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "futures-util",
  "html2md",

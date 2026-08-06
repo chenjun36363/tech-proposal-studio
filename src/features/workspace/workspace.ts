@@ -117,6 +117,36 @@ export async function deleteFile(path: string): Promise<void> {
   await invoke("delete_file", { path });
 }
 
+/** 列出回收站（工作区 `.trash` 目录）中的 Markdown 文档。 */
+export async function listTrashMarkdown(root: string): Promise<LibraryFile[]> {
+  if (!isDesktop() || !root) return [];
+  return invoke<LibraryFile[]>("list_workspace_trash", { root });
+}
+
+/** 把工作区根目录下的 Markdown 文档移入回收站。返回回收站中的新路径。 */
+export async function moveToTrash(root: string, path: string): Promise<string> {
+  if (!isDesktop()) throw new Error("移入回收站仅在桌面端可用");
+  return invoke<string>("move_to_trash", { root, path });
+}
+
+/** 把回收站中的文档恢复到工作区根目录。返回恢复后的新路径。 */
+export async function restoreFromTrash(root: string, path: string): Promise<string> {
+  if (!isDesktop()) throw new Error("从回收站恢复仅在桌面端可用");
+  return invoke<string>("restore_from_trash", { root, path });
+}
+
+/** 永久删除回收站中的单个文档。 */
+export async function deleteTrashFile(root: string, path: string): Promise<void> {
+  if (!isDesktop()) throw new Error("删除回收站文档仅在桌面端可用");
+  await invoke("delete_trash_file", { root, path });
+}
+
+/** 清空回收站。 */
+export async function emptyTrash(root: string): Promise<void> {
+  if (!isDesktop()) throw new Error("清空回收站仅在桌面端可用");
+  await invoke("empty_workspace_trash", { root });
+}
+
 /**
  * Copy an imported source file (PDF / Word) into a dedicated workspace
  * sub-directory so the original is preserved separately from the converted

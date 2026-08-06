@@ -1,4 +1,4 @@
-import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
+import type { OpenAICompatibleConfig, ReasoningEffort, ResolvedModelConfig } from "../core/types";
 import { agentCompletion, agentCompletionStream } from "../services/model";
 import { resolvedFromLegacy } from "../services/llm/resolve";
 import type { AgentEvent, AgentMessage, AgentModelResponse, AgentToolCall } from "./protocol";
@@ -105,6 +105,8 @@ export async function runProposalAgent(params: {
   onEvent: (event: AgentEvent) => void;
   contextCompressionTokens?: number;
   temperature?: number;
+  /** 思考等级覆盖（不传则由提供方配置决定）。 */
+  reasoningEffort?: ReasoningEffort;
   firstRoundToolName?: string;
   maxRounds?: number;
   /** Limit tool executions for transports whose tool-call protocol is less reliable (for example local CLI). */
@@ -170,7 +172,7 @@ export async function runProposalAgent(params: {
       if (!compaction.fitsBudget) {
         throw new Error(`Agent 上下文压缩后仍超出预算 ${compaction.overflowTokens.toLocaleString()} tokens；请减少本轮超长输入、附加资料或工具定义，或提高上下文压缩阈值。`);
       }
-      const request = { model: config.model, messages: messagesForModel(messages), tools: roundDefinitions, tool_choice: "auto" as const, stream: false, temperature: params.temperature };
+      const request = { model: config.model, messages: messagesForModel(messages), tools: roundDefinitions, tool_choice: "auto" as const, stream: false, temperature: params.temperature, reasoningEffort: params.reasoningEffort };
       const streamed = params.completion === undefined;
       let streamedReasoning = "";
       const response: AgentModelResponse = streamed

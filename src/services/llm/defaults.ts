@@ -33,6 +33,7 @@ export function createDefaultProvider(id = crypto.randomUUID()): LlmProvider {
     timeoutMs: 60000,
     headers: {},
     enabled: true,
+    reasoningEffort: "off",
     activeModels: preset.defaultModel ? [preset.defaultModel] : [],
     catalog: preset.defaultModel ? [{ id: preset.defaultModel, displayName: preset.defaultModel }] : [],
   };

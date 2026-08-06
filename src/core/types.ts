@@ -2,8 +2,10 @@ export type BlockType = "text" | "table" | "code" | "mermaid" | "quote" | "decis
 export interface DocumentBlock { id: string; sectionId: string; type: BlockType; content: string; order: number; status: "draft" | "review" | "done"; sourceRefs: string[]; metadata?: Record<string, string>; }
 export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
 /** Legacy flat model config; still derived from selected provider for call-site compatibility. */
-export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; }
+export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; reasoningEffort?: ReasoningEffort; }
 export interface ModelOption { id: string; displayName: string; ownedBy?: string; }
+/** 思考等级（reasoning effort / thinking level），映射到各协议（OpenAI reasoning_effort、Anthropic thinking、Gemini thinkingBudget）。 */
+export type ReasoningEffort = "off" | "low" | "medium" | "high";
 /** Wire protocol for an LLM provider connection (not a vendor brand). */
 export type LlmProtocol =
   | "openai-completions"
@@ -23,6 +25,8 @@ export interface LlmProvider {
   timeoutMs: number;
   headers: Record<string, string>;
   enabled: boolean;
+  /** 思考等级；图片模型或不确定是否支持时留空即关闭。 */
+  reasoningEffort?: ReasoningEffort;
   /** Models shown in pickers for this provider. */
   activeModels: string[];
   /** Last fetched catalog (optional cache). */
@@ -39,6 +43,7 @@ export interface ResolvedModelConfig {
   timeoutMs: number;
   headers: Record<string, string>;
   enabled: boolean;
+  reasoningEffort?: ReasoningEffort;
 }
 export interface SearchConfig { provider: "searxng" | "brave"; endpoint: string; apiKey: string; engines?: string[]; }
 /** MinerU cloud document → Markdown (Word/PDF). Stored under workspace `.gouan/connections.json`. */

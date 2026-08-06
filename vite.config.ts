@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
+    // Avoid Windows localhost resolving to the unavailable IPv6 loopback (::1).
+    host: "127.0.0.1",
     port: 1420,
     strictPort: true,
     watch: {

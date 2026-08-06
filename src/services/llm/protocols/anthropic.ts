@@ -8,6 +8,7 @@ import {
   type CanonicalChatRequest,
   type ProtocolAdapter,
 } from "../types";
+import { anthropicThinkingConfig } from "../thinking";
 
 function anthropicAuth(config: ResolvedModelConfig): Record<string, string> {
   if (!config.apiKey.trim()) return {};
@@ -101,12 +102,16 @@ export const anthropicMessagesAdapter: ProtocolAdapter = {
 
   buildChatRequest(config, request: CanonicalChatRequest) {
     const { system, rest } = splitSystem(request.messages);
+    const effort = request.reasoningEffort ?? config.reasoningEffort;
+    let maxTokens = request.max_tokens ?? 8192;
+    const thinking = anthropicThinkingConfig(effort, maxTokens);
     const body: Record<string, unknown> = {
       model: request.model || config.model,
       messages: toAnthropicMessages(rest),
-      max_tokens: request.max_tokens ?? 8192,
+      max_tokens: thinking ? thinking.maxTokens : maxTokens,
       stream: Boolean(request.stream),
     };
+    if (thinking) body.thinking = { type: "enabled" as const, budget_tokens: thinking.budgetTokens };
     if (system) body.system = system;
     if (typeof request.temperature === "number") body.temperature = request.temperature;
     const tools = anthropicTools(request.tools);
