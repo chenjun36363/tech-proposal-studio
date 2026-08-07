@@ -130,7 +130,7 @@ function plainText(line: string): string {
     .replace(/\*(.+?)\*/g, "$1")
     .replace(/_(.+?)_/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1")
+    .replace(new RegExp(`!\\[([^\\]]*)\\]\\(\\s*(?:<([^>]+)>|${IMAGE_DEST_SEGMENT}(?:\\s+["'][^"']*["'])?)\\s*\\)`, "g"), "$1")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
 }
 
@@ -499,9 +499,20 @@ function decodeLocalImageSource(src: string): string {
   }
 }
 
+/**
+ * Markdown 图片目标片段：允许括号成对出现（如 `assets/…YD20260804(1)/a.png`），
+ * 单个正则无法做括号配平，这里用一个可复用的片段组合。
+ */
+const IMAGE_DEST_SEGMENT = "(?:[^\\s()]|\\([^)]*\\))+";
+
+const IMAGE_LINK_PATTERN = new RegExp(
+  `!\\[([^\\]]*)\\]\\(\\s*(?:<([^>]+)>|(${IMAGE_DEST_SEGMENT})(?:\\s+["'][^"']*["'])?)\\s*\\)`,
+  "g",
+);
+
 export function extractMarkdownImages(markdown: string): Array<{ alt: string; source: string }> {
   const images: Array<{ alt: string; source: string }> = [];
-  const pattern = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+)(?:\s+["'][^"']*["'])?)\s*\)/g;
+  const pattern = new RegExp(IMAGE_LINK_PATTERN.source, "g");
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(markdown))) {
     images.push({ alt: match[1], source: match[2] ?? match[3] });
@@ -510,7 +521,9 @@ export function extractMarkdownImages(markdown: string): Array<{ alt: string; so
 }
 
 function matchImageOnly(line: string): { alt: string; source: string } | null {
-  const match = line.match(/^\s*!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+)(?:\s+["'][^"']*["'])?)\s*\)\s*$/);
+  const match = line.match(
+    new RegExp(`^\\s*!\\[([^\\]]*)\\]\\(\\s*(?:<([^>]+)>|(${IMAGE_DEST_SEGMENT})(?:\\s+["'][^"']*["'])?)\\s*\\)\\s*$`),
+  );
   return match ? { alt: match[1], source: match[2] ?? match[3] } : null;
 }
 
@@ -851,21 +864,24 @@ export async function buildDocx(project: Project, configuredSettings?: DocxExpor
     }
 
     // Inline image mixed with text — extract images as separate paragraphs after text
-    if (/!\[[^\]]*\]\([^)]+\)/.test(line)) {
-      const parts = line.split(/(!\[[^\]]*\]\([^)]+\))/g);
+    const inlineImageRe = new RegExp(IMAGE_LINK_PATTERN.source, "g");
+    if (inlineImageRe.test(line)) {
+      inlineImageRe.lastIndex = 0;
       let textBuf = "";
-      for (const part of parts) {
-        const img = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-        if (img) {
-          if (textBuf.trim()) {
-            children.push(paragraphFromLine(textBuf.trim(), undefined, settings));
-            textBuf = "";
-          }
-          children.push(await paragraphFromImage(img[1], img[2], filePath, workspaceRoot, settings));
-        } else {
-          textBuf += part;
+      let lastEnd = 0;
+      let imgMatch: RegExpExecArray | null;
+      while ((imgMatch = inlineImageRe.exec(line))) {
+        const alt = imgMatch[1];
+        const source = imgMatch[2] ?? imgMatch[3];
+        if (imgMatch.index > lastEnd) textBuf += line.slice(lastEnd, imgMatch.index);
+        if (textBuf.trim()) {
+          children.push(paragraphFromLine(textBuf.trim(), undefined, settings));
+          textBuf = "";
         }
+        children.push(await paragraphFromImage(alt, source, filePath, workspaceRoot, settings));
+        lastEnd = inlineImageRe.lastIndex;
       }
+      if (lastEnd < line.length) textBuf += line.slice(lastEnd);
       if (textBuf.trim()) children.push(paragraphFromLine(textBuf.trim(), undefined, settings));
       i += 1;
       continue;

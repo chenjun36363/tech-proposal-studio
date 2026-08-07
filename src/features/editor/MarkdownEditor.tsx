@@ -338,7 +338,10 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, {
       const buf = new Uint8Array(await file.arrayBuffer());
       const docName = filePath ? (filePath.split(/[\\/]/).pop() ?? "").replace(/\.md$/i, "") : "";
       const saved = await saveImageToWorkspace(workspaceRoot, Array.from(buf), file.name || "paste.png", docName || undefined);
-      insertAtCursor(`\n![image](${saved.relativePath.replace(/\\/g, "/")})\n`);
+      const rel = saved.relativePath.replace(/\\/g, "/");
+      // 路径含空格或括号时用尖括号包裹，否则 Markdown 会把 `)` 误判为链接结束
+      const wrapped = /[()\s]/.test(rel) ? `<${rel}>` : rel;
+      insertAtCursor(`\n![image](${wrapped})\n`);
     } catch (err) {
       console.error(err);
     }

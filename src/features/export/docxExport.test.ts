@@ -270,6 +270,22 @@ describe("Word export", () => {
       .toEqual([{ alt: "", source: "assets/import-常州 方案(1)/image.png" }]);
   });
 
+  it("extracts unwrapped image destinations containing balanced parentheses", () => {
+    expect(extractMarkdownImages("![image](assets/新疆方案YD20260804(1)/paste.png)\n"))
+      .toEqual([{ alt: "image", source: "assets/新疆方案YD20260804(1)/paste.png" }]);
+  });
+
+  it("extracts both wrapped and unwrapped workspace image destinations", () => {
+    const markdown = [
+      "![wrapped](<assets/新疆方案YD20260804(1)/one.png>)",
+      "![plain](assets/新疆方案YD20260804(1)/two.jpg)",
+    ].join("\n");
+    expect(extractMarkdownImages(markdown)).toEqual([
+      { alt: "wrapped", source: "assets/新疆方案YD20260804(1)/one.png" },
+      { alt: "plain", source: "assets/新疆方案YD20260804(1)/two.jpg" },
+    ]);
+  });
+
   it("resolves encoded workspace asset paths without truncating spaces", () => {
     expect(resolveLocalImagePath("<assets/import-%E5%B8%B8%E5%B7%9E%20%E6%96%B9%E6%A1%88/image.png>", "E:\\workspace\\proposal.md", "E:\\workspace"))
       .toBe("E:\\workspace\\assets\\import-常州 方案\\image.png");
