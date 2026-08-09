@@ -114,6 +114,39 @@ describe("AgentConversationTimeline", () => {
     expect(html).toContain('class="in_progress"');
   });
 
+  it("renders full-access edits as an inline before-and-after comparison", () => {
+    const messages: AgentMessage[] = [
+      { role: "assistant", content: null, tool_calls: [{ id: "draft-auto", type: "function", function: { name: "propose_section_update", arguments: JSON.stringify({ markdown: "## 当前章节\n\n新正文", instruction: "自动补全正文" }) } }] },
+      {
+        role: "tool",
+        tool_call_id: "draft-auto",
+        content: "完全访问模式已自动应用修改。",
+        tool_result_data: {
+          operation: "replace_section",
+          instruction: "自动补全正文",
+          before: "## 当前章节\n\n旧正文",
+          after: "## 当前章节\n\n新正文",
+          beforeChars: 13,
+          afterChars: 13,
+          approved: true,
+          approvalMode: "full_access",
+          target: { sectionTitle: "当前章节", sectionId: "当前章节" },
+        },
+        tool_result_is_error: false,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<AgentConversationTimeline messages={messages} events={[]} running={false} />);
+    expect(html).toContain("完全访问已自动修改");
+    expect(html).toContain("修改前");
+    expect(html).toContain("自动修改后");
+    expect(html).toContain("旧正文");
+    expect(html).toContain("新正文");
+    expect(html).toContain("修改已自动应用，无需再次确认");
+    expect(html).toContain("放大比较");
+    expect(html).not.toContain("用户已接受修改");
+  });
+
   it("renders persisted search data as result cards", () => {
     const messages: AgentMessage[] = [
       { role: "assistant", content: null, tool_calls: [{ id: "search-1", type: "function", function: { name: "web_search", arguments: '{"query":"LIMS"}' } }] },

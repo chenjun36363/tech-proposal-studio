@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, BookOpen, Brain, Check, ChevronRight, Circle, Copy, ExternalLink, FilePenLine, ListChecks, LoaderCircle, Search, UserRound, X } from "lucide-react";
+import { Bot, BookOpen, Brain, Check, ChevronRight, Circle, Copy, ExternalLink, FilePenLine, ListChecks, LoaderCircle, Maximize2, Search, UserRound, X } from "lucide-react";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
@@ -42,7 +42,7 @@ function resultPreview(content: string) {
   return content.replace(/\s+/g, " ").trim().slice(0, 100) || "工具未返回文本内容";
 }
 
-function AgentMarkdown({ content }: { content: string }) {
+export function AgentMarkdown({ content }: { content: string }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const html = useMemo(() => {
     const rendered = enhanceCodeBlocks(agentMarked.parse(content) as string);
@@ -153,17 +153,32 @@ function MemoryDetail({ data, fallback }: { data: unknown; fallback: string }) {
   </section>;
 }
 
+function changeComparisonCopy(operation: AgentEditOperation) {
+  if (operation === "replace_selection") return { before: "选区原文", after: "自动修改后", emptyBefore: "（选区为空）", emptyAfter: "（替换内容为空）" };
+  if (operation === "insert_section") return { before: "插入位置", after: "自动插入内容", emptyBefore: "（不替换现有正文）", emptyAfter: "（插入内容为空）" };
+  if (operation === "delete_section") return { before: "删除前", after: "自动删除后", emptyBefore: "（章节为空）", emptyAfter: "（整个章节已删除）" };
+  if (operation === "move_section") return { before: "移动前章节", after: "目标位置章节", emptyBefore: "（源章节为空）", emptyAfter: "（目标章节为空）" };
+  if (operation === "replace_document") return { before: "原文档", after: "自动修改后", emptyBefore: "（文档为空）", emptyAfter: "（修改后文档为空）" };
+  return { before: "修改前", after: "自动修改后", emptyBefore: "（章节为空）", emptyAfter: "（修改后内容为空）" };
+}
+
 function ChangeDetail({ data, call }: { data: unknown; call: AgentToolCall }) {
   const stats = record(data);
   const before = typeof stats?.beforeChars === "number" ? stats.beforeChars : null;
   const after = typeof stats?.afterChars === "number" ? stats.afterChars : null;
   const instruction = stringValue(stats?.instruction || call.arguments.instruction) || "优化当前章节";
+  const approvalMode = stringValue(stats?.approvalMode);
+  const automaticallyApplied = approvalMode === "full_access" && stats?.approved === true;
   const [reviewOpen, setReviewOpen] = useState(false);
 
   const historicalDraft: AgentDraft | null = useMemo(() => {
     const beforeStr = stringValue(stats?.before);
     const afterStr = stringValue(stats?.after);
-    if (!beforeStr && !afterStr) return null;
+    const target = record(stats?.target);
+    const destinationSnapshot = stringValue(target?.destinationSnapshot || stats?.destinationSnapshot);
+    if (!beforeStr && !afterStr && !destinationSnapshot) return null;
+    const position = stringValue(target?.position);
+    const selectionScope = stringValue(target?.selectionScope);
     return {
       callId: call.id,
       operation: (stringValue(stats?.operation) || "replace_section") as AgentEditOperation,
@@ -171,18 +186,63 @@ function ChangeDetail({ data, call }: { data: unknown; call: AgentToolCall }) {
       after: afterStr,
       instruction,
       target: {
-        sectionTitle: stringValue(call.arguments.section_title) || undefined,
-        sectionId: stringValue(call.arguments.section_id) || undefined,
-        destinationSnapshot: stringValue(stats?.destinationSnapshot) || undefined,
+        sectionTitle: stringValue(target?.sectionTitle || call.arguments.section_title) || undefined,
+        sectionId: stringValue(target?.sectionId || call.arguments.section_id) || undefined,
+        sectionLevel: typeof target?.sectionLevel === "number" ? target.sectionLevel : undefined,
+        position: position === "before" || position === "after" ? position : undefined,
+        selectionStart: typeof target?.selectionStart === "number" ? target.selectionStart : undefined,
+        selectionEnd: typeof target?.selectionEnd === "number" ? target.selectionEnd : undefined,
+        selectionScope: selectionScope === "section" || selectionScope === "document" ? selectionScope : undefined,
+        snapshot: stringValue(target?.snapshot) || undefined,
+        destinationSectionId: stringValue(target?.destinationSectionId) || undefined,
+        destinationSectionTitle: stringValue(target?.destinationSectionTitle) || undefined,
+        destinationSnapshot: destinationSnapshot || undefined,
       },
     };
-  }, [stats, call.id, instruction]);
+  }, [stats, call.id, call.arguments.section_id, call.arguments.section_title, instruction]);
+
+  const comparison = historicalDraft ? changeComparisonCopy(historicalDraft.operation) : null;
+  const revisedContent = historicalDraft?.operation === "move_section"
+    ? historicalDraft.target.destinationSnapshot ?? ""
+    : historicalDraft?.after ?? "";
 
   return <>
-    <section className="agent-change-result">
-      <div><FilePenLine size={13} /><span><b>{typeof stats?.approved === "boolean" ? (stats?.approved ? "用户已接受修改" : "用户已拒绝修改") : "修改稿已提交审核"}</b><small>{instruction}</small></span></div>
-      {(before !== null || after !== null) && <p><span>原文 {before?.toLocaleString() ?? "-"} 字</span><span>修改后 {after?.toLocaleString() ?? "-"} 字</span></p>}
-      {historicalDraft && <button type="button" className="agent-change-review-btn" onClick={() => setReviewOpen(true)}>查看详情</button>}
+    <section className={`agent-change-result ${automaticallyApplied ? "auto-applied" : ""}`}>
+      <header className="agent-change-result-head">
+        <FilePenLine size={13} />
+        <span>
+          <b>{automaticallyApplied
+            ? "完全访问已自动修改"
+            : typeof stats?.approved === "boolean"
+              ? (stats.approved ? "用户已接受修改" : "用户已拒绝修改")
+              : "修改稿已提交审核"}</b>
+          <small>{instruction}</small>
+        </span>
+        {automaticallyApplied && <em>已执行</em>}
+      </header>
+      {automaticallyApplied && historicalDraft && comparison ? <>
+        <div className="agent-diff-stats">
+          <span className="removed">修改前 {historicalDraft.before.length.toLocaleString()} 字</span>
+          <span className="added">修改后 {revisedContent.length.toLocaleString()} 字</span>
+        </div>
+        <div className="agent-draft-compare agent-auto-change-compare">
+          <section className="original">
+            <div><b>{comparison.before}</b><span>{historicalDraft.before.length.toLocaleString()} 字</span></div>
+            <pre>{historicalDraft.before || comparison.emptyBefore}</pre>
+          </section>
+          <section className="revised">
+            <div><b>{comparison.after}</b><span>{revisedContent.length.toLocaleString()} 字</span></div>
+            <pre>{revisedContent || comparison.emptyAfter}</pre>
+          </section>
+        </div>
+        <footer className="agent-change-result-actions">
+          <span>修改已自动应用，无需再次确认</span>
+          <button type="button" className="agent-change-review-btn" onClick={() => setReviewOpen(true)}><Maximize2 size={12} />放大比较</button>
+        </footer>
+      </> : <>
+        {(before !== null || after !== null) && <p><span>原文 {before?.toLocaleString() ?? "-"} 字</span><span>修改后 {after?.toLocaleString() ?? "-"} 字</span></p>}
+        {historicalDraft && <button type="button" className="agent-change-review-btn" onClick={() => setReviewOpen(true)}>查看详情</button>}
+      </>}
     </section>
     {reviewOpen && historicalDraft && <AgentDraftReviewModal draft={historicalDraft} readonly close={() => setReviewOpen(false)} reject={() => setReviewOpen(false)} accept={() => setReviewOpen(false)} />}
   </>;

@@ -20,7 +20,7 @@ describe("Agent Git tools", () => {
   it("registers the supported safe tool set without destructive commands", () => {
     const registry = registerAgentGitTools(new AgentToolRegistry(), runtime(), vi.fn().mockResolvedValue(true));
     const names = registry.definitions().map(item => item.function.name);
-    expect(names).toEqual(expect.arrayContaining(["git_status", "git_diff", "git_log", "git_show_commit", "git_list_branches", "git_stage", "git_commit", "git_pull", "git_push"]));
+    expect(names).toEqual(expect.arrayContaining(["git_status", "git_changes", "git_diff", "git_log", "git_show_commit", "git_list_branches", "git_stage", "git_commit", "git_pull", "git_push"]));
     expect(names.some(name => /reset|clean|force|discard|remote|init|delete/.test(name))).toBe(false);
   });
 
@@ -37,6 +37,41 @@ describe("Agent Git tools", () => {
     expect(git.diff).toHaveBeenCalledWith("src/App.tsx", true);
     expect(git.log).toHaveBeenCalledWith(200);
     expect(review).not.toHaveBeenCalled();
+  });
+
+  it("collects staged, unstaged and untracked changes in one read-only call", async () => {
+    const git = runtime();
+    vi.mocked(git.status).mockResolvedValue({
+      isRepository: true, branch: "main", upstream: "origin/main", ahead: 0, behind: 0, stashCount: 0, remoteUrl: null,
+      files: [
+        { path: "src/a.ts", indexStatus: "M", worktreeStatus: "M" },
+        { path: "src/new.ts", indexStatus: "?", worktreeStatus: "?" },
+      ],
+    });
+    vi.mocked(git.diff).mockImplementation(async (path, staged) => ({ path, staged, patch: `${staged ? "staged" : "unstaged"}:${path}` }));
+    const review = vi.fn();
+    const result = await registerAgentGitTools(new AgentToolRegistry(), git, review).execute(
+      { id: "changes", name: "git_changes", arguments: {} }, new AbortController().signal,
+    );
+    expect(result.isError).toBe(false);
+    expect(result.data).toEqual(expect.objectContaining({ scope: "all", truncated: false }));
+    expect(result.content).toContain("staged:src/a.ts");
+    expect(result.content).toContain("unstaged:src/new.ts");
+    expect(git.diff).toHaveBeenCalledWith("src/a.ts", true);
+    expect(git.diff).toHaveBeenCalledWith("src/a.ts", false);
+    expect(git.diff).toHaveBeenCalledWith("src/new.ts", false);
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it("executes Git mutations without approval in full access mode", async () => {
+    const git = runtime();
+    const review = vi.fn().mockResolvedValue(false);
+    const result = await registerAgentGitTools(new AgentToolRegistry(), git, review, { fullAccess: true }).execute(
+      { id: "full", name: "git_commit", arguments: { message: "feat: full access" } }, new AbortController().signal,
+    );
+    expect(review).not.toHaveBeenCalled();
+    expect(git.commit).toHaveBeenCalledWith("feat: full access");
+    expect(result.data).toEqual(expect.objectContaining({ approved: true, approvalMode: "full_access" }));
   });
 
   it("does not execute a rejected mutation", async () => {

@@ -233,7 +233,9 @@ pub(in crate::knowledge) fn list_categories(
 ) -> Result<Vec<KnowledgeCategory>, String> {
     let db = knowledge_db(workspace)?;
     let mut stmt = db
-        .prepare("SELECT id,name,sort_order,color FROM knowledge_categories ORDER BY sort_order,name")
+        .prepare(
+            "SELECT id,name,sort_order,color FROM knowledge_categories ORDER BY sort_order,name",
+        )
         .map_err(|e| e.to_string())?;
     let result = stmt
         .query_map([], |row| {
@@ -274,8 +276,11 @@ pub(in crate::knowledge) fn delete_category(
         [category_id],
     )
     .map_err(|e| e.to_string())?;
-    db.execute("DELETE FROM knowledge_categories WHERE id=?1", [category_id])
-        .map_err(|e| e.to_string())?;
+    db.execute(
+        "DELETE FROM knowledge_categories WHERE id=?1",
+        [category_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

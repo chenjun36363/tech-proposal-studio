@@ -16,6 +16,11 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function unwrapEvent(value: unknown): Record<string, unknown> | null {
+  const envelope = record(value);
+  return record(envelope?.payload) ?? envelope;
+}
+
 function bounded(value: string, limit = 2000) {
   return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
@@ -37,10 +42,43 @@ function errorSummary(value: unknown): string {
   return "OpenCode session 出错";
 }
 
+export interface OpenCodeSessionEventIdentity {
+  type: string;
+  sessionId: string;
+  settled: boolean;
+}
+
+export function getOpenCodeSessionEventIdentity(value: unknown): OpenCodeSessionEventIdentity | null {
+  const event = unwrapEvent(value);
+  const properties = record(event?.properties) ?? record(event?.data) ?? event;
+  const part = record(properties?.part);
+  const type = typeof event?.type === "string" ? event.type : null;
+  const sessionId = typeof properties?.sessionID === "string"
+    ? properties.sessionID
+    : typeof properties?.sessionId === "string"
+      ? properties.sessionId
+      : typeof part?.sessionID === "string"
+        ? part.sessionID
+        : typeof part?.sessionId === "string" ? part.sessionId : null;
+  if (!type || !sessionId) return null;
+  return {
+    type,
+    sessionId,
+    settled: type === "session.idle"
+      || type === "session.error"
+      || type === "session.execution.succeeded"
+      || type === "session.execution.failed"
+      || type === "session.execution.interrupted",
+  };
+}
+
 export function normalizeOpenCodeSessionEvent(value: unknown): OpenCodeSessionActivity | null {
-  const event = record(value);
-  const properties = record(event?.properties);
-  const sessionId = typeof properties?.sessionID === "string" ? properties.sessionID : null;
+  const event = unwrapEvent(value);
+  const properties = record(event?.properties) ?? record(event?.data) ?? event;
+  const part = record(properties?.part);
+  const sessionId = typeof properties?.sessionID === "string"
+    ? properties.sessionID
+    : typeof part?.sessionID === "string" ? part.sessionID : null;
   const type = typeof event?.type === "string" ? event.type : null;
   if (!event || !properties || !sessionId || !type) return null;
   const base = {
@@ -49,25 +87,29 @@ export function normalizeOpenCodeSessionEvent(value: unknown): OpenCodeSessionAc
     at: eventTime(properties),
   };
 
-  if (type === "session.next.text.delta" && typeof properties.delta === "string") {
+  if ((type === "session.next.text.delta" || type === "session.text.delta") && typeof properties.delta === "string") {
     const summary = bounded(properties.delta);
     return summary ? { ...base, kind: "text", summary } : null;
   }
-  if (type === "session.next.tool.called" && typeof properties.tool === "string") {
-    return { ...base, kind: "tool", summary: `调用工具：${bounded(properties.tool, 120)}` };
+  if ((type === "session.next.tool.called" || type === "session.tool.input.started" || type === "session.tool.called") && typeof (properties.tool ?? properties.name) === "string") {
+    return { ...base, kind: "tool", summary: `调用工具：${bounded(String(properties.tool ?? properties.name), 120)}` };
   }
-  if (type === "session.next.tool.success") {
+  if (type === "session.next.tool.success" || type === "session.tool.success") {
     return { ...base, kind: "tool", summary: "工具执行完成" };
   }
-  if (type === "session.next.tool.failed") {
+  if (type === "session.next.tool.failed" || type === "session.tool.failed") {
     return { ...base, kind: "error", summary: `工具执行失败：${errorSummary(properties.error)}` };
+  }
+  if (type === "message.part.updated") {
+    if (part?.type === "text" && typeof part.text === "string") return { ...base, kind: "text", summary: bounded(part.text) };
+    if (part?.type === "tool") return { ...base, kind: "tool", summary: `工具：${bounded(String(part.tool ?? part.name ?? "未知工具"), 120)}` };
   }
   if (type === "session.status") {
     const status = record(properties.status);
     const statusType = typeof status?.type === "string" ? status.type : "状态更新";
     return { ...base, kind: "status", summary: `状态：${bounded(statusType, 120)}` };
   }
-  if (type === "session.idle") {
+  if (type === "session.idle" || type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") {
     return { ...base, kind: "status", summary: "会话空闲" };
   }
   if (type === "session.error") {

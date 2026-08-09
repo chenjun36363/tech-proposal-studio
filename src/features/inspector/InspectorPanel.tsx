@@ -141,6 +141,7 @@ export function InspectorPanel({
   onLocateLongWritingChapter: (titlePath: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"document" | "snippet">("snippet");
   const [qualityFilters, setQualityFilters] = useState<Set<KnowledgeChunkQuality>>(
     () => new Set(["good", "normal"]),
   );
@@ -162,6 +163,16 @@ export function InspectorPanel({
   const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
   const [categoryFilterQuery, setCategoryFilterQuery] = useState("");
   const desktop = isDesktop();
+  const documentResults = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return knowledgeDocuments
+      .filter(document => selectedDocuments.size === 0 || selectedDocuments.has(document.id))
+      .filter(document => selectedCategories.size === 0 || (document.categoryId && selectedCategories.has(document.categoryId)))
+      .filter(document => !normalizedQuery
+        || document.title.toLocaleLowerCase().includes(normalizedQuery)
+        || document.location.toLocaleLowerCase().includes(normalizedQuery))
+      .sort((left, right) => left.title.localeCompare(right.title, "zh-CN"));
+  }, [knowledgeDocuments, query, selectedDocuments, selectedCategories]);
   const contextSources = useMemo(
     () => project.sources.filter(source => block.sourceRefs.includes(source.id)),
     [project.sources, block.sourceRefs],
@@ -301,7 +312,7 @@ export function InspectorPanel({
   };
 
   const loadSearchResults = async () => {
-    if (!query.trim() || !project.workspace) {
+    if (searchMode === "document" || !query.trim() || !project.workspace) {
       setResults([]);
       return;
     }
@@ -327,6 +338,10 @@ export function InspectorPanel({
   };
 
   const runKnowledgeSearch = async () => {
+    if (searchMode === "document") {
+      setResults([]);
+      return;
+    }
     setSearching(true);
     try {
       await loadSearchResults();
@@ -360,6 +375,16 @@ export function InspectorPanel({
       };
     }));
   };
+
+  useEffect(() => {
+    setResults([]);
+    setSearching(false);
+    if (searchMode !== "snippet" || !query.trim() || !project.workspace) return;
+    setSearching(true);
+    void loadSearchResults()
+      .catch(cause => notify(cause instanceof Error ? cause.message : "知识库搜索失败"))
+      .finally(() => setSearching(false));
+  }, [searchMode]);
 
   const toggleQuality = (quality: KnowledgeChunkQuality) => {
     setQualityFilters(current => {
@@ -441,28 +466,34 @@ export function InspectorPanel({
         ? <div className="context-empty"><BookOpen size={24} /><span>知识库仅在桌面端可用</span></div>
         : <>
           <div className="knowledge-search-tool">
-            <div className="knowledge-search-intro"><div><Search size={17} /><b>知识检索</b></div><span>查找可引用的方案依据</span></div>
+            <div className="knowledge-search-intro">
+              <div><Search size={16} /><b>知识检索</b><span>查找可引用的方案依据</span></div>
+              <div className="knowledge-search-mode" role="group" aria-label="搜索范围">
+                <button type="button" className={searchMode === "document" ? "active" : ""} onClick={() => setSearchMode("document")} title="按文档标题或路径搜索知识文档">文档</button>
+                <button type="button" className={searchMode === "snippet" ? "active" : ""} onClick={() => setSearchMode("snippet")} title="按片段全文搜索知识片段">片段</button>
+              </div>
+            </div>
             <div className="knowledge-query-row">
-              <Search size={15} />
-              <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === "Enter" && void runKnowledgeSearch()} placeholder="搜索标题、章节和正文" />
+              <Search size={14} />
+              <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === "Enter" && void runKnowledgeSearch()} placeholder={searchMode === "document" ? "按标题或路径搜索文档" : "搜索标题、章节和正文"} />
               <button type="button" title="搜索知识库" onClick={() => void runKnowledgeSearch()} disabled={searching}>{searching ? "检索中" : "检索"}</button>
             </div>
-            <div className="knowledge-filter-row">
-              <span>范围</span>
-              <div className="knowledge-field-filter" role="group" aria-label="知识搜索范围">{SEARCH_FIELDS.map(field => <label key={field.id} className={searchFields.has(field.id) ? "active" : ""}>
-                <input type="checkbox" checked={searchFields.has(field.id)} onChange={() => toggleSearchField(field.id)} />
-                <Check size={13} aria-hidden="true" />
-                <span>{field.label}</span>
-              </label>)}</div>
-            </div>
-            <div className="knowledge-filter-row">
-              <span>质量</span>
-              <div className="knowledge-quality-filter" role="group" aria-label="片段质量筛选">{(["good", "normal", "bad"] as KnowledgeChunkQuality[]).map(quality => <label key={quality} className={qualityFilters.has(quality) ? "active" : ""}>
-                <input type="checkbox" checked={qualityFilters.has(quality)} onChange={() => toggleQuality(quality)} />
-                <Check size={13} aria-hidden="true" />
-                <span>{quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}</span>
-              </label>)}</div>
-            </div>
+            {searchMode === "snippet" && <div className="knowledge-filter-pair">
+              <div className="knowledge-filter-group">
+                <span>范围</span>
+                <div className="knowledge-field-filter" role="group" aria-label="知识搜索范围">{SEARCH_FIELDS.map(field => <label key={field.id} className={searchFields.has(field.id) ? "active" : ""}>
+                  <input type="checkbox" checked={searchFields.has(field.id)} onChange={() => toggleSearchField(field.id)} />
+                  <span>{field.label}</span>
+                </label>)}</div>
+              </div>
+              <div className="knowledge-filter-group">
+                <span>质量</span>
+                <div className="knowledge-quality-filter" role="group" aria-label="片段质量筛选">{(["good", "normal", "bad"] as KnowledgeChunkQuality[]).map(quality => <label key={quality} className={qualityFilters.has(quality) ? "active" : ""}>
+                  <input type="checkbox" checked={qualityFilters.has(quality)} onChange={() => toggleQuality(quality)} />
+                  <span>{quality === "good" ? "优质" : quality === "bad" ? "劣质" : "普通"}</span>
+                </label>)}</div>
+              </div>
+            </div>}
             <div className="knowledge-filter-row knowledge-doc-filter">
               <span>文档</span>
               <div className="knowledge-doc-filter-body">
@@ -518,8 +549,19 @@ export function InspectorPanel({
             </div>
           </div>
           {searching && <div className="loading-line">正在检索知识切片…</div>}
-          {!!results.length && <div className="source-list knowledge-results">
-            <div className="knowledge-results-head"><span>检索结果</span><em>{results.length} 条</em></div>
+          {searchMode === "document" && query.trim() && <div className="source-list knowledge-results knowledge-document-results">
+            <div className="knowledge-results-head"><span>文档结果</span><em>{documentResults.length} 篇</em></div>
+            {documentResults.map(document => <article key={document.id}>
+              <div className="knowledge-result-title"><FileText size={14} className="knowledge-result-document-icon" /><b title={document.title}>{document.title}</b>{document.categoryId && <em className="knowledge-category-badge">{knowledgeCategories.find(category => category.id === document.categoryId)?.name ?? "已分类"}</em>}</div>
+              <p className="knowledge-document-meta">{document.sectionCount} 章 · {document.chunkCount} 片 · {document.charCount.toLocaleString()} 字</p>
+              <div className="knowledge-result-source" title={`文档路径：${document.location}`}><FileText size={11} aria-hidden="true" /><span>{document.location}</span></div>
+              <div className="knowledge-result-footer">
+                <div className="source-item-actions"><button onClick={() => { setSearchMode("snippet"); setQuery(document.title); }}><Search size={12} />检索片段</button></div>
+              </div>
+            </article>)}
+          </div>}
+          {searchMode === "snippet" && !!results.length && <div className="source-list knowledge-results">
+            <div className="knowledge-results-head"><span>片段结果</span><em>{results.length} 条</em></div>
             {results.map((result, index) => <article key={result.chunk.id}>
               <div className="knowledge-result-title"><span className="knowledge-result-level">H{result.scope.level}</span><b onClick={() => previewKnowledgeScope(result.scope)}>{result.scope.title}{result.scope.sectionCount > 1 ? `（含 ${result.scope.sectionCount} 个章节）` : ""}</b><span className="knowledge-path-hint" title={`H${result.scope.level} · ${result.scope.headingPath}`} aria-label={`章节路径：H${result.scope.level} · ${result.scope.headingPath}`}><Info size={13} /></span><em className={`knowledge-quality-badge ${result.chunk.quality}`}>{result.chunk.quality === "good" ? "优质" : result.chunk.quality === "bad" ? "劣质" : "普通"}</em></div>
               <p>{result.scope.content.replace(/^#{1,6}\s+.*\n*/, "").replace(/\s+/g, " ").slice(0, 220) || "（该章节暂无正文）"}</p>
@@ -538,7 +580,7 @@ export function InspectorPanel({
               </div>
             </article>)}
           </div>}
-          {!searching && !results.length && <div className="knowledge-search-empty"><BookOpen size={25} /><b>{query.trim() ? "没有匹配结果" : "输入关键词检索知识库"}</b><span>{query.trim() ? "尝试更短的关键词或章节名称" : "检索标题、章节和正文"}</span></div>}
+          {!searching && (!query.trim() || (searchMode === "snippet" && !results.length) || (searchMode === "document" && !documentResults.length)) && <div className="knowledge-search-empty"><BookOpen size={25} /><b>{query.trim() ? "没有匹配结果" : "输入关键词检索知识库"}</b><span>{query.trim() ? (searchMode === "document" ? "尝试文档标题或路径" : "尝试更短的关键词或章节名称") : "输入关键词开始检索"}</span></div>}
         </>}
     </div>}
     <div

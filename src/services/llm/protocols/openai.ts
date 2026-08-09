@@ -204,6 +204,34 @@ function responsesOutputText(payload: Record<string, unknown>): string {
   return parts.join("");
 }
 
+type ResponsesStreamCall = {
+  id: string;
+  name: string;
+  itemArguments: string;
+  deltaArguments: string;
+  doneArguments: string;
+};
+
+function validToolArguments(value: string) {
+  if (!value.trim()) return false;
+  try {
+    const parsed = JSON.parse(value);
+    return Boolean(parsed) && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+function responsesStreamArguments(call: ResponsesStreamCall) {
+  const candidates = [
+    call.doneArguments,
+    call.deltaArguments,
+    call.itemArguments,
+    `${call.itemArguments}${call.deltaArguments}`,
+  ].filter((value, index, values) => value && values.indexOf(value) === index);
+  return candidates.find(validToolArguments) ?? candidates[0] ?? "{}";
+}
+
 export const openaiResponsesAdapter: ProtocolAdapter = {
   protocol: "openai-responses",
 
@@ -268,9 +296,22 @@ export const openaiResponsesAdapter: ProtocolAdapter = {
 
   createChatStream() {
     let content = "";
-    const calls = new Map<string, { id: string; name: string; arguments: string }>();
+    const calls: ResponsesStreamCall[] = [];
+    const callsByKey = new Map<string, ResponsesStreamCall>();
     const chatFallback = openaiCompletionsAdapter.createChatStream();
     let usesChatFallback = false;
+    const callFor = (keys: string[], fallbackId: string) => {
+      const current = keys.map(key => callsByKey.get(key)).find(Boolean) ?? {
+        id: fallbackId,
+        name: "",
+        itemArguments: "",
+        deltaArguments: "",
+        doneArguments: "",
+      };
+      if (!calls.includes(current)) calls.push(current);
+      for (const key of keys) if (key) callsByKey.set(key, current);
+      return current;
+    };
     return {
       push(data) {
         if (!data || data === "[DONE]") return null;
@@ -287,25 +328,30 @@ export const openaiResponsesAdapter: ProtocolAdapter = {
           }
           const item = asRecord(event.item);
           if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && item?.type === "function_call") {
-            const key = typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : crypto.randomUUID();
-            const current = calls.get(key) ?? { id: key, name: "", arguments: "" };
+            const itemId = typeof item.id === "string" ? item.id : "";
+            const callId = typeof item.call_id === "string" ? item.call_id : "";
+            const current = callFor([callId, itemId], callId || itemId || crypto.randomUUID());
+            if (callId) current.id = callId;
             if (typeof item.name === "string") current.name = item.name;
-            if (typeof item.arguments === "string") current.arguments = item.arguments;
-            calls.set(key, current);
+            if (typeof item.arguments === "string") current.itemArguments = item.arguments;
           }
-          if ((event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") && typeof event.call_id === "string") {
-            const current = calls.get(event.call_id) ?? { id: event.call_id, name: "", arguments: "" };
-            if (typeof event.name === "string") current.name = event.name;
-            if (event.type === "response.function_call_arguments.delta" && typeof event.delta === "string") current.arguments += event.delta;
-            if (event.type === "response.function_call_arguments.done" && typeof event.arguments === "string") current.arguments = event.arguments;
-            calls.set(event.call_id, current);
+          if (event.type === "response.function_call_arguments.delta" || event.type === "response.function_call_arguments.done") {
+            const itemId = typeof event.item_id === "string" ? event.item_id : "";
+            const callId = typeof event.call_id === "string" ? event.call_id : "";
+            if (itemId || callId) {
+              const current = callFor([callId, itemId], callId || itemId);
+              if (callId) current.id = callId;
+              if (typeof event.name === "string") current.name = event.name;
+              if (event.type === "response.function_call_arguments.delta" && typeof event.delta === "string") current.deltaArguments += event.delta;
+              if (event.type === "response.function_call_arguments.done" && typeof event.arguments === "string") current.doneArguments = event.arguments;
+            }
           }
           return null;
         } catch { return null; }
       },
       finish() {
         if (usesChatFallback) return chatFallback.finish();
-        const toolCalls = [...calls.values()].filter(call => call.name).map(call => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments || "{}" } }));
+        const toolCalls = calls.filter(call => call.name).map(call => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: responsesStreamArguments(call) } }));
         return openAiStyleResponse({ role: "assistant", content: content || null, tool_calls: toolCalls.length ? toolCalls : undefined }, toolCalls.length ? "tool_calls" : "stop");
       },
     };

@@ -26,8 +26,6 @@ mod knowledge;
 mod long_writing;
 #[path = "agent/memory.rs"]
 mod memory;
-#[path = "agent/tool_metrics.rs"]
-mod tool_metrics;
 #[path = "integrations/mineru.rs"]
 mod mineru;
 #[path = "integrations/model.rs"]
@@ -46,6 +44,8 @@ mod skills;
 mod system;
 #[path = "platform/terminal.rs"]
 mod terminal;
+#[path = "agent/tool_metrics.rs"]
+mod tool_metrics;
 #[path = "integrations/updater.rs"]
 mod updater;
 #[path = "workspace/files.rs"]
@@ -526,11 +526,7 @@ fn empty_workspace_trash(root: String) -> Result<(), String> {
 /// Markdown. Returns the absolute path of the stored original (with a unique
 /// name on collision). Fails if the source is not a regular file.
 #[tauri::command]
-fn preserve_import_source(
-    source: String,
-    root: String,
-    sub_dir: String,
-) -> Result<String, String> {
+fn preserve_import_source(source: String, root: String, sub_dir: String) -> Result<String, String> {
     if source.trim().is_empty() || root.trim().is_empty() {
         return Err("文件路径为空".into());
     }

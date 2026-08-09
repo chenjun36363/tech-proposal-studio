@@ -113,8 +113,25 @@ describe("long-writing Markdown chapter parser", () => {
     const target = parseHeadingTargets(before).find(item => item.level === 3)!;
     const valid = before.replace("旧内容", "新内容和更多细节");
     const outside = valid.replace("## B\n保持", "## B\n被修改");
-    const renamed = valid.replace("### A1", "### 改名");
+    const renamed = valid.replace("### A1", "### 接口设计");
     expect(validateHeadingTargetEdit(before, valid, target.id).valid).toBe(true);
     expect(validateHeadingTargetEdit(before, outside, target.id)).toMatchObject({ valid: false, reason: "outside_target" });
-    expect(validateHeadingTargetEdit(before, renamed, target.id)).toMatchObject({ valid: false, reason: "missing_target" });
-  });});
+    expect(validateHeadingTargetEdit(before, renamed, target.id)).toMatchObject({
+      valid: true,
+      after: { title: "接口设计" },
+    });
+  });
+
+  it("allows only the selected root title to change and keeps child headings frozen", () => {
+    const before = "# 方案\n## 服内容\n正文\n### 服务边界\n内容\n## B\n保持";
+    const target = parseHeadingTargets(before).find(item => item.level === 2)!;
+    const rootRenamed = before.replace("## 服内容", "## 服务内容");
+    const childRenamed = rootRenamed.replace("### 服务边界", "### 范围边界");
+
+    expect(validateHeadingTargetEdit(before, rootRenamed, target.id)).toMatchObject({
+      valid: true,
+      after: { title: "服务内容" },
+    });
+    expect(validateHeadingTargetEdit(before, childRenamed, target.id)).toMatchObject({ valid: false, reason: "heading_tree" });
+    });
+});

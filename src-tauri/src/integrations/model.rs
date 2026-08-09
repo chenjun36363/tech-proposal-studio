@@ -464,21 +464,37 @@ pub(crate) async fn model_proxy_stream(
                 if line.is_empty() {
                     continue;
                 }
-                let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line.trim());
+                let data = line
+                    .strip_prefix("data:")
+                    .map(str::trim)
+                    .unwrap_or(line.trim());
                 if data.is_empty() || data == "[DONE]" {
                     continue;
                 }
-                let _ = app.emit("session://ai", StreamEvent {
-                    run_id: run_id.clone(), channel: "output".into(), content: data.to_string(),
-                });
+                let _ = app.emit(
+                    "session://ai",
+                    StreamEvent {
+                        run_id: run_id.clone(),
+                        channel: "output".into(),
+                        content: data.to_string(),
+                    },
+                );
             }
         }
         if !pending.trim().is_empty() {
-            let data = pending.strip_prefix("data:").map(str::trim).unwrap_or(pending.trim());
+            let data = pending
+                .strip_prefix("data:")
+                .map(str::trim)
+                .unwrap_or(pending.trim());
             if data != "[DONE]" && !data.is_empty() {
-                let _ = app.emit("session://ai", StreamEvent {
-                    run_id: run_id.clone(), channel: "output".into(), content: data.to_string(),
-                });
+                let _ = app.emit(
+                    "session://ai",
+                    StreamEvent {
+                        run_id: run_id.clone(),
+                        channel: "output".into(),
+                        content: data.to_string(),
+                    },
+                );
             }
         }
         Ok(())

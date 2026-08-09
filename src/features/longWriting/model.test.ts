@@ -119,7 +119,7 @@ describe("long writing structured model calls", () => {
   it("forces submit_outline_plan and parses its tool JSON", async () => {
     vi.mocked(agentCompletion).mockResolvedValue(toolResponse("submit_outline_plan", plan));
     const input: OutlinePlanningInput = {
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案\n\n## 第一章 项目概述",
     };
@@ -222,7 +222,7 @@ describe("long writing structured model calls", () => {
       .mockResolvedValueOnce(toolResponse("submit_outline_plan", plan));
 
     await expect(createOutlinePlan({
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案\n\n## 第一章 项目概述",
       attachedSources: ["招标文件\n" + "建设范围、功能要求与验收标准。".repeat(9000)],
@@ -273,7 +273,7 @@ describe("long writing structured model calls", () => {
       .mockResolvedValueOnce(toolResponse("submit_outline_plan", plan));
 
     await expect(createOutlinePlan({
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案\n\n## 第一章 项目概述",
     }, config)).resolves.toEqual(plan);
@@ -301,7 +301,7 @@ describe("long writing structured model calls", () => {
     vi.mocked(agentCompletion).mockResolvedValueOnce(toolResponse("submit_outline_plan", plan));
 
     await expect(createOutlinePlan({
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案\n\n## 第一章 项目概述",
     }, deepSeekResponsesConfig)).resolves.toEqual(plan);
@@ -319,7 +319,7 @@ describe("long writing structured model calls", () => {
     vi.mocked(agentCompletion).mockRejectedValueOnce(new Error("模型服务返回 400：请求参数无效"));
 
     await expect(createOutlinePlan({
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案",
     }, config)).rejects.toThrow("请求参数无效");
@@ -369,7 +369,7 @@ describe("long writing structured model calls", () => {
     );
 
     const assertion = expect(createOutlinePlan({
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案",
     }, config)).rejects.toThrow("connection reset by peer");
@@ -459,7 +459,7 @@ describe("long writing structured model calls", () => {
     });
 
     await expect(createOutlinePlan({
-      mode: "fill",
+      mode: "modify",
       instruction: "补写",
       markdown: "# 方案",
     }, config)).rejects.toThrow("无效 JSON");
@@ -471,7 +471,7 @@ describe("long writing structured model calls", () => {
     });
 
     await expect(createOutlinePlan({
-      mode: "rewrite",
+      mode: "modify",
       instruction: "统一改写全文",
       markdown: "# 方案\n\n## 第一章 项目概述\n\n正文。",
     }, config)).resolves.toEqual(plan);
@@ -555,7 +555,7 @@ describe("long writing structured model calls", () => {
       targetChapterIds: undefined,
     }));
     await expect(createOutlinePlan({
-      mode: "targeted",
+      mode: "modify",
       instruction: "修改受影响章节",
       markdown: "# 方案",
     }, config)).rejects.toThrow("targetChapterIds");
@@ -576,7 +576,7 @@ describe("long writing structured model calls", () => {
   it("rejects a wrong or additional tool call", async () => {
     vi.mocked(agentCompletion).mockResolvedValueOnce(toolResponse("other_tool", plan));
     await expect(createOutlinePlan({
-      mode: "fill",
+      mode: "modify",
       instruction: "补写",
       markdown: "# 方案",
     }, config)).rejects.toThrow("错误工具");
@@ -589,7 +589,7 @@ describe("long writing structured model calls", () => {
     });
     vi.mocked(agentCompletion).mockResolvedValueOnce(response);
     await expect(createOutlinePlan({
-      mode: "fill",
+      mode: "modify",
       instruction: "补写",
       markdown: "# 方案",
     }, config)).rejects.toThrow("只调用 submit_outline_plan");

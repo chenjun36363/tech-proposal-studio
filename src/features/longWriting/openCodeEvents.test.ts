@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendOpenCodeSessionActivity, normalizeOpenCodeSessionEvent } from "./openCodeEvents";
+import { appendOpenCodeSessionActivity, getOpenCodeSessionEventIdentity, normalizeOpenCodeSessionEvent } from "./openCodeEvents";
 
 describe("OpenCode session events", () => {
   it("maps visible text, status, tools, and errors to a session", () => {
@@ -31,6 +31,26 @@ describe("OpenCode session events", () => {
       properties: { sessionID: "ses_1", delta: "hidden" },
     })).toBeNull();
     expect(normalizeOpenCodeSessionEvent({ type: "file.edited", properties: { file: "proposal.md" } })).toBeNull();
+  });
+
+  it("unwraps global event envelopes for identity and activity", () => {
+    const event = {
+      directory: "D:\\workspace",
+      payload: { type: "session.text.delta", data: { sessionID: "ses_global", delta: "实时" } },
+    };
+    expect(getOpenCodeSessionEventIdentity(event)).toMatchObject({ sessionId: "ses_global", settled: false });
+    expect(normalizeOpenCodeSessionEvent(event)).toMatchObject({ sessionId: "ses_global", kind: "text", summary: "实时" });
+  });
+
+  it("marks only terminal session events as durable refresh points", () => {
+    expect(getOpenCodeSessionEventIdentity({
+      type: "session.text.delta",
+      data: { sessionID: "ses_1", delta: "实时" },
+    })).toMatchObject({ sessionId: "ses_1", settled: false });
+    expect(getOpenCodeSessionEventIdentity({
+      type: "session.idle",
+      data: { sessionId: "ses_1" },
+    })).toEqual({ type: "session.idle", sessionId: "ses_1", settled: true });
   });
 
   it("coalesces text deltas and bounds per-session history", () => {

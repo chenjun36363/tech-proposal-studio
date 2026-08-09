@@ -334,6 +334,33 @@ describe("proposal agent draft review", () => {
     expect(current.content).toBe("## 当前章节\n\n新正文");
   });
 
+  it("marks accepted full-access drafts for automatic comparison in the timeline", async () => {
+    const project = createProject();
+    project.markdown = "# 方案\n\n## 当前章节";
+    const tools = createProposalToolRegistry({
+      project,
+      block,
+      fullAccess: true,
+      reviewDraft: () => true,
+      onTodos: () => undefined,
+    });
+
+    const result = await tools.execute({
+      id: "draft-auto",
+      name: "propose_section_update",
+      arguments: { markdown: "## 当前章节\n\n自动修改后的正文", instruction: "自动补全内容" },
+    }, new AbortController().signal);
+
+    expect(result.content).toContain("完全访问模式已自动应用修改");
+    expect(result.data).toEqual(expect.objectContaining({
+      approved: true,
+      approvalMode: "full_access",
+      before: "## 当前章节",
+      after: "## 当前章节\n\n自动修改后的正文",
+      target: expect.objectContaining({ sectionTitle: "当前章节" }),
+    }));
+  });
+
   it("keeps the current section unchanged after rejection", async () => {
     const tools = registry(() => false);
     const signal = new AbortController().signal;

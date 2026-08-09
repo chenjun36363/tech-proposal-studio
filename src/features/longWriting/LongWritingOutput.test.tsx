@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { createLongWritingEvent } from "./events";
-import { LongWritingEventLog, LongWritingJobCard } from "./LongWritingOutput";
+import { LongWritingEventLog, LongWritingJobCard, LongWritingOutlineCard } from "./LongWritingOutput";
 import type { ChapterJob } from "./types";
 
 const completedJob: ChapterJob = {
@@ -34,7 +34,7 @@ describe("LongWritingOutput", () => {
     expect(html).toContain("执行动态");
     expect(html).toContain("第一章已原子提交");
     expect(html).toContain("long-writing-live-dot");
-    expect(html).toContain("不展示模型内部推理");
+    expect(html).toContain("可见思考、工具调用和输出");
   });
 
   it("labels disk conflicts as a distinct persisted execution event", () => {
@@ -59,6 +59,34 @@ describe("LongWritingOutput", () => {
     expect(html).toContain("查看章节详情");
     expect(html).toContain("→");
   });
+  it("renders the latest worker tool call inline", () => {
+    const html = renderToStaticMarkup(<LongWritingJobCard
+      job={{ ...completedJob, status: "writing" }}
+      filePath="D:\\workspace\\proposal.md"
+      workspaceRoot="D:\\workspace"
+      onRetry={() => undefined}
+      onLocate={() => undefined}
+      liveMessages={[{
+        id: "assistant-live",
+        role: "assistant",
+        streaming: true,
+        parts: [{ id: "tool-read", kind: "tool", tool: "read", status: "running", streaming: true }],
+      }]}
+    />);
+    expect(html).toContain("read · 执行中");
+    expect(html).toContain("long-writing-worker-live");
+  });
+
+  it("renders the create-document outline session without Coordinator wording", () => {
+    const html = renderToStaticMarkup(<LongWritingOutlineCard
+      task={{ mainSessionId: "session-outline", status: "awaiting_outline", mainAnalysis: "outline" }}
+      onOpen={() => undefined}
+    />);
+    expect(html).toContain("目录生成");
+    expect(html).toContain("已生成");
+    expect(html).not.toContain("Coordinator");
+  });
+
   it("marks an out-of-scope edit as awaiting confirmation", () => {
     const html = renderToStaticMarkup(<LongWritingJobCard
       job={{

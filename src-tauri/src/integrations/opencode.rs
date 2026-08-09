@@ -415,6 +415,44 @@ fn start_monitor(app: AppHandle) {
     });
 }
 
+fn take_sse_frame(buffer: &mut String) -> Option<String> {
+    let lf = buffer.find("\n\n").map(|index| (index, 2));
+    let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
+    let (index, separator_len) = match (lf, crlf) {
+        (Some(left), Some(right)) => {
+            if left.0 <= right.0 {
+                left
+            } else {
+                right
+            }
+        }
+        (Some(value), None) | (None, Some(value)) => value,
+        (None, None) => return None,
+    };
+    let frame = buffer[..index].to_string();
+    buffer.drain(..index + separator_len);
+    Some(frame)
+}
+
+fn parse_sse_frame(frame: &str) -> Option<Value> {
+    let data = frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.trim().is_empty() {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(data.trim()).ok()?;
+    // /global/event wraps workspace events as { directory, payload }. The
+    // frontend consumes the same event shape returned by the scoped /event.
+    if let Some(payload) = value.get("payload").cloned() {
+        Some(payload)
+    } else {
+        Some(value)
+    }
+}
+
 fn start_event_stream(app: AppHandle) {
     tokio::spawn(async move {
         loop {
@@ -425,28 +463,30 @@ fn start_event_stream(app: AppHandle) {
             let Ok(candidate) = candidate else { break };
             let request = match client() {
                 Ok(value) => value
-                    .get(format!("{}/event", candidate.base_url))
+                    .get(format!("{}/global/event", candidate.base_url))
+                    .header("Accept", "text/event-stream")
                     .basic_auth(SERVER_USERNAME, Some(&candidate.password)),
                 Err(_) => break,
             };
-            let Ok(response) = request.send().await else {
-                sleep(Duration::from_secs(1)).await;
-                continue;
+            let response = match request
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+            {
+                Ok(value) => value,
+                Err(_) => {
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
             };
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
             while let Some(chunk) = stream.next().await {
                 let Ok(chunk) = chunk else { break };
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some(index) = buffer.find("\n\n") {
-                    let frame = buffer[..index].to_string();
-                    buffer.drain(..index + 2);
-                    for line in frame.lines() {
-                        if let Some(data) = line.strip_prefix("data:") {
-                            if let Ok(value) = serde_json::from_str::<Value>(data.trim()) {
-                                let _ = app.emit("opencode://event", value);
-                            }
-                        }
+                while let Some(frame) = take_sse_frame(&mut buffer) {
+                    if let Some(value) = parse_sse_frame(&frame) {
+                        let _ = app.emit("opencode://event", value);
                     }
                 }
             }
@@ -804,6 +844,37 @@ mod tests {
         assert_eq!(
             body.get("parentID").and_then(Value::as_str),
             Some("ses_parent")
+        );
+    }
+
+    #[test]
+    fn sse_frame_parser_accepts_crlf_and_unwraps_global_payload() {
+        let mut buffer = "data: {\"directory\":\"E:\\\\workspace\",\"payload\":{\"type\":\"message.part.delta\",\"properties\":{\"sessionID\":\"ses_1\"}}}\r\n\r\n".to_string();
+        let frame = take_sse_frame(&mut buffer).expect("frame");
+        let event = parse_sse_frame(&frame).expect("event");
+        assert!(buffer.is_empty());
+        assert_eq!(
+            event.get("type").and_then(Value::as_str),
+            Some("message.part.delta")
+        );
+        assert_eq!(
+            event
+                .pointer("/properties/sessionID")
+                .and_then(Value::as_str),
+            Some("ses_1")
+        );
+    }
+
+    #[test]
+    fn sse_frame_parser_accepts_lf_and_multiline_data() {
+        let mut buffer = "data: {\"type\":\"session.updated\",\n data: \"properties\":{}}\n\nrest"
+            .replace(" data:", "data:");
+        let frame = take_sse_frame(&mut buffer).expect("frame");
+        let event = parse_sse_frame(&frame).expect("event");
+        assert_eq!(buffer, "rest");
+        assert_eq!(
+            event.get("type").and_then(Value::as_str),
+            Some("session.updated")
         );
     }
 }

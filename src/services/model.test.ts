@@ -255,4 +255,56 @@ describe("stream retry (withStreamRetry semantics)", () => {
     expect(updates).toEqual(["新", "正文"]);
     expect(response.choices?.[0]?.message).toMatchObject({ content: "新正文" });
   });
+
+  it("discards partial Responses tool arguments before retrying ask_user", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    let eventCallback: ((event: { payload: { runId: string; content: string } }) => void) | null = null;
+    vi.mocked(listen).mockImplementation(async (_event, callback) => {
+      eventCallback = callback as typeof eventCallback;
+      return vi.fn();
+    });
+    let streamCalls = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd, args: any) => {
+      if (cmd !== "model_proxy_stream") return undefined;
+      streamCalls += 1;
+      eventCallback?.({ payload: { runId: args.runId, content: JSON.stringify({
+        type: "response.output_item.added",
+        item: { id: "item-ask", type: "function_call", call_id: "call-ask", name: "ask_user", arguments: "" },
+      }) } });
+      if (streamCalls === 1) {
+        eventCallback?.({ payload: { runId: args.runId, content: JSON.stringify({
+          type: "response.function_call_arguments.delta", item_id: "item-ask", delta: '{"question":"第一轮半截',
+        }) } });
+        throw new Error("模型服务请求失败：connection reset");
+      }
+      eventCallback?.({ payload: { runId: args.runId, content: JSON.stringify({
+        type: "response.function_call_arguments.delta", item_id: "item-ask", delta: '{"question":"请选择方案"}',
+      }) } });
+      return undefined;
+    });
+
+    const response = await agentCompletionStream(
+      {
+        model: responsesConfig.model,
+        messages: [{ role: "user", content: "需要确认范围" }],
+        tools: [{ type: "function", function: { name: "ask_user", description: "ask", parameters: { type: "object" } } }],
+        tool_choice: "auto",
+      },
+      responsesConfig,
+      () => undefined,
+      undefined,
+      undefined,
+      undefined,
+      fast,
+    );
+
+    expect(streamCalls).toBe(2);
+    const calls = response.choices?.[0]?.message?.tool_calls;
+    expect(calls).toHaveLength(1);
+    expect(calls?.[0]).toMatchObject({
+      id: "call-ask",
+      function: { name: "ask_user", arguments: '{"question":"请选择方案"}' },
+    });
+    expect(() => JSON.parse(calls?.[0].function.arguments ?? "")).not.toThrow();
+  });
 });

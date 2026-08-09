@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, BookOpen, Bot, Brain, Check, Database, FileSearch, Gauge, GitBranch, Globe2, Hammer, ListTree, Maximize2, MessageSquarePlus, Send, ShieldAlert, Sparkles, Square, Trash2, X } from "lucide-react";
+import { Archive, BookOpen, Bot, Brain, BrainCircuit, Check, Database, FileSearch, Gauge, GitBranch, Globe2, Hammer, ListTree, Maximize2, MessageSquarePlus, Send, ShieldAlert, Sparkles, Square, Trash2, X } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
 import { AGENT_CONVERSATIONS_CHANGED, agentConversationMessageCount, applyAgentConversationChange, compactAgentConversation, compactAgentConversationToBudget, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, pruneEmptyAgentConversations, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch, type AgentMode, type ConversationDefaults } from "../agent/conversationStore";
 import { buildEditorSelectionPrompt, createProposalToolRegistry, proposalAgentSystemPrompt, type AgentSearchHighlight, type AgentWorkspaceRuntime } from "../agent/proposalTools";
@@ -31,6 +31,20 @@ import { applyAgentModeTools } from "../agent/modes";
 type DraftDecision = { resolve: (approved: boolean) => void; cleanup: () => void };
 type QuestionDecision = { resolve: (answer: AgentUserQuestionAnswer) => void; cleanup: () => void };
 type GitDecision = { resolve: (approved: boolean) => void; cleanup: () => void };
+
+type AgentReasoningEffort = ReasoningEffort | "inherit";
+
+const AGENT_REASONING_EFFORTS: AgentReasoningEffort[] = ["inherit", "off", "low", "medium", "high"];
+const AGENT_REASONING_EFFORT_SHORT_LABELS: Record<AgentReasoningEffort, string> = { inherit: "自", off: "关", low: "低", medium: "中", high: "高" };
+
+function agentReasoningEffortLabel(effort: AgentReasoningEffort) {
+  return effort === "inherit" ? "跟随提供方" : REASONING_EFFORT_LABELS[effort];
+}
+
+function nextAgentReasoningEffort(effort: AgentReasoningEffort) {
+  const index = AGENT_REASONING_EFFORTS.indexOf(effort);
+  return AGENT_REASONING_EFFORTS[(index + 1) % AGENT_REASONING_EFFORTS.length];
+}
 
 function conversationTitle(task: string) {
   return task.replace(/\s+/g, " ").trim().slice(0, 24) || "新会话";
@@ -69,7 +83,7 @@ function buildAgentSystemPromptParts(params: {
   if (!params.memorySearchEnabled) parts.push("长期记忆检索当前已停用。不得调用 search_memory 或 read_memory；如需记录事实，请明确告知用户当前未启用记忆引用。");
   if (params.capturedSelection) parts.push(buildEditorSelectionPrompt(params.capturedSelection));
   parts.push(params.fullAccessEnabled
-    ? "本会话已开启完全访问。所有已提供的写入和系统工具均可直接执行，无需请求逐项确认；必须如实报告成功、失败和实际目标。"
+    ? "本会话已开启完全访问。文档、工作区、Git 写入和系统工具均可直接执行，无需请求逐项确认；用户询问本次修改或当前差异时，优先调用 git_changes 一次性读取全部已暂存、未暂存和未跟踪变更；必须如实报告成功、失败和实际目标。"
     : "本会话未开启完全访问。文档修改必须提交审核提案，且不得尝试系统级文件或命令操作。");
   parts.push(params.mode === "plan"
     ? "当前为 Plan 模式。首轮必须先调用 write_todo 制定计划；只能读取、检索、分析和向用户提问，不得修改文档、工作区、Git、记忆或系统状态。最终输出可执行计划，不得声称已经实施。"
@@ -114,7 +128,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   const [composerCursor, setComposerCursor] = useState(0);
   const [skillSuggestionIndex, setSkillSuggestionIndex] = useState(0);
   const [skillSuggestionsDismissed, setSkillSuggestionsDismissed] = useState(false);
-  const [reasoningEffortOverride, setReasoningEffortOverride] = useState<ReasoningEffort | "inherit">("inherit");
+  const [reasoningEffortOverride, setReasoningEffortOverride] = useState<AgentReasoningEffort>("inherit");
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(project.selectedModel ?? null);
   const localMode = Boolean(localAgent);
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
@@ -717,6 +731,17 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
         <button type="button" className={agentMode === "plan" ? "active" : ""} disabled={running} onClick={() => setAgentMode("plan")} title="Plan：只读分析并强制先制定计划"><ListTree size={13} />Plan</button>
         <button type="button" className={agentMode === "build" ? "active" : ""} disabled={running} onClick={() => setAgentMode("build")} title="Build：直接执行，不调用任务规划"><Hammer size={13} />Build</button>
       </div>}
+      <button
+        type="button"
+        className={`agent-compact-toggle agent-reasoning-effort effort-${reasoningEffortOverride}`}
+        disabled={running}
+        onClick={() => setReasoningEffortOverride(current => nextAgentReasoningEffort(current))}
+        title={`思考等级：${agentReasoningEffortLabel(reasoningEffortOverride)}。点击切换为 ${agentReasoningEffortLabel(nextAgentReasoningEffort(reasoningEffortOverride))}`}
+        aria-label={`思考等级：${agentReasoningEffortLabel(reasoningEffortOverride)}，点击切换`}
+      >
+        <BrainCircuit size={14} />
+        <small>{AGENT_REASONING_EFFORT_SHORT_LABELS[reasoningEffortOverride]}</small>
+      </button>
       {!localAgent && <label className={`agent-compact-toggle ${memorySearchEnabled ? "active" : ""}`} title={memorySearchEnabled ? "引用记忆：已启用（点击关闭）" : "引用记忆：已关闭（点击启用）"} aria-label="引用记忆">
         <input type="checkbox" checked={memorySearchEnabled} disabled={running} onChange={event => setMemorySearchEnabled(event.target.checked)} />
         <Brain size={14} />
@@ -738,21 +763,14 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
         <ShieldAlert size={14} />
       </label>}
     </div>
+    {fullAccessEnabled && <div className="agent-full-access-status" role="status">
+      <ShieldAlert size={15} />
+      <span><b>完全访问已开启</b><small>修改将直接执行，并在对话中显示修改前后对比</small></span>
+    </div>}
     {editorSelection && <div className="agent-selection-capture" title={editorSelection.text}>
       <span><FileSearch size={13} /><b>已捕获选区</b><small>{editorSelection.text.length.toLocaleString()} 字 · {editorSelection.sectionTitle ?? (editorSelection.scope === "document" ? "全文" : "当前章节")}</small></span>
       <button type="button" title="清除已捕获选区" onClick={clearEditorSelection} disabled={running}><X size={13} /></button>
     </div>}
-    <div className="agent-composer-options">
-      <label className="agent-effort-select" title="思考等级：越高推理越深入，消耗更多 token。跟随提供方=使用 AI 设置中该模型的思考等级">
-        <span>思考等级</span>
-        <select value={reasoningEffortOverride} disabled={running} onChange={event => setReasoningEffortOverride(event.target.value as ReasoningEffort | "inherit")}>
-          <option value="inherit">跟随提供方</option>
-          {(["off", "low", "medium", "high"] as ReasoningEffort[]).map(level => (
-            <option value={level} key={level}>{REASONING_EFFORT_LABELS[level]}</option>
-          ))}
-        </select>
-      </label>
-    </div>
     <div className="agent-chat-composer">
       {slashQuery && skillSuggestions.length > 0 && <div className="agent-skill-suggestions" role="listbox" aria-label="Skill 建议">
         {skillSuggestions.map((skill, index) => <button type="button" role="option" aria-selected={index === skillSuggestionIndex} className={index === skillSuggestionIndex ? "selected" : ""} key={`${skill.scope}:${skill.name}`} onMouseDown={event => { event.preventDefault(); chooseSkillSuggestion(skill); }}>

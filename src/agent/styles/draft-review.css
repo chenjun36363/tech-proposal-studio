@@ -1,4 +1,4 @@
-.agent-review-overlay { position:fixed; inset:0; z-index:160; display:grid; place-items:center; padding:16px; box-sizing:border-box; background:hsl(220 20% 8% / .58); backdrop-filter:blur(4px); }
+.agent-review-overlay { position:fixed; inset:0; z-index:1400; display:grid; place-items:center; padding:16px; box-sizing:border-box; background:hsl(220 20% 8% / .58); backdrop-filter:blur(4px); }
 .agent-review-modal,.agent-review-modal * { box-sizing:border-box; }
 .agent-review-modal { width:min(1440px,calc(100vw - 32px)); height:min(920px,calc(100dvh - 32px)); min-width:0; min-height:0; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; overflow:hidden; border:1px solid hsl(var(--border)); background:hsl(var(--background)); color:hsl(var(--foreground)); border-radius:8px; box-shadow:0 28px 80px hsl(220 30% 5% / .38); }
 .agent-review-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:18px 20px 15px; border-bottom:1px solid hsl(var(--border)); }

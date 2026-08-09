@@ -831,7 +831,15 @@ pub fn knowledge_search(
     document_ids: Option<Vec<String>>,
     category_ids: Option<Vec<String>>,
 ) -> Result<Vec<KnowledgeSearchResult>, String> {
-    search_repository(&workspace, &query, limit, qualities, fields, document_ids, category_ids)
+    search_repository(
+        &workspace,
+        &query,
+        limit,
+        qualities,
+        fields,
+        document_ids,
+        category_ids,
+    )
 }
 
 #[tauri::command]

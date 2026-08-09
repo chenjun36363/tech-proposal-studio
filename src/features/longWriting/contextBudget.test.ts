@@ -50,7 +50,7 @@ describe("long writing context budget", () => {
     const result = prepareLongWritingPayload({
       phase: "outline",
       input: {
-        mode: "rewrite",
+        mode: "modify",
         instruction: "统一改写",
         markdown: "# 技术方案\n\n## 第一章 概述\n\n正文",
         attachedSources: Array.from({ length: 6 }, (_, index) => `资料${index + 1}：${"来源事实".repeat(5000)}`),

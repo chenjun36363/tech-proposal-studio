@@ -13,11 +13,14 @@ import {
   LoaderCircle,
   LocateFixed,
   MessageSquareText,
+  Radio,
   RotateCcw,
+  Wrench,
 } from "lucide-react";
 import { MarkdownDiffPane } from "../../components/MarkdownDiffPane";
 import { buildTextDiff } from "../../components/textDiff";
 import { MarkdownPreview } from "../editor/MarkdownEditor";
+import type { OpenCodeConversationMessage } from "./openCodeConversation";
 import type { ChapterJob, ChapterJobStatus, LongWritingEvent } from "./types";
 
 const STATUS_LABELS: Record<ChapterJobStatus, string> = {
@@ -76,13 +79,13 @@ function formatEventTime(value: string) {
 
 function statusDescription(status: ChapterJobStatus) {
   return ({
-    queued: "等待 Coordinator 分配空闲 Worker。",
-    analyzing: "OpenCode 子任务正在并行分析目标标题子树。",
-    awaiting_write: "分析完成，等待提案级串行写锁。",
+    queued: "等待前一个标题任务完成。",
+    analyzing: "Worker 正在处理当前标题范围。",
+    awaiting_write: "等待前一个标题任务完成后写入。",
     writing: "OpenCode 已重新读取正式文件并正在编辑目标子树。",
-    running: "Worker 正在生成结构化章节草稿，返回后才会显示正文。",
-    validating: "草稿已返回，正在检查冻结标题树与 Markdown 结构。",
-    committing: "校验通过，正在通过串行写队列原子提交到磁盘。",
+    running: "Worker 正在读取正式文件并直接编辑当前标题范围。",
+    validating: "文件已修改，正在校验范围与标题结构。",
+    committing: "校验通过，正在保存本次标题修改。",
     completed: "章节已安全写入，可以查看最终输出与前后差异。",
     retryable: "遇到临时错误，等待退避后重试或手动重试。",
     awaiting_review: "修改超出目标范围，正式文件已回滚，等待用户确认或拒绝。",
@@ -103,6 +106,30 @@ function countNonWhitespace(value: string) {
   return value.replace(/\s/g, "").length;
 }
 
+function liveSessionSummary(messages?: OpenCodeConversationMessage[]) {
+  if (!messages?.length) return null;
+  const reversedMessages = [...messages].reverse();
+  const latestTool = reversedMessages.flatMap(message => [...message.parts].reverse())
+    .find(part => (part.kind === "tool" || part.kind === "error") && part.tool);
+  const runningTool = reversedMessages.flatMap(message => [...message.parts].reverse())
+    .find(part => (part.kind === "tool" || part.kind === "error") && part.tool && (part.streaming || ["streaming", "running", "pending"].includes(part.status ?? "")));
+  const latestText = reversedMessages.flatMap(message => [...message.parts].reverse())
+    .find(part => part.kind === "text" && part.text?.trim());
+  const streaming = messages.some(message => message.streaming || message.parts.some(part => part.streaming));
+  const tool = runningTool ?? (!latestText ? latestTool : undefined);
+  if (tool) return {
+    kind: "tool" as const,
+    text: `${tool.tool} · ${tool.status === "completed" || tool.status === "success" ? "已完成" : tool.status === "error" ? "失败" : "执行中"}`,
+    streaming,
+  };
+  if (latestText?.text) return {
+    kind: "text" as const,
+    text: latestText.text.replace(/\s+/g, " ").trim().slice(-120),
+    streaming,
+  };
+  return null;
+}
+
 export function LongWritingJobCard({
   job,
   filePath,
@@ -110,6 +137,8 @@ export function LongWritingJobCard({
   onRetry,
   onLocate,
   onOpen = () => undefined,
+  liveMessages,
+  activitySummary,
 }: {
   job: ChapterJob;
   filePath: string;
@@ -117,6 +146,8 @@ export function LongWritingJobCard({
   onRetry: () => void;
   onLocate: () => void;
   onOpen?: () => void;
+  liveMessages?: OpenCodeConversationMessage[];
+  activitySummary?: string;
 }) {
   const [expanded] = useState(false);
   const [tab, setTab] = useState<"output" | "diff" | "details">("output");
@@ -127,6 +158,7 @@ export function LongWritingJobCard({
   const afterCount = draft ? countNonWhitespace(draft.markdown) : null;
   const shownRows = diff?.rows.slice(0, 300) ?? [];
   const visibleDiff = diff ? { ...diff, rows: shownRows } : null;
+  const live = liveSessionSummary(liveMessages) ?? (activitySummary ? { kind: "text" as const, text: activitySummary, streaming: false } : null);
 
   const copyDraft = async () => {
     if (!draft) return;
@@ -144,6 +176,10 @@ export function LongWritingJobCard({
           {job.attempts ? `第 ${job.attempts} 次尝试` : "尚未调用模型"}
           {afterCount !== null ? ` · ${beforeCount.toLocaleString()} → ${afterCount.toLocaleString()} 字` : ""}
         </small>
+        {live && <span className={`long-writing-worker-live is-${live.kind} ${live.streaming ? "is-streaming" : ""}`}>
+          {live.kind === "tool" ? <Wrench size={10} /> : <Radio size={10} />}
+          <span>{live.text}</span>
+        </span>}
       </span>
       <em>{STATUS_LABELS[job.status]}</em>
       <ChevronRight size={14} />
@@ -187,15 +223,18 @@ export function LongWritingJobCard({
   </article>;
 }
 
-export function LongWritingCoordinatorCard({ task, onOpen }: {
+export function LongWritingOutlineCard({ task, onOpen, liveMessages, activitySummary }: {
   task: { mainSessionId?: string; status: string; mainAnalysis?: string };
   onOpen: () => void;
+  liveMessages?: OpenCodeConversationMessage[];
+  activitySummary?: string;
 }) {
-  return <article className={`long-writing-job-card long-writing-coordinator-card status-${task.status}`}>
-    <button type="button" className="long-writing-job-summary" onClick={onOpen} aria-label="查看 Coordinator 详情">
+  const live = liveSessionSummary(liveMessages) ?? (activitySummary ? { kind: "text" as const, text: activitySummary, streaming: false } : null);
+  return <article className={`long-writing-job-card long-writing-outline-card status-${task.status}`}>
+    <button type="button" className="long-writing-job-summary" onClick={onOpen} aria-label="查看目录生成详情">
       <span className="long-writing-job-state"><MessageSquareText size={15} /></span>
-      <span className="long-writing-job-heading"><b>Coordinator</b><small>{task.mainSessionId ?? "尚未创建会话"}</small></span>
-      <em>{task.mainAnalysis ? "已规划" : "运行中"}</em>
+      <span className="long-writing-job-heading"><b>目录生成</b><small>{task.mainSessionId ?? "尚未创建会话"}</small>{live && <span className={`long-writing-worker-live is-${live.kind} ${live.streaming ? "is-streaming" : ""}`}>{live.kind === "tool" ? <Wrench size={10} /> : <Radio size={10} />}<span>{live.text}</span></span>}</span>
+      <em>{task.mainAnalysis ? "已生成" : "生成中"}</em>
       <ChevronRight size={14} />
     </button>
   </article>;
@@ -218,7 +257,7 @@ export function LongWritingEventLog({ events, busy }: { events: LongWritingEvent
           <span><b>{EVENT_LABELS[event.type] ?? "系统"}</b>{event.message}{event.attempt ? <small>第 {event.attempt} 次</small> : null}</span>
         </div>) : <div className="long-writing-event-empty">任务启动后将在这里显示备份、生成、校验、重试和写入进度。</div>}
       </div>
-      <p className="long-writing-event-note">仅展示可核验的系统阶段与 Worker 最终产物，不展示模型内部推理。</p>
+      <p className="long-writing-event-note">会话详情会实时展示 OpenCode 明确返回的可见思考、工具调用和输出。</p>
     </>}
   </section>;
 }

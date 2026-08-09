@@ -4,42 +4,30 @@ import type { Project } from "../../core/types";
 import { ContextReferences } from "../../components/ContextReferences";
 import { isDesktop } from "../../services/runtime";
 import { readTextFileSnapshot, writeTextFileChecked, type TextFileSnapshot } from "../workspace/documentSafety";
-import { buildHeadingTargetTree, collectCollapsibleHeadingIds, filterHeadingTargetTree, getHeadingTargetById, normalizeSelectedHeadingIds, parseHeadingTargets, selectAllHeadingTargetIds, validateHeadingTargetEdit, type HeadingTargetTreeNode, type ParsedHeadingTarget } from "./chapterParser";
+import { buildHeadingTargetTree, collectCollapsibleHeadingIds, filterHeadingTargetTree, normalizeSelectedHeadingIds, parseHeadingTargets, selectAllHeadingTargetIds, validateHeadingTargetEdit, type HeadingTargetTreeNode, type ParsedHeadingTarget } from "./chapterParser";
 import { appendLongWritingEvent, createLongWritingEvent } from "./events";
-import { LongWritingCoordinatorCard, LongWritingEventLog, LongWritingJobCard } from "./LongWritingOutput";
+import { LongWritingEventLog, LongWritingJobCard, LongWritingOutlineCard } from "./LongWritingOutput";
 import { createProposalBackup, listLongWritingTasks, restoreProposalBackup, saveLongWritingChapter, saveLongWritingTask } from "./service";
 import { abortOpenCodeSession, createOpenCodeSession, getOpenCodeServerStatus, listOpenCodeModels, listenOpenCodeEvents, listenOpenCodeServerStatus, promptOpenCodeSession, startOpenCodeServer, stopOpenCodeServer, type OpenCodeModelOption, type OpenCodeModelRef, type OpenCodeServerStatus } from "./opencodeService";
 import { OpenCodeModelSelect } from "./OpenCodeModelSelect";
-import { appendOpenCodeSessionActivity, normalizeOpenCodeSessionEvent, type OpenCodeSessionActivityMap } from "./openCodeEvents";
+import { appendOpenCodeSessionActivity, getOpenCodeSessionEventIdentity, normalizeOpenCodeSessionEvent, type OpenCodeSessionActivityMap } from "./openCodeEvents";
+import { appendOpenCodeConversationInput, applyOpenCodeConversationEvent, type OpenCodeConversationMap } from "./openCodeConversation";
 import { LongWritingDetailModal } from "./LongWritingDetailModal";
 import type { ChapterDraftResult, ChapterJob, LongWritingMode, LongWritingSourceRef, LongWritingTaskRecord } from "./types";
 import { getLongWritingAvailability } from "./availability";
+import { buildLongWritingWorkerPrompt } from "./workerPrompt";
 
 const ACTIVE_TASKS = new Set<LongWritingTaskRecord["status"]>(["preparing", "awaiting_outline", "running", "paused", "checking", "failed", "conflict"]);
 const WRITING_SYSTEM = [
-  "你是构案的 OpenCode 标题子树编辑 Worker。",
-  "必须先重新读取正式 Markdown 文件，再使用文件编辑工具直接修改它。",
-  "只能修改指定标题从标题行开始到下一个同级或更高标题之前的完整子树。",
-  "不得修改标题文本、标题层级、父子关系、其他章节、引用资料或任何其他文件。",
-  "不得运行 shell、联网搜索、子代理或外部命令。完成编辑后只简要说明结果。",
-].join("\n");
-const ANALYSIS_SYSTEM = [
-  "你是构案的 OpenCode 长任务分析 Worker。",
-  "本阶段只读，不得编辑文件、运行命令或联网。",
-  "分析指定标题子树应如何按总指令优化，列出事实约束、内容结构、保留项和风险。",
-  "不要输出思维过程，只输出可供后续写入阶段执行的简洁编辑计划。",
+  "你是构案的 OpenCode 文档编辑 Worker，本轮必须直接编辑并保存正式 Markdown 文件。",
+  "严格限制在指定标题子树内修改；不得修改标题层级、父子关系、子标题文本、其他章节或其他文件。",
+  "仅允许修正当前目标标题中的明显错别字或病句。",
 ].join("\n");
 
 function uid(prefix: string) { return `${prefix}-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`; }
 async function sha256Text(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-}
-async function mapConcurrent<T>(values: T[], concurrency: number, mapper: (value: T) => Promise<void>) {
-  let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(values.length, Math.max(1, concurrency)) }, async () => {
-    while (cursor < values.length) await mapper(values[cursor++]);
-  }));
 }
 function boundedReferences(refs: LongWritingSourceRef[], target?: ParsedHeadingTarget) {
   const terms = target ? `${target.titlePath.join(" ")} ${target.markdown.slice(0, 1200)}`.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(term => term.length > 1) : [];
@@ -52,6 +40,13 @@ function boundedReferences(refs: LongWritingSourceRef[], target?: ParsedHeadingT
   }
   return chunks.length ? chunks.join("\n\n") : "（无引用资料）";
 }
+function resolveJobTarget(markdown: string, job: ChapterJob): ParsedHeadingTarget | undefined {
+  const targets = parseHeadingTargets(markdown);
+  return targets.find(target => target.id === (job.headingId ?? job.chapterId))
+    ?? targets.find(target => target.order === job.order && target.level === job.headingLevel)
+    ?? targets[job.order];
+}
+
 function extractCreatedOutline(value: string) {
   const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? value;
   const start = fenced.indexOf("{"); const end = fenced.lastIndexOf("}");
@@ -82,16 +77,19 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
   const [serverStatus, setServerStatus] = useState<OpenCodeServerStatus>({ phase: "stopped", activeSessions: 0, recentLogs: [] });
   const [models, setModels] = useState<OpenCodeModelOption[]>([]);
   const [modelRef, setModelRef] = useState<OpenCodeModelRef | null>(null);
-  const [mode, setMode] = useState<LongWritingMode>("fill");
+  const [mode, setMode] = useState<LongWritingMode>("modify");
   const [documentTitle, setDocumentTitle] = useState(project.name);
   const [instruction, setInstruction] = useState("");
-  const [concurrency, setConcurrency] = useState<1 | 2 | 3>(2);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [generatedOutline, setGeneratedOutline] = useState("");
   const [task, setTask] = useState<LongWritingTaskRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [sessionActivities, setSessionActivities] = useState<OpenCodeSessionActivityMap>({});
+  const [sessionRefreshSignals, setSessionRefreshSignals] = useState<Record<string, string>>({});
+  const [sessionConversations, setSessionConversations] = useState<OpenCodeConversationMap>({});
+  const sessionConversationsRef = useRef<OpenCodeConversationMap>({});
+  const sessionConversationFrame = useRef<number | null>(null);
   const [detailTarget, setDetailTarget] = useState<{ jobId?: string } | null>(null);
   const visibleTargetTree = useMemo(() => filterHeadingTargetTree(targetTree, headingSearch), [headingSearch, targetTree]);
   const taskRef = useRef<LongWritingTaskRecord | null>(null);
@@ -118,6 +116,23 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
   };
   const patchJob = (jobId: string, patch: Partial<ChapterJob>) => mutate(current => ({ ...current, chapters: current.chapters.map(job => job.id === jobId ? { ...job, ...patch } : job), updatedAt: new Date().toISOString() }), [jobId]);
   const appendEvent = (type: Parameters<typeof createLongWritingEvent>[0], message: string, chapterId?: string) => mutate(current => ({ ...current, events: appendLongWritingEvent(current.events, createLongWritingEvent(type, message, { chapterId })), updatedAt: new Date().toISOString() }));
+
+  const runOpenCodePrompt = async (request: Parameters<typeof promptOpenCodeSession>[0]) => {
+    const input = appendOpenCodeConversationInput(sessionConversationsRef.current, {
+      sessionId: request.sessionId,
+      text: request.text,
+      phase: request.phase,
+      id: uid(`prompt-${request.phase}`),
+    });
+    sessionConversationsRef.current = input;
+    setSessionConversations(input);
+    activeSessions.current.add(request.sessionId);
+    try {
+      return await promptOpenCodeSession(request);
+    } finally {
+      activeSessions.current.delete(request.sessionId);
+    }
+  };
 
   const refreshServer = async () => {
     try {
@@ -149,14 +164,30 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
     if (!desktop) return;
     let unlisten: (() => void) | undefined;
     void listenOpenCodeEvents(value => {
+      const identity = getOpenCodeSessionEventIdentity(value);
       const activity = normalizeOpenCodeSessionEvent(value);
-      if (activity) setSessionActivities(current => appendOpenCodeSessionActivity(current, activity));
+      if (activity && activity.kind !== "text") setSessionActivities(current => appendOpenCodeSessionActivity(current, activity));
+      if (identity?.settled) setSessionRefreshSignals(current => ({ ...current, [identity.sessionId]: `${identity.type}:${Date.now()}` }));
+      const conversation = applyOpenCodeConversationEvent(sessionConversationsRef.current, value);
+      if (conversation) {
+        sessionConversationsRef.current = conversation;
+        if (sessionConversationFrame.current === null) {
+          sessionConversationFrame.current = window.requestAnimationFrame(() => {
+            sessionConversationFrame.current = null;
+            setSessionConversations(sessionConversationsRef.current);
+          });
+        }
+      }
     }).then(value => { unlisten = value; });
-    return () => unlisten?.();
+    return () => {
+      unlisten?.();
+      if (sessionConversationFrame.current !== null) window.cancelAnimationFrame(sessionConversationFrame.current);
+      sessionConversationFrame.current = null;
+    };
   }, [desktop]);
   useEffect(() => {
     if (taskRef.current || mode === "create") { if (mode === "create") setSelected(new Set()); return; }
-    const defaults = targets.filter(target => target.level === 2 && (mode !== "fill" || target.bodyMarkdown.replace(/\s/g, "").length < 200));
+    const defaults = targets.filter(target => target.level === 2);
     setSelected(new Set(defaults.map(target => target.id)));
   }, [mode, project.filePath, targets.length]);
   useEffect(() => {
@@ -165,7 +196,7 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
     void listLongWritingTasks<LongWritingTaskRecord>(project.workspace.root, project.filePath).then(rows => {
       const latest = rows.find(value => value.backend === "opencode-http" && ACTIVE_TASKS.has(value.status));
       if (!latest || !active) return;
-      const recovered = { ...latest, status: latest.status === "running" || latest.status === "checking" ? "paused" as const : latest.status, chapters: latest.chapters.map(job => ["analyzing", "writing", "validating"].includes(job.status) ? { ...job, status: "retryable" as const, error: "应用中断，已重新排队并等待磁盘对账" } : job) };
+      const recovered = { ...latest, mode: latest.mode === "create" ? "create" as const : "modify" as const, status: latest.status === "running" || latest.status === "checking" ? "paused" as const : latest.status, chapters: latest.chapters.map(job => ["analyzing", "writing", "validating"].includes(job.status) ? { ...job, status: "retryable" as const, error: "应用中断，已重新排队并等待磁盘对账" } : job) };
       setTaskBoth(recovered); setGeneratedOutline(recovered.generatedOutlineMarkdown ?? "");
       if (recovered.modelRef) setModelRef(recovered.modelRef);
       onLockChange(!["completed", "cancelled", "restored"].includes(recovered.status));
@@ -179,10 +210,10 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
     const content = source.content ?? source.excerpt ?? "";
     return { id: source.id, title: source.title, path: source.location, excerpt: source.excerpt, content, contentHash: await sha256Text(content) };
   }));
-  const startPlanning = async () => {
+  const startLongWriting = async () => {
     if (!project.workspace?.root || !project.filePath) return notify("请先打开工作区内已保存的 Markdown");
     if (!instruction.trim()) return notify("请填写长任务总指令");
-    if (mode !== "create" && !normalizeSelectedHeadingIds(project.markdown, selected).length) return notify("请至少选择一个标题范围");
+    if (mode === "modify" && !normalizeSelectedHeadingIds(project.markdown, selected).length) return notify("请至少选择一个标题范围");
     if (mode === "create" && !documentTitle.trim()) return notify("请填写方案标题");
     setBusy(true); stopRequested.current = false; onLockChange(true);
     try {
@@ -191,27 +222,68 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
       const taskId = uid("long-writing-v2");
       const backup = await createProposalBackup({ workspaceRoot: project.workspace.root, filePath: project.filePath, taskId, kind: "original" });
       const sourceRefs = await snapshotReferences();
-      const selectedHeadingIds = normalizeSelectedHeadingIds(saved.content, selected);
-      const mainSessionId = await createOpenCodeSession({ directory: project.workspace.root, title: `构案长任务：${project.name}`, model: modelRef, filePath: project.filePath });
-      activeSessions.current.add(mainSessionId);
+      const selectedHeadingIds = mode === "modify" ? normalizeSelectedHeadingIds(saved.content, selected) : [];
+      const mainSessionId = mode === "create"
+        ? await createOpenCodeSession({ directory: project.workspace.root, title: `新建文档目录：${documentTitle.trim()}`, model: modelRef, filePath: project.filePath })
+        : undefined;
       const now = new Date().toISOString();
+      const events = [
+        createLongWritingEvent("server_started", `OpenCode Server ${server.version ?? "unknown"} 已就绪`),
+        createLongWritingEvent("backup_created", `已创建任务前备份：${backup.path}`),
+        ...(mainSessionId ? [createLongWritingEvent("session_created", `已创建目录生成会话：${mainSessionId}`)] : []),
+      ];
       const base: LongWritingTaskRecord = {
         id: taskId, schemaVersion: 2, backend: "opencode-http", mainSessionId, serverVersion: server.version ?? undefined,
         filePath: project.filePath, workspaceRoot: project.workspace.root, mode, status: "preparing", instruction: instruction.trim(), documentTitle: mode === "create" ? documentTitle.trim() : undefined,
-        model: modelRef.modelId, modelProviderId: modelRef.providerId, modelRef, concurrency, selectedHeadingIds, selectedChapterIds: selectedHeadingIds, sourceRefs,
+        model: modelRef.modelId, modelProviderId: modelRef.providerId, modelRef, concurrency: 1, selectedHeadingIds, selectedChapterIds: selectedHeadingIds, sourceRefs,
         initialDocumentHash: saved.sha256, currentDocumentHash: saved.sha256,
         initialBackup: { path: backup.path, sourceFilePath: project.filePath, sourceHash: backup.sha256, kind: "initial", createdAt: backup.createdAt },
-        chapters: [], consistencyIssues: [],
-        events: [createLongWritingEvent("server_started", `OpenCode Server ${server.version ?? "unknown"} 已就绪`), createLongWritingEvent("backup_created", `已创建任务前备份：${backup.path}`), createLongWritingEvent("session_created", `已创建 Coordinator session：${mainSessionId}`)],
+        chapters: [], consistencyIssues: [], events,
         createdAt: now, updatedAt: now,
       };
       await persist(base);
-      const scope = mode === "create" ? `从零创建方案，标题为“${documentTitle.trim()}”。` : `仅规划以下已由用户选择的标题子树：\n${selectedHeadingIds.map(id => targetById.get(id)?.titlePath.join(" / ")).filter(Boolean).join("\n")}`;
-      const format = mode === "create" ? "只返回 JSON：{\"outlineMarkdown\":\"以 ## 开始、可包含 ### 到 ###### 的完整目录骨架\"}。不得使用代码围栏。" : "返回简洁的 Document Bible、各目标范围的写作目标、固定事实、术语和衔接要求。不得编辑文件。";
-      const result = await promptOpenCodeSession({ directory: project.workspace.root, sessionId: mainSessionId, phase: "analysis", system: "你是构案长任务 Coordinator。只做规划，不编辑文件、不运行命令、不联网；只使用当前方案和显式引用资料。", text: `${scope}\n\n总指令：\n${instruction.trim()}\n\n引用资料：\n${boundedReferences(sourceRefs)}\n\n${format}` });
-      const outline = mode === "create" ? extractCreatedOutline(result.text) : "";
+
+      if (mode === "modify") {
+        const jobs = await createJobs(base, saved.content, selectedHeadingIds);
+        const next: LongWritingTaskRecord = {
+          ...base,
+          status: "running",
+          chapters: jobs,
+          events: appendLongWritingEvent(base.events, createLongWritingEvent("task_started", `已创建 ${jobs.length} 个标题任务，开始按顺序串行编辑`)),
+          updatedAt: new Date().toISOString(),
+        };
+        await persist(next, true);
+        await runJobs(next);
+        return;
+      }
+
+      if (!mainSessionId) throw new Error("目录生成会话创建失败");
+      const result = await runOpenCodePrompt({
+        directory: project.workspace.root,
+        sessionId: mainSessionId,
+        phase: "analysis",
+        system: "你是构案的新建文档目录生成器。只生成 Markdown 目录，不编辑文件、不运行命令、不联网，也不输出 Document Bible、写作计划或正文。",
+        text: `目标文件绝对路径：${project.filePath}
+文档标题：${documentTitle.trim()}
+
+用户要求：
+${instruction.trim()}
+
+参考资料：
+${boundedReferences(sourceRefs)}
+
+只返回 JSON：{"outlineMarkdown":"以 ## 开始、可包含 ### 到 ###### 的完整目录骨架"}。不得使用代码围栏。`,
+      });
+      const outline = extractCreatedOutline(result.text);
       const current = taskRef.current ?? base;
-      const next: LongWritingTaskRecord = { ...current, status: "awaiting_outline", mainAnalysis: result.text, generatedOutlineMarkdown: outline || undefined, updatedAt: new Date().toISOString(), events: appendLongWritingEvent(current.events, createLongWritingEvent("outline_completed", "Coordinator 规划已完成，等待确认范围")) };
+      const next: LongWritingTaskRecord = {
+        ...current,
+        status: "awaiting_outline",
+        mainAnalysis: result.text,
+        generatedOutlineMarkdown: outline,
+        updatedAt: new Date().toISOString(),
+        events: appendLongWritingEvent(current.events, createLongWritingEvent("outline_completed", "目录已生成，等待确认")),
+      };
       setGeneratedOutline(outline); await persist(next);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -228,7 +300,7 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
     if (!jobs.length) throw new Error("确认后的目录中没有可执行标题范围"); return jobs;
   };
   const confirmAndRun = async () => {
-    const current = taskRef.current; if (!current) return; setBusy(true);
+    const current = taskRef.current; if (!current || current.mode !== "create") return; setBusy(true);
     try {
       let snapshot = await readTextFileSnapshot(current.filePath); let ids = current.selectedHeadingIds ?? [];
       if (current.mode === "create") {
@@ -244,72 +316,114 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
   };
 
   const runJobs = async (input?: LongWritingTaskRecord, onlyHeadingId?: string) => {
-    const current = input ?? taskRef.current; if (!current?.mainSessionId || !current.modelRef) return;
+    const current = input ?? taskRef.current; if (!current?.modelRef) return;
     setBusy(true); stopRequested.current = false; onLockChange(true);
     try {
       await ensureServer();
       const candidates = current.chapters.filter(job => (!onlyHeadingId || job.headingId === onlyHeadingId) && job.status !== "completed" && job.status !== "awaiting_review");
-      await mutate(value => ({ ...value, status: "running", error: undefined, chapters: value.chapters.map(job => candidates.some(candidate => candidate.id === job.id) ? { ...job, status: job.analysis ? "awaiting_write" : "queued", error: undefined } : job), events: appendLongWritingEvent(value.events, createLongWritingEvent("resumed", `开始 ${candidates.length} 个子任务：并行分析 ${value.concurrency}，串行写入 1`)), updatedAt: new Date().toISOString() }));
-      await mapConcurrent(candidates.filter(job => !job.analysis), current.concurrency, async seed => {
-        if (stopRequested.current) return;
-        let job = taskRef.current!.chapters.find(value => value.id === seed.id)!; let sessionId = job.sessionId;
-        if (!sessionId) {
-          sessionId = await createOpenCodeSession({ directory: current.workspaceRoot, title: `标题任务：${job.titlePath.join(" / ")}`, parentId: current.mainSessionId, model: current.modelRef!, filePath: current.filePath });
-          activeSessions.current.add(sessionId);
-        }
-        await patchJob(job.id, { status: "analyzing", sessionId, startedAt: new Date().toISOString(), attempts: job.attempts + 1 });
-        const snapshot = await readTextFileSnapshot(current.filePath); const target = getHeadingTargetById(snapshot.content, job.headingId ?? job.chapterId);
-        if (!target) throw new Error(`标题范围已不存在：${job.titlePath.join(" / ")}`);
-        const result = await promptOpenCodeSession({ directory: current.workspaceRoot, sessionId, phase: "analysis", system: ANALYSIS_SYSTEM, text: `正式文件：${current.filePath}\n目标：${target.titlePath.join(" / ")}（H${target.level}）\n总指令：${current.instruction}\n\n当前目标子树：\n${target.markdown}\n\n引用资料：\n${boundedReferences(current.sourceRefs, target)}` });
-        await patchJob(job.id, { status: "awaiting_write", analysis: result.text || "按总指令优化目标子树" });
-        await appendEvent("analysis_completed", `分析完成：${job.titlePath.join(" / ")}`, job.headingId);
-      });
+      await mutate(value => ({ ...value, concurrency: 1, status: "running", error: undefined, chapters: value.chapters.map(job => candidates.some(candidate => candidate.id === job.id) ? { ...job, status: "queued", analysis: undefined, error: undefined } : job), events: appendLongWritingEvent(value.events, createLongWritingEvent("resumed", `开始 ${candidates.length} 个子任务：按标题顺序串行直接编辑`)), updatedAt: new Date().toISOString() }));
       for (const seed of candidates) {
         if (stopRequested.current) break;
-        const job = taskRef.current!.chapters.find(value => value.id === seed.id)!;
-        if (job.status === "completed") continue; if (!job.sessionId) throw new Error(`子任务缺少 session：${job.titlePath.join(" / ")}`);
-        const before = await readTextFileSnapshot(current.filePath); const beforeTarget = getHeadingTargetById(before.content, job.headingId ?? job.chapterId);
-        if (!beforeTarget) throw new Error(`写入前标题范围已不存在：${job.titlePath.join(" / ")}`);
-        await patchJob(job.id, { status: "writing", preEditDocumentMarkdown: before.content, preEditDocumentHash: before.sha256, originalMarkdown: beforeTarget.markdown, originalHash: await sha256Text(beforeTarget.markdown) });
-        await appendEvent("commit_started", `获得写锁：${job.titlePath.join(" / ")}`, job.headingId);
-        await promptOpenCodeSession({ directory: current.workspaceRoot, sessionId: job.sessionId, phase: "write", system: WRITING_SYSTEM, text: `正式文件绝对路径：${current.filePath}\n唯一允许修改的目标：${beforeTarget.titlePath.join(" / ")}（H${beforeTarget.level}，ID ${beforeTarget.id}）\n总指令：${current.instruction}\n\n已完成的分析计划：\n${job.analysis}\n\n允许使用的引用资料：\n${boundedReferences(current.sourceRefs, beforeTarget)}\n\n现在重新读取正式文件，只编辑该目标子树。` });
-        const after = await readTextFileSnapshot(current.filePath);
-        if (after.sha256 === before.sha256) { await patchJob(job.id, { status: "retryable", error: "OpenCode 未修改正式文件" }); continue; }
-        const validation = validateHeadingTargetEdit(before.content, after.content, beforeTarget.id);
-        if (!validation.valid) {
-          const rollback = await writeTextFileChecked(current.filePath, before.content, after.sha256);
-          if (rollback.outcome !== "saved") {
-            await mutate(value => ({ ...value, status: "conflict", error: `OpenCode 越界修改且回滚时检测到外部变化：${validation.reason}`, updatedAt: new Date().toISOString() }));
-            throw new Error("检测到越界修改和外部文件冲突，未覆盖磁盘版本");
+        let sessionId = taskRef.current!.chapters.find(value => value.id === seed.id)?.sessionId;
+        try {
+          const job = taskRef.current!.chapters.find(value => value.id === seed.id)!;
+          if (!sessionId) {
+            sessionId = await createOpenCodeSession({ directory: current.workspaceRoot, title: `标题任务：${job.titlePath.join(" / ")}`, parentId: current.mainSessionId, model: current.modelRef, filePath: current.filePath });
           }
-          const reason = `OpenCode 修改超出目标范围，已回滚：${validation.reason}`;
-          await onDocumentSnapshot(rollback.snapshot);
+          const before = await readTextFileSnapshot(current.filePath);
+          const beforeTarget = resolveJobTarget(before.content, job);
+          if (!beforeTarget) throw new Error(`编辑前标题范围已不存在：${job.titlePath.join(" / ")}`);
           await patchJob(job.id, {
-            status: "awaiting_review",
-            error: reason,
-            scopeReview: {
-              reason: validation.reason,
-              proposedDocumentMarkdown: after.content,
-              proposedDocumentHash: after.sha256,
-              rollbackDocumentHash: rollback.snapshot.sha256,
-              createdAt: new Date().toISOString(),
-            },
+            status: "writing",
+            sessionId,
+            analysis: undefined,
+            startedAt: job.startedAt ?? new Date().toISOString(),
+            attempts: job.attempts + 1,
+            preEditDocumentMarkdown: before.content,
+            preEditDocumentHash: before.sha256,
+            originalMarkdown: beforeTarget.markdown,
+            originalHash: await sha256Text(beforeTarget.markdown),
           });
-          await appendEvent("scope_review_requested", `越界修改已回滚并等待确认：${job.titlePath.join(" / ")}`, job.headingId); break;
+          await appendEvent("commit_started", `开始串行编辑：${job.titlePath.join(" / ")}`, job.headingId);
+          await runOpenCodePrompt({
+            directory: current.workspaceRoot,
+            sessionId,
+            phase: "write",
+            system: WRITING_SYSTEM,
+            text: buildLongWritingWorkerPrompt({
+              filePath: current.filePath,
+              targetTitlePath: beforeTarget.titlePath,
+              targetLevel: beforeTarget.level,
+              userInstruction: current.instruction,
+              referenceContext: boundedReferences(current.sourceRefs, beforeTarget),
+            }),
+          });
+          const after = await readTextFileSnapshot(current.filePath);
+          if (after.sha256 === before.sha256) {
+            await patchJob(job.id, { status: "retryable", error: "OpenCode 未修改正式文件" });
+            await appendEvent("worker_retry", `编辑未产生文件修改，等待重试：${job.titlePath.join(" / ")}`, job.headingId);
+            continue;
+          }
+          const validation = validateHeadingTargetEdit(before.content, after.content, beforeTarget.id);
+          if (!validation.valid) {
+            const rollback = await writeTextFileChecked(current.filePath, before.content, after.sha256);
+            if (rollback.outcome !== "saved") {
+              await mutate(value => ({ ...value, status: "conflict", error: `OpenCode 越界修改且回滚时检测到外部变化：${validation.reason}`, updatedAt: new Date().toISOString() }));
+              throw new Error("检测到越界修改和外部文件冲突，未覆盖磁盘版本");
+            }
+            const reason = `OpenCode 修改超出目标范围，已回滚：${validation.reason}`;
+            await onDocumentSnapshot(rollback.snapshot);
+            await patchJob(job.id, {
+              status: "awaiting_review",
+              error: reason,
+              scopeReview: {
+                reason: validation.reason,
+                proposedDocumentMarkdown: after.content,
+                proposedDocumentHash: after.sha256,
+                rollbackDocumentHash: rollback.snapshot.sha256,
+                createdAt: new Date().toISOString(),
+              },
+            });
+            await appendEvent("scope_review_requested", `越界修改已回滚并等待确认：${job.titlePath.join(" / ")}`, job.headingId);
+            break;
+          }
+          const draft: ChapterDraftResult = { chapterId: validation.after.id, markdown: validation.after.markdown, summary: "OpenCode 已完成目标子树编辑", factsUsed: [], terminologyUsed: [], openQuestions: [] };
+          await onDocumentSnapshot(after);
+          await patchJob(job.id, {
+            status: "completed",
+            chapterId: validation.after.id,
+            headingId: validation.after.id,
+            headingLevel: validation.after.level,
+            parentHeadingId: validation.after.parentId,
+            titlePath: validation.after.titlePath,
+            draft,
+            summary: draft.summary,
+            postEditDocumentHash: after.sha256,
+            committedChapterHash: await sha256Text(validation.after.markdown),
+            completedAt: new Date().toISOString(),
+            error: undefined,
+          });
+          await appendEvent("commit_completed", `已校验并保留，继续下一标题：${validation.after.titlePath.join(" / ")}`, validation.after.id);
+        } catch (error) {
+          if (taskRef.current?.status === "conflict") throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          await patchJob(seed.id, { status: "retryable", sessionId, error: message }).catch(() => undefined);
+          await appendEvent("worker_retry", `编辑失败，等待重试：${seed.titlePath.join(" / ")} · ${message}`, seed.headingId).catch(() => undefined);
         }
-        const draft: ChapterDraftResult = { chapterId: beforeTarget.id, markdown: validation.after.markdown, summary: job.analysis ?? "OpenCode 已完成目标子树编辑", factsUsed: [], terminologyUsed: [], openQuestions: [] };
-        await onDocumentSnapshot(after);
-        await patchJob(job.id, { status: "completed", draft, summary: draft.summary, postEditDocumentHash: after.sha256, committedChapterHash: await sha256Text(validation.after.markdown), completedAt: new Date().toISOString(), error: undefined });
-        await appendEvent("commit_completed", `已校验并保留：${job.titlePath.join(" / ")}`, job.headingId);
       }
       if (stopRequested.current) return;
       const remaining = taskRef.current!.chapters.filter(job => job.status !== "completed");
       const reviews = remaining.filter(job => job.status === "awaiting_review").length;
       if (remaining.length) { await mutate(value => ({ ...value, status: "paused", error: reviews ? `${reviews} 个越界修改等待确认，队列已暂停` : `${remaining.length} 个标题任务等待重试`, updatedAt: new Date().toISOString() })); return; }
-      await mutate(value => ({ ...value, status: "checking", updatedAt: new Date().toISOString(), events: appendLongWritingEvent(value.events, createLongWritingEvent("consistency_started", "Coordinator 开始全篇一致性检查")) }));
       const finalSnapshot = await readTextFileSnapshot(current.filePath);
-      const consistency = await promptOpenCodeSession({ directory: current.workspaceRoot, sessionId: current.mainSessionId, phase: "analysis", system: "你是构案长任务 Coordinator。只读当前正式方案，检查术语、事实、重复、缺失、衔接和 Markdown 结构；不得编辑文件、运行命令或联网。", text: `正式文件：${current.filePath}\n总指令：${current.instruction}\n请读取最终方案并给出简洁一致性检查报告。` });
-      await mutate(value => ({ ...value, status: "completed", currentDocumentHash: finalSnapshot.sha256, mainAnalysis: `${value.mainAnalysis ?? ""}\n\n## 最终一致性检查\n${consistency.text}`.trim(), completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), events: appendLongWritingEvent(value.events, createLongWritingEvent("consistency_completed", "OpenCode 一致性检查完成")) }));
+      await mutate(value => ({
+        ...value,
+        status: "completed",
+        currentDocumentHash: finalSnapshot.sha256,
+        completedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        events: appendLongWritingEvent(value.events, createLongWritingEvent("consistency_completed", "全部标题任务已按顺序完成")),
+      }));
       onLockChange(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -343,11 +457,12 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
         await mutate(value => ({ ...value, status: "conflict", error: "确认越界修改时检测到外部文件变化，未覆盖磁盘版本", updatedAt: now }));
         return;
       }
-      const acceptedTarget = getHeadingTargetById(write.snapshot.content, job.headingId ?? job.chapterId);
+      const acceptedTarget = resolveJobTarget(write.snapshot.content, job);
       const acceptedMarkdown = acceptedTarget?.markdown ?? review.proposedDocumentMarkdown;
       const acceptedHash = await sha256Text(acceptedMarkdown);
+      const acceptedHeadingId = acceptedTarget?.id ?? job.headingId ?? job.chapterId;
       const draft: ChapterDraftResult = {
-        chapterId: job.headingId ?? job.chapterId,
+        chapterId: acceptedHeadingId,
         markdown: acceptedMarkdown,
         summary: job.analysis ?? "用户已确认 OpenCode 的越界修改",
         factsUsed: [],
@@ -363,6 +478,11 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
         chapters: value.chapters.map(valueJob => valueJob.id === jobId ? {
           ...valueJob,
           status: "completed",
+          chapterId: acceptedHeadingId,
+          headingId: acceptedHeadingId,
+          headingLevel: acceptedTarget?.level ?? valueJob.headingLevel,
+          parentHeadingId: acceptedTarget?.parentId ?? valueJob.parentHeadingId,
+          titlePath: acceptedTarget?.titlePath ?? valueJob.titlePath,
           draft,
           summary: draft.summary,
           postEditDocumentHash: write.snapshot.sha256,
@@ -431,31 +551,30 @@ export function LongWritingPanel({ project, saveBeforeStart, onDocumentSnapshot,
   </div>;
   if (!task) return <div className="long-writing-panel">
     {serverBar}
-    <div className="long-writing-intro"><WandSparkles size={18} /><div><b>OpenCode 长任务</b><span>Coordinator 与标题子任务统一使用本地 HTTP API；并行分析，串行写入。</span></div></div>
-    <label>任务模式<select value={mode} onChange={event => setMode(event.target.value as LongWritingMode)}><option value="fill">补写空白/短范围</option><option value="rewrite">改写所选范围</option><option value="targeted">按指令定向修改</option><option value="create">从零创建完整方案</option></select></label>
+    <div className="long-writing-intro"><WandSparkles size={18} /><div><b>OpenCode 长任务</b><span>修改文档直接创建标题 Worker；新建文档仅先生成目录，随后按标题顺序串行编辑并校验。</span></div></div>
+    <label>任务模式<select value={mode} onChange={event => setMode(event.target.value as LongWritingMode)}><option value="modify">修改文档</option><option value="create">新建文档</option></select></label>
     {mode === "create" && <label>方案标题<input value={documentTitle} onChange={event => setDocumentTitle(event.target.value)} /></label>}
     <label>总指令<textarea rows={5} value={instruction} onChange={event => setInstruction(event.target.value)} placeholder="说明目标、必须保留的事实、写作风格和边界…" /></label>
     <label>OpenCode 模型<OpenCodeModelSelect models={models} value={modelRef} onChange={setModelRef} disabled={serverStatus.phase !== "healthy"} placeholder={serverStatus.phase === "healthy" ? "请选择已连接模型" : "请先启动 OpenCode Server"} /></label>
     {mode !== "create" && <section className="long-writing-section"><div className="long-writing-section-title"><b>章节范围</b><span>{normalizeSelectedHeadingIds(project.markdown, selected).length} 个有效任务</span></div><div className="long-writing-tree-toolbar"><div className="long-writing-tree-search"><Search size={12} /><input type="search" value={headingSearch} onChange={event => setHeadingSearch(event.target.value)} placeholder="搜索标题或路径" aria-label="搜索章节范围" /></div><button type="button" onClick={() => setSelected(new Set(selectAllHeadingTargetIds(targetTree)))} title="全选" aria-label="全选章节"><CheckCheck size={13} /></button><button type="button" onClick={() => setSelected(new Set())} title="取消全选" aria-label="取消全选章节"><X size={13} /></button><button type="button" onClick={() => setCollapsed(new Set())} title="全部展开" aria-label="全部展开章节"><ChevronsDown size={13} /></button><button type="button" onClick={() => setCollapsed(new Set(collectCollapsibleHeadingIds(targetTree)))} title="全部收起" aria-label="全部收起章节"><ChevronsUp size={13} /></button></div><div className="long-writing-tree">{renderTree(visibleTargetTree)}{headingSearch.trim() && !visibleTargetTree.length && <div className="long-writing-tree-empty">没有匹配的标题</div>}</div></section>}
     <ContextReferences labels={referencedSources.map(source => source.title)} footer={<button type="button" onClick={onManageReferences}><BookOpen size={13} />管理引用资料</button>} />
-    <label>并行分析<select value={concurrency} onChange={event => setConcurrency(Number(event.target.value) as 1 | 2 | 3)}><option value={1}>1</option><option value={2}>2（默认）</option><option value={3}>3</option></select></label>
-    <button className="long-writing-primary" disabled={busy || !modelRef || serverStatus.phase !== "healthy"} onClick={() => void startPlanning()}>{busy ? "Coordinator 正在规划…" : "生成计划"}</button>
+    <button className="long-writing-primary" disabled={busy || !modelRef || serverStatus.phase !== "healthy"} onClick={() => void startLongWriting()}>{busy ? (mode === "create" ? "正在生成目录…" : "正在启动任务…") : (mode === "create" ? "生成目录" : "开始修改")}</button>
   </div>;
   const completed = task.chapters.filter(job => job.status === "completed").length; const progress = task.chapters.length ? Math.round(completed / task.chapters.length * 100) : 0;
   const detailJob = detailTarget?.jobId ? task.chapters.find(job => job.id === detailTarget.jobId) : undefined;
   const detailSessionId = detailTarget ? detailJob?.sessionId ?? (!detailTarget.jobId ? task.mainSessionId : undefined) : undefined;
   return <div className="long-writing-panel">
     {serverBar}
-    <div className={`long-writing-task-head status-${task.status}`}><div><b>{task.status === "awaiting_outline" ? "计划待确认" : `OpenCode 长任务：${task.status}`}</b><span>{task.modelProviderId} / {task.model} · 并行分析 {task.concurrency} · 串行写入</span></div><em>{progress}%</em></div>
+    <div className={`long-writing-task-head status-${task.status}`}><div><b>{task.status === "awaiting_outline" ? "目录待确认" : `OpenCode 长任务：${task.status}`}</b><span>{task.modelProviderId} / {task.model} · 按标题顺序串行编辑</span></div><em>{progress}%</em></div>
     <div className="long-writing-progress"><i style={{ width: `${progress}%` }} /></div>
     {task.error && <div className="long-writing-warning"><AlertTriangle size={14} />{task.error}</div>}
     <LongWritingEventLog events={task.events ?? []} busy={busy} />
-    {task.status === "awaiting_outline" && <><section className="long-writing-plan-review"><b>Coordinator 计划</b><pre>{task.mainAnalysis}</pre></section>{task.mode === "create" && <label>目录 Markdown<textarea rows={12} value={generatedOutline} onChange={event => setGeneratedOutline(event.target.value)} /></label>}<button className="long-writing-primary" disabled={busy} onClick={() => void confirmAndRun()}><CirclePlay size={14} />确认范围并运行</button><button disabled={busy} onClick={() => void restoreOriginal()}><RotateCcw size={14} />取消并恢复原文</button></>}
+    {task.status === "awaiting_outline" && <><section className="long-writing-plan-review"><b>生成的目录</b><span>可直接调整目录，确认后将按 H2 标题顺序串行新建正文。</span></section><label>目录 Markdown<textarea rows={12} value={generatedOutline} onChange={event => setGeneratedOutline(event.target.value)} /></label><button className="long-writing-primary" disabled={busy} onClick={() => void confirmAndRun()}><CirclePlay size={14} />确认目录并运行</button><button disabled={busy} onClick={() => void restoreOriginal()}><RotateCcw size={14} />取消并恢复原文</button></>}
     <div className="long-writing-jobs">
-      <LongWritingCoordinatorCard task={task} onOpen={() => setDetailTarget({})} />
-      {task.status !== "awaiting_outline" && task.chapters.map(job => <LongWritingJobCard key={job.id} job={job} filePath={task.filePath} workspaceRoot={task.workspaceRoot} onOpen={() => setDetailTarget({ jobId: job.id })} onLocate={() => onLocateChapter(job.titlePath)} onRetry={() => void runJobs(undefined, job.headingId ?? job.chapterId)} />)}
+      {task.mode === "create" && task.mainSessionId && <LongWritingOutlineCard task={task} onOpen={() => setDetailTarget({})} liveMessages={sessionConversations[task.mainSessionId]} activitySummary={sessionActivities[task.mainSessionId]?.at(-1)?.summary} />}
+      {task.status !== "awaiting_outline" && task.chapters.map(job => <LongWritingJobCard key={job.id} job={job} filePath={task.filePath} workspaceRoot={task.workspaceRoot} onOpen={() => setDetailTarget({ jobId: job.id })} onLocate={() => onLocateChapter(job.titlePath)} onRetry={() => void runJobs(undefined, job.headingId ?? job.chapterId)} liveMessages={job.sessionId ? sessionConversations[job.sessionId] : undefined} activitySummary={job.sessionId ? sessionActivities[job.sessionId]?.at(-1)?.summary : undefined} />)}
     </div>
-    {detailTarget && <LongWritingDetailModal task={task} job={detailJob} busy={busy} close={() => setDetailTarget(null)} onLocate={detailJob ? () => onLocateChapter(detailJob.titlePath) : undefined} onRetry={detailJob ? () => void runJobs(undefined, detailJob.headingId ?? detailJob.chapterId) : undefined} onAcceptScopeReview={detailJob ? () => void decideScopeReview(detailJob.id, "accepted") : undefined} onRejectScopeReview={detailJob ? () => void decideScopeReview(detailJob.id, "rejected") : undefined} activitySignal={detailSessionId ? sessionActivities[detailSessionId]?.at(-1)?.id : undefined} />}
+    {detailTarget && <LongWritingDetailModal task={task} job={detailJob} busy={busy} close={() => setDetailTarget(null)} onLocate={detailJob ? () => onLocateChapter(detailJob.titlePath) : undefined} onRetry={detailJob ? () => void runJobs(undefined, detailJob.headingId ?? detailJob.chapterId) : undefined} onAcceptScopeReview={detailJob ? () => void decideScopeReview(detailJob.id, "accepted") : undefined} onRejectScopeReview={detailJob ? () => void decideScopeReview(detailJob.id, "rejected") : undefined} activitySignal={detailSessionId ? sessionRefreshSignals[detailSessionId] : undefined} liveMessages={detailSessionId ? sessionConversations[detailSessionId] : undefined} />}
     {busy && <div className="long-writing-actions"><button onClick={() => void stopTask(false)}><CirclePause size={14} />暂停</button><button onClick={() => void stopTask(true)}><Square size={13} />终止</button></div>}
     {!busy && ["paused", "failed"].includes(task.status) && <div className="long-writing-actions"><button onClick={() => void runJobs()}><CirclePlay size={14} />继续未完成任务</button><button onClick={() => void stopTask(true)}><Square size={13} />终止</button></div>}
     {task.status !== "restored" && <button className="long-writing-restore" disabled={busy} onClick={() => void restoreOriginal()}><RotateCcw size={14} />恢复任务前原文</button>}

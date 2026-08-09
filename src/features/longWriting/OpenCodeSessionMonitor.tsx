@@ -15,7 +15,7 @@ export function OpenCodeSessionMonitor({ task, activities, busy }: {
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const sessions = [
-    ...(task.mainSessionId ? [{ id: task.mainSessionId, title: "Coordinator", phase: task.status }] : []),
+    ...(task.mainSessionId ? [{ id: task.mainSessionId, title: "目录生成", phase: task.status }] : []),
     ...task.chapters.filter(job => job.sessionId).map(job => ({
       id: job.sessionId!,
       title: job.titlePath.join(" / "),

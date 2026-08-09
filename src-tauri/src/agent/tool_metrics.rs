@@ -80,7 +80,10 @@ fn duration_bucket(duration_ms: u64) -> &'static str {
 }
 
 #[tauri::command]
-pub(crate) fn record_agent_tool_quality_metric(app: AppHandle, metric: ToolQualityMetricInput) -> Result<(), String> {
+pub(crate) fn record_agent_tool_quality_metric(
+    app: AppHandle,
+    metric: ToolQualityMetricInput,
+) -> Result<(), String> {
     let db = open_db(&app)?;
     db.execute(
         "INSERT INTO agent_tool_quality_metrics(day, protocol, model, tool_name, result_kind, error_code, round_bucket, repaired, duration_bucket, count)
@@ -103,7 +106,10 @@ pub(crate) fn record_agent_tool_quality_metric(app: AppHandle, metric: ToolQuali
 }
 
 #[tauri::command]
-pub(crate) fn list_agent_tool_quality_metrics(app: AppHandle, days: Option<i64>) -> Result<Vec<ToolQualityMetricRow>, String> {
+pub(crate) fn list_agent_tool_quality_metrics(
+    app: AppHandle,
+    days: Option<i64>,
+) -> Result<Vec<ToolQualityMetricRow>, String> {
     let keep_days = days.unwrap_or(30).clamp(1, 365);
     let db = open_db(&app)?;
     let mut statement = db.prepare(
@@ -113,15 +119,25 @@ pub(crate) fn list_agent_tool_quality_metrics(app: AppHandle, days: Option<i64>)
          ORDER BY day DESC, count DESC, tool_name ASC",
     ).map_err(|error| format!("读取工具质量指标失败: {error}"))?;
     let offset = format!("-{} days", keep_days - 1);
-    let rows = statement.query_map(params![offset], |row| {
-        let error_code: String = row.get(5)?;
-        Ok(ToolQualityMetricRow {
-            day: row.get(0)?, protocol: row.get(1)?, model: row.get(2)?, tool_name: row.get(3)?,
-            result_kind: row.get(4)?, error_code: (!error_code.is_empty()).then_some(error_code),
-            round_bucket: row.get(6)?, repaired: row.get::<_, i64>(7)? != 0, duration_bucket: row.get(8)?, count: row.get(9)?,
+    let rows = statement
+        .query_map(params![offset], |row| {
+            let error_code: String = row.get(5)?;
+            Ok(ToolQualityMetricRow {
+                day: row.get(0)?,
+                protocol: row.get(1)?,
+                model: row.get(2)?,
+                tool_name: row.get(3)?,
+                result_kind: row.get(4)?,
+                error_code: (!error_code.is_empty()).then_some(error_code),
+                round_bucket: row.get(6)?,
+                repaired: row.get::<_, i64>(7)? != 0,
+                duration_bucket: row.get(8)?,
+                count: row.get(9)?,
+            })
         })
-    }).map_err(|error| format!("读取工具质量指标失败: {error}"))?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|error| format!("读取工具质量指标失败: {error}"))
+        .map_err(|error| format!("读取工具质量指标失败: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("读取工具质量指标失败: {error}"))
 }
 
 #[tauri::command]

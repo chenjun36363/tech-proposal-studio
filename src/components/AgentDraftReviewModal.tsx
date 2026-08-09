@@ -7,6 +7,7 @@ import { buildTextDiff } from "./textDiff";
 
 function reviewCopy(draft: AgentDraft) {
   if (draft.operation === "move_section") return { title: "章节移动审核", summary: `将「${draft.target.sectionTitle ?? "源章节"}」移动到「${draft.target.destinationSectionTitle ?? "目标章节"}」${draft.target.position === "before" ? "之前" : "之后"}`, before: "待移动章节", after: "目标位置章节", emptyBefore: "（源章节为空）", emptyAfter: "（目标章节为空）", footer: "接受后将移动章节及其全部子章节并重新编号", accept: "接受并移动" };
+  if (draft.operation === "replace_document") return { title: "文档修改详情", summary: "正式文件修改前后对照", before: "修改前文档", after: "修改后文档", emptyBefore: "（原文档为空）", emptyAfter: "（修改后文档为空）", footer: "确认前请检查修改是否超出目标章节", accept: "确认并应用" };
   if (draft.operation === "replace_selection") return { title: "选区修改审核", summary: "选区原文与替换稿对照", before: "选区原文", after: "替换稿", emptyBefore: "（选区为空）", emptyAfter: "（替换为空）", footer: "接受后将替换已校验的选区", accept: "接受并替换" };
   if (draft.operation === "insert_section") return { title: "章节插入审核", summary: `将在「${draft.target.sectionTitle ?? "目标章节"}」${draft.target.position === "before" ? "之前" : "之后"}插入`, before: "插入位置", after: "待插入章节", emptyBefore: "（不替换现有正文）", emptyAfter: "（插入内容为空）", footer: "接受后将插入章节并重新编号", accept: "接受并插入" };
   if (draft.operation === "delete_section") return { title: "章节删除审核", summary: "删除章节将同时删除其全部子章节", before: "待删除章节", after: "删除结果", emptyBefore: "（章节为空）", emptyAfter: "（整个章节将被删除）", footer: "接受后将删除章节并重新编号", accept: "确认删除" };

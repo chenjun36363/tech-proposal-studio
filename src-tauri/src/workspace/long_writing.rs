@@ -14,7 +14,8 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 const DB_FILENAME: &str = "workspace.db";
-const TASK_MODES: &[&str] = &["fill", "rewrite", "targeted", "create"];
+const TASK_MODES: &[&str] = &["modify", "create"];
+const LEGACY_MODIFY_TASK_MODES: &[&str] = &["fill", "rewrite", "targeted"];
 const TASK_STATUSES: &[&str] = &[
     "preparing",
     "awaiting_outline",
@@ -556,6 +557,21 @@ pub(crate) fn initialize_schema(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_task_mode(task: &mut Value) -> Result<String, String> {
+    let mode = value_string(task, "mode")?.to_string();
+    let normalized = if TASK_MODES.contains(&mode.as_str()) {
+        mode.clone()
+    } else if LEGACY_MODIFY_TASK_MODES.contains(&mode.as_str()) {
+        "modify".to_string()
+    } else {
+        return Err(format!("无效任务模式: {mode}"));
+    };
+    if normalized != mode {
+        set_json_field(task, "mode", Value::String(normalized.clone()));
+    }
+    Ok(normalized)
+}
+
 fn task_payload(db: &Connection, task_id: &str) -> Result<Option<Value>, String> {
     required(task_id, "taskId")?;
     let raw = db
@@ -567,8 +583,13 @@ fn task_payload(db: &Connection, task_id: &str) -> Result<Option<Value>, String>
         .optional()
         .map_err(|error| error.to_string())?
         .flatten();
-    raw.map(|text| serde_json::from_str(&text).map_err(|error| format!("任务 JSON 损坏: {error}")))
-        .transpose()
+    raw.map(|text| {
+        let mut task: Value =
+            serde_json::from_str(&text).map_err(|error| format!("任务 JSON 损坏: {error}"))?;
+        normalize_task_mode(&mut task)?;
+        Ok(task)
+    })
+    .transpose()
 }
 
 fn chapter_payload(
@@ -589,7 +610,7 @@ fn chapter_payload(
         .transpose()
 }
 
-fn save_task_sync(db: &Connection, workspace_root: &str, task: Value) -> Result<Value, String> {
+fn save_task_sync(db: &Connection, workspace_root: &str, mut task: Value) -> Result<Value, String> {
     reject_secrets(&task, "长任务")?;
     let id = value_string(&task, "id")?.to_string();
     let payload_root = value_string(&task, "workspaceRoot")?;
@@ -598,10 +619,7 @@ fn save_task_sync(db: &Connection, workspace_root: &str, task: Value) -> Result<
     if canonical_root(payload_root)? != root {
         return Err("task.workspaceRoot 与 workspaceRoot 参数不一致".into());
     }
-    let mode = value_string(&task, "mode")?;
-    if !TASK_MODES.contains(&mode) {
-        return Err(format!("无效任务模式: {mode}"));
-    }
+    let mode = normalize_task_mode(&mut task)?;
     let status = value_string(&task, "status")?;
     if !TASK_STATUSES.contains(&status) {
         return Err(format!("无效任务状态: {status}"));
@@ -701,9 +719,10 @@ fn list_task_payloads(
     let mut result = Vec::new();
     for raw in rows {
         if let Some(raw) = raw.map_err(|error| error.to_string())? {
-            result.push(
-                serde_json::from_str(&raw).map_err(|error| format!("任务 JSON 损坏: {error}"))?,
-            );
+            let mut task: Value =
+                serde_json::from_str(&raw).map_err(|error| format!("任务 JSON 损坏: {error}"))?;
+            normalize_task_mode(&mut task)?;
+            result.push(task);
         }
     }
     Ok(result)
@@ -2255,9 +2274,9 @@ mod tests {
                 "id": id,
                 "filePath": path_string(&self.file),
                 "workspaceRoot": path_string(&self.root),
-                "mode": "rewrite",
+                "mode": "modify",
                 "status": status,
-                "instruction": "rewrite",
+                "instruction": "modify",
                 "model": "test-model",
                 "concurrency": 2,
                 "selectedChapterIds": [],
@@ -2373,6 +2392,17 @@ mod tests {
                 .iter()
                 .any(|column| normalized_key(column).contains("apikey")));
         }
+    }
+
+    #[test]
+    fn legacy_task_modes_are_normalized_to_modify() {
+        for legacy in LEGACY_MODIFY_TASK_MODES {
+            let mut task = json!({ "mode": legacy });
+            assert_eq!(normalize_task_mode(&mut task).unwrap(), "modify");
+            assert_eq!(task.get("mode").and_then(Value::as_str), Some("modify"));
+        }
+        let mut current = json!({ "mode": "create" });
+        assert_eq!(normalize_task_mode(&mut current).unwrap(), "create");
     }
 
     #[test]

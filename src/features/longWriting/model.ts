@@ -2,13 +2,13 @@ import type { AgentMessage, AgentModelResponse, AgentToolDefinition } from "../.
 import type { OpenAICompatibleConfig, ResolvedModelConfig } from "../../core/types";
 import { agentCompletion } from "../../services/model";
 import { isFallbackableModelError } from "../../services/llm/fallback";
-import type { ChapterDraftResult, ChapterSummarySubmission, ConsistencyIssue, OutlinePlan } from "./types";
+import type { ChapterDraftResult, ChapterSummarySubmission, ConsistencyIssue, LongWritingMode, OutlinePlan } from "./types";
 import { LongWritingContextBudgetError, longWritingPhaseOutputTokens, prepareLongWritingPayload, type LongWritingContextPhase } from "./contextBudget";
 
 export type LongWritingModelConfig = ResolvedModelConfig | OpenAICompatibleConfig;
 
 export interface OutlinePlanningInput {
-  mode: "fill" | "rewrite" | "targeted" | "create";
+  mode: LongWritingMode;
   instruction: string;
   documentTitle?: string;
   markdown: string;
@@ -153,7 +153,7 @@ const chapterSummaryTool: AgentToolDefinition = {
   type: "function",
   function: {
     name: "submit_chapter_summary",
-    description: "提交单个章节的结构化摘要，供 Coordinator 规划长文档。",
+    description: "提交单个章节的结构化摘要，供旧版目录规划流程使用。",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -678,7 +678,7 @@ export async function createOutlinePlan(
     "必须规划至少一个按顺序排列的 H2 章节；每个 frozenOutline 项只代表一个新 H2，action 必须为 fill，targetChapterIds 必须包含全部章节。",
   ] : ["标题骨架中的 Markdown 标题行必须保持可验证；未纳入处理范围的章节 action 使用 keep。"];
   const systemPrompt = [
-    "你是长篇软件技术方案的规划 Coordinator。",
+    "你是长篇软件技术方案的目录规划器。",
     "只能调用 submit_outline_plan，不得输出普通文本，不得调用任何文件或 Agent 工具。",
     "规划必须覆盖文档摘要、受众、写作规则、固定事实、术语、完整标题骨架、章节目标、衔接要求和最终处理范围。",
     ...creationRules,

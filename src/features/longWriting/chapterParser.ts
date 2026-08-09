@@ -357,13 +357,13 @@ export function getHeadingTargetById(markdown: string, headingId: string): Parse
   return parseHeadingTargets(markdown).find(target => target.id === headingId);
 }
 
-export function createFrozenTargetSignature(target: ParsedHeadingTarget): string {
+export function createFrozenTargetSignature(target: ParsedHeadingTarget, allowTargetTitleChange = false): string {
   const indexById = new Map(target.headings.map((heading, index) => [heading.id, index]));
   return JSON.stringify({
     version: 2,
-    headings: target.headings.map(heading => ({
+    headings: target.headings.map((heading, index) => ({
       level: heading.level,
-      title: heading.title,
+      title: allowTargetTitleChange && index === 0 ? null : heading.title,
       parentIndex: heading.parentId ? (indexById.get(heading.parentId) ?? null) : null,
     })),
   });
@@ -375,13 +375,15 @@ export type HeadingEditValidation =
 
 export function validateHeadingTargetEdit(beforeMarkdown: string, afterMarkdown: string, headingId: string): HeadingEditValidation {
   const before = getHeadingTargetById(beforeMarkdown, headingId);
-  const after = getHeadingTargetById(afterMarkdown, headingId);
-  if (!before || !after) return { valid: false, reason: "missing_target" };
+  if (!before) return { valid: false, reason: "missing_target" };
+  const after = getHeadingTargetById(afterMarkdown, headingId)
+    ?? parseHeadingTargets(afterMarkdown).find(target => target.start === before.start && target.level === before.level);
+  if (!after) return { valid: false, reason: "missing_target" };
   if (beforeMarkdown.slice(0, before.start) !== afterMarkdown.slice(0, after.start)
     || beforeMarkdown.slice(before.end) !== afterMarkdown.slice(after.end)) {
     return { valid: false, reason: "outside_target" };
   }
-  if (createFrozenTargetSignature(before) !== createFrozenTargetSignature(after)) {
+  if (createFrozenTargetSignature(before, true) !== createFrozenTargetSignature(after, true)) {
     return { valid: false, reason: "heading_tree" };
   }
   return { valid: true, before, after };

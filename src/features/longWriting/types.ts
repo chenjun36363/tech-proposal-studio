@@ -1,4 +1,4 @@
-export type LongWritingMode = "fill" | "rewrite" | "targeted" | "create";
+export type LongWritingMode = "modify" | "create";
 
 export type LongWritingTaskStatus =
   | "preparing"
@@ -133,7 +133,7 @@ export interface OutlinePlan {
   frozenOutline: OutlineChapterPlan[];
   transitionRequirements: ChapterTransitionRequirement[];
   targetChapterIds: string[];
-  /** Added by the deterministic Coordinator after the user confirms the outline. */
+  /** Added after the user confirms the generated outline. */
   frozenHeadingSignature?: string;
 }
 
@@ -247,7 +247,7 @@ export interface LongWritingTaskRecord {
   plan?: OutlinePlan;
   chapters: ChapterJob[];
   consistencyIssues: ConsistencyIssue[];
-  /** Bounded, secret-sanitized Coordinator event history persisted with the task payload. */
+  /** Bounded, secret-sanitized long-task event history persisted with the task payload. */
   events?: LongWritingEvent[];
   error?: string;
   createdAt: string;

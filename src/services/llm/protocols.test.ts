@@ -207,6 +207,28 @@ describe("openai-responses adapter", () => {
     expect(message?.content).toBe("完成");
     expect(message?.tool_calls?.[0].function).toEqual({ name: "write_todo", arguments: '{"todos":[]}' });
   });
+
+  it("rebuilds function arguments keyed by Responses item_id without duplicating snapshots", () => {
+    const stream = adapter.createChatStream();
+    const argumentsJson = JSON.stringify({
+      question: "本次改造采用哪种范围？",
+      recommended: { title: "核心流程", overview: "先覆盖主要路径" },
+      aggressive: { title: "全面改造", overview: "一次覆盖全部模块" },
+      conservative: { title: "最小试点", overview: "仅改造单个模块" },
+    });
+    stream.push(JSON.stringify({
+      type: "response.output_item.added",
+      item: { id: "item-ask", type: "function_call", call_id: "call-ask", name: "ask_user", arguments: '{"question":' },
+    }));
+    stream.push(JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "item-ask", delta: argumentsJson.slice(0, 40) }));
+    stream.push(JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "item-ask", delta: argumentsJson.slice(40) }));
+    stream.push(JSON.stringify({ type: "response.function_call_arguments.done", item_id: "item-ask", arguments: argumentsJson }));
+
+    const call = stream.finish().choices?.[0]?.message?.tool_calls?.[0];
+    expect(call?.id).toBe("call-ask");
+    expect(call?.function).toEqual({ name: "ask_user", arguments: argumentsJson });
+    expect(() => JSON.parse(call?.function.arguments ?? "")).not.toThrow();
+  });
 });
 
 describe("anthropic-messages adapter", () => {

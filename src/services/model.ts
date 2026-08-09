@@ -419,10 +419,16 @@ export async function agentCompletionStream(
     reasoningEffort: isReasoningEffort(payload.reasoningEffort) ? payload.reasoningEffort : undefined,
   };
   const request = adapter.buildChatRequest(resolved, canonical);
-  const accumulator = adapter.createChatStream();
+  // 每次重连都必须使用全新的协议累加器。工具调用参数不会作为可见文本提交给
+  // BufferedStreamEmitter；如果一次连接在参数 JSON 传输到一半时断开，重试是允许的。
+  // 复用旧累加器会把“上次半截 JSON + 本次完整 JSON”拼在一起，最终触发
+  // MALFORMED_ARGUMENTS（ask_user 这类参数较长的工具最容易遇到）。
+  let completedAccumulator: ReturnType<typeof adapter.createChatStream> | null = null;
   const run: StreamAttempt = async emitter => {
-    if (isDesktop()) await desktopStreamText(request, resolved, emitter, data => accumulator.push(data), signal);
-    else await browserStreamText(request, resolved, emitter, data => accumulator.push(data), signal);
+    const attemptAccumulator = adapter.createChatStream();
+    if (isDesktop()) await desktopStreamText(request, resolved, emitter, data => attemptAccumulator.push(data), signal);
+    else await browserStreamText(request, resolved, emitter, data => attemptAccumulator.push(data), signal);
+    completedAccumulator = attemptAccumulator;
   };
   await runStreamAttemptWithRetry(run, {
     signal,
@@ -434,7 +440,7 @@ export async function agentCompletionStream(
     backoffMs: retry?.backoffMs,
   });
   if (signal?.aborted) throw new DOMException("模型请求已取消", "AbortError");
-  return accumulator.finish();
+  return (completedAccumulator ?? adapter.createChatStream()).finish();
 }
 
 export async function listModels(config: ResolvedModelConfig | OpenAICompatibleConfig): Promise<ModelOption[]> {

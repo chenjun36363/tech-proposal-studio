@@ -5,7 +5,7 @@ export interface EditableOutlineChapter {
   key: string;
   /** Existing chapter whose body/subtree is retained during outline application. */
   sourceChapterId?: string;
-  /** Coordinator-only ID used to preserve planned transitions until a new chapter gets its real document ID. */
+  /** Temporary outline ID used until a new chapter gets its real document ID. */
   plannedChapterId?: string;
   title: string;
   action: OutlineChapterAction;
@@ -18,7 +18,7 @@ export interface ApplyEditableOutlineOptions {
 }
 
 function actionForMode(mode: LongWritingMode): OutlineChapterAction {
-  return mode === "fill" || mode === "create" ? "fill" : mode === "rewrite" ? "rewrite" : "modify";
+  return mode === "create" ? "fill" : "modify";
 }
 
 function plannedTitle(item: OutlinePlan["frozenOutline"][number]): string {
@@ -59,7 +59,7 @@ export function createNewOutlineChapter(mode: LongWritingMode, index: number): E
     key: `new:${Date.now()}:${index}:${Math.random().toString(36).slice(2)}`,
     title: "新增章节",
     action: actionForMode(mode),
-    goal: mode === "fill" || mode === "create" ? "补充完整本章正文" : mode === "rewrite" ? "编写并提升本章" : "按总指令编写本章",
+    goal: mode === "create" ? "补充完整本章正文" : "按总指令修改本章",
   };
 }
 
