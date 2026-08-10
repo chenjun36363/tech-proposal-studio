@@ -530,7 +530,6 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       push: () => pushGitRepository(workspaceRoot),
       changed: () => window.dispatchEvent(new CustomEvent(AGENT_GIT_CHANGED, { detail: { root: workspaceRoot } })),
     } : undefined;
-    const planningToolEnabled = !localAgent && agentMode === "plan";
     const promptParts = buildAgentSystemPromptParts({
       agentSettings,
       enabledSkills,
@@ -588,7 +587,6 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
         contextCompressionTokens: agentSettings.contextCompressionTokens,
         temperature: agentSettings.temperature,
         reasoningEffort: reasoningEffortOverride === "inherit" ? undefined : reasoningEffortOverride,
-        firstRoundToolName: planningToolEnabled ? "write_todo" : undefined,
         maxRounds: agentSettings.maxRounds,
         maxToolCalls: localAgent ? 1 : undefined,
         stopOnUnavailableTools: Boolean(localAgent),
@@ -707,7 +705,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       <div className="agent-question-options">
         {userQuestion.options.map(option => <label key={option.choice} className={questionChoice === option.choice ? "selected" : ""}>
           <input type="radio" name="agent-user-question" checked={questionChoice === option.choice} onChange={() => setQuestionChoice(option.choice)} />
-          <strong><i>{option.choice}</i>{option.title}{option.choice === "A" && <small>推荐</small>}</strong>
+          <strong><i>{option.choice}</i>{option.title}{option.recommended && <small>推荐</small>}</strong>
           <span>{option.overview}</span>
         </label>)}
         <label className={questionChoice === "D" ? "selected custom" : "custom"}>

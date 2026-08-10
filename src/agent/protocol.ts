@@ -1,8 +1,13 @@
 export type AgentRunStatus = "idle" | "running" | "waiting_approval" | "waiting_user" | "completed" | "round_limit_reached" | "failed" | "cancelled";
 
 export type AgentUserQuestionChoice = "A" | "B" | "C" | "D";
-export interface AgentUserQuestionOption { choice: Exclude<AgentUserQuestionChoice, "D">; title: string; overview: string; }
-export interface AgentUserQuestion { question: string; options: [AgentUserQuestionOption, AgentUserQuestionOption, AgentUserQuestionOption]; }
+export interface AgentUserQuestionOption {
+  choice: Exclude<AgentUserQuestionChoice, "D">;
+  title: string;
+  overview: string;
+  recommended?: boolean;
+}
+export interface AgentUserQuestion { question: string; options: AgentUserQuestionOption[]; }
 export interface AgentUserQuestionAnswer { choice: AgentUserQuestionChoice; answer: string; }
 
 export type AgentGitOperation = "stage" | "unstage" | "commit" | "create_branch" | "switch_branch" | "stash_push" | "stash_pop" | "fetch" | "pull" | "push";

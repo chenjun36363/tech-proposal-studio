@@ -57,7 +57,7 @@ export const proposalAgentSystemPrompt = `你是“构案”中的软件技术�
 10. 用户明确加入的资料已直接提供在系统上下文中。search_knowledge 的 query 使用 2～6 个核心名词或标准号，不要提交完整问题；无结果时最多改写关键词重试一次，禁止重复同一查询。
 11. 联网搜索可用时，仅在本地资料和知识库不足以回答时调用 web_search。需要搜索时直接调用工具，不要在回复文本中询问用户是否同意查询。搜索次数不得超过系统配置的单任务上限，每次任务最多阅读 3 个网页；优先选择政府、标准组织和厂商官方来源，达到足够依据后立即停止检索并完成用户任务，不要遍历全部结果或重复查询。需要依据网页正文时调用 read_web_page，不能只根据搜索摘要下结论。
 12. 只有跨会话仍有价值的事实、偏好或决策，才可调用 remember_project_fact 提出待审核记忆；不得声称记忆已被用户确认。
-13. 缺少会实质改变结果的关键上下文，且无法从当前对话、方案或可用资料中确定时，调用 ask_user。问题必须具体，并分别给出 A 首选推荐、B 更激进、C 更保守的方案概述；不要用普通回复代替工具提问，也不要询问可自行查明的信息。
+13. 缺少会实质改变结果的关键上下文，且无法从当前对话、方案或可用资料中确定时，调用 ask_user。问题必须具体，并给出 2～3 个互斥选项，用 recommended 标记推荐项；不要用普通回复代替工具提问，也不要询问可自行查明的信息。
 14. 用户要求验收、审核、合规检查，或任务包含明确完成标准时，在完成读取或修改后调用 review_content 逐项复核。该工具只检查不修改；最终回复必须如实保留未通过和无法确认项。`;
 
 export interface AgentDocumentState { markdown: string; filePath?: string; }
@@ -239,25 +239,68 @@ export function createProposalToolRegistry(params: {
     .register({
       definition: { type: "function", function: {
         name: "ask_user",
-        description: "仅在缺少无法从当前对话、方案或可用资料中获得的关键上下文时向用户提问，并暂停执行等待回答。必须描述一个明确问题，提供 A 首选推荐、B 更激进、C 更保守三种互斥方案；界面会自动提供 D 用户输入，不要自行添加第四项。用户回答将作为工具结果补充进当前上下文。",
-        parameters: objectSchema({
-          question: { type: "string", description: "需要用户补充上下文或作出决策的具体问题" },
-          recommended: { type: "object", description: "A：首选推荐方案", properties: { title: { type: "string" }, overview: { type: "string" } }, required: ["title", "overview"], additionalProperties: false },
-          aggressive: { type: "object", description: "B：收益或变化更大、风险也更高的激进方案", properties: { title: { type: "string" }, overview: { type: "string" } }, required: ["title", "overview"], additionalProperties: false },
-          conservative: { type: "object", description: "C：范围更小、风险更低的保守方案", properties: { title: { type: "string" }, overview: { type: "string" } }, required: ["title", "overview"], additionalProperties: false },
-        }, ["question", "recommended", "aggressive", "conservative"]),
+        description: "仅在缺少无法从当前对话、方案或可用资料中获得的关键上下文时向用户提问，并暂停执行等待回答。必须描述一个明确问题，提供 2～3 个互斥选项（options 数组），用 recommended 标记最多一个推荐项；界面会自动提供“用户输入”选项，不要自行添加兜底选项。用户回答将作为工具结果补充进当前上下文。",
+        parameters: {
+          type: "object",
+          properties: {
+            question: { type: "string", description: "需要用户补充上下文或作出决策的具体问题" },
+            options: {
+              type: "array",
+              description: "2～3 个互斥选项；每项必须提供 title，overview 可省略，recommended 标记推荐项（最多一个）",
+              minItems: 2,
+              maxItems: 3,
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string", description: "选项标题，简短明确" },
+                  overview: { type: "string", description: "选项概述，一句话说明取舍（可省略）" },
+                  recommended: { type: "boolean", description: "是否推荐该选项；最多标记一个" },
+                },
+                required: ["title"],
+              },
+            },
+          },
+          required: ["question", "options"],
+        },
       } },
+      normalizeArgs: args => {
+        const legacy = ["recommended", "aggressive", "conservative"]
+          .map(key => args[key])
+          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+        const rawOptions = Array.isArray(args.options) ? args.options as unknown[] : legacy;
+        const pickString = (source: Record<string, unknown>, keys: string[]) => {
+          for (const key of keys) {
+            const value = source[key];
+            if (typeof value === "string" && value.trim()) return value.trim();
+          }
+          return undefined;
+        };
+        const options = rawOptions
+          .map((item, index) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+            const record = item as Record<string, unknown>;
+            const title = pickString(record, ["title", "label"]);
+            if (!title) return null;
+            const overview = pickString(record, ["overview", "description"]) ?? "";
+            const recommended = record.recommended === true || (legacy.length > 0 && index === 0);
+            return { title, overview, recommended };
+          })
+          .filter((item): item is { title: string; overview: string; recommended: boolean } => Boolean(item));
+        const question = pickString(args, ["question", "prompt"]);
+        const result: Record<string, unknown> = {};
+        if (question) result.question = question;
+        if (options.length) result.options = options;
+        return result;
+      },
       execute: async (args, signal) => {
         if (!params.askUser) return { content: "当前界面无法接收用户回答。", isError: true };
-        const option = (value: unknown, field: string, choice: "A" | "B" | "C") => {
-          if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`缺少参数：${field}`);
-          const item = value as Record<string, unknown>;
-          return { choice, title: text(item.title, `${field}.title`), overview: text(item.overview, `${field}.overview`) };
-        };
-        const question: AgentUserQuestion = {
-          question: text(args.question, "question"),
-          options: [option(args.recommended, "recommended", "A"), option(args.aggressive, "aggressive", "B"), option(args.conservative, "conservative", "C")],
-        };
+        const options = (args.options as Array<Record<string, unknown>>).map((item, index) => ({
+          choice: "ABC"[index] as "A" | "B" | "C",
+          title: String(item.title).trim(),
+          overview: typeof item.overview === "string" ? item.overview.trim() : "",
+          ...(item.recommended === true ? { recommended: true as const } : {}),
+        }));
+        const question: AgentUserQuestion = { question: String(args.question).trim(), options };
         const answer = await params.askUser(question, signal);
         const selected = answer.choice === "D" ? undefined : question.options.find(item => item.choice === answer.choice);
         const content = answer.choice === "D"

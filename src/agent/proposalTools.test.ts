@@ -252,14 +252,24 @@ describe("proposal agent ask user tool", () => {
       name: "ask_user",
       arguments: {
         question: "本次改造应采用哪种范围？",
-        recommended: { title: "核心流程", overview: "先覆盖主要业务路径" },
-        aggressive: { title: "全面改造", overview: "一次覆盖全部模块" },
-        conservative: { title: "最小试点", overview: "仅改造单个模块" },
+        options: [
+          { title: "核心流程", overview: "先覆盖主要业务路径", recommended: true },
+          { title: "全面改造", overview: "一次覆盖全部模块" },
+          { title: "最小试点", overview: "仅改造单个模块" },
+        ],
       },
     }, new AbortController().signal);
 
     expect(askUser).toHaveBeenCalledOnce();
     expect(result.isError).toBe(false);
+    expect(askUser.mock.calls[0][0]).toEqual(expect.objectContaining({
+      question: "本次改造应采用哪种范围？",
+      options: expect.arrayContaining([
+        expect.objectContaining({ choice: "A", title: "核心流程", recommended: true }),
+        expect.objectContaining({ choice: "B", title: "全面改造" }),
+        expect.objectContaining({ choice: "C", title: "最小试点" }),
+      ]),
+    }));
     expect(result.content).toContain("用户已选择方案 B");
     expect(result.data).toEqual(expect.objectContaining({ kind: "user_question", answer: { choice: "B", answer: "接受更高实施风险" } }));
   });
@@ -273,13 +283,77 @@ describe("proposal agent ask user tool", () => {
     const result = await tools.execute({
       id: "ask-custom", name: "ask_user", arguments: {
         question: "范围如何确定？",
-        recommended: { title: "推荐", overview: "推荐概述" },
-        aggressive: { title: "激进", overview: "激进概述" },
-        conservative: { title: "保守", overview: "保守概述" },
+        options: [
+          { title: "推荐", overview: "推荐概述", recommended: true },
+          { title: "激进", overview: "激进概述" },
+          { title: "保守", overview: "保守概述" },
+        ],
       },
     }, new AbortController().signal);
 
     expect(result.content).toContain("先完成支付模块，再评估其余范围");
+  });
+
+  it("normalizes the legacy named-option shape into options", async () => {
+    const askUser = vi.fn().mockResolvedValue({ choice: "A", answer: "" });
+    const tools = createProposalToolRegistry({
+      project: createProject(), block, reviewDraft: () => true, askUser, onTodos: () => undefined,
+    });
+    const result = await tools.execute({
+      id: "ask-legacy", name: "ask_user", arguments: {
+        question: "范围如何确定？",
+        recommended: { title: "核心流程", overview: "先覆盖主要业务路径" },
+        aggressive: { title: "全面改造", overview: "一次覆盖全部模块" },
+        conservative: { title: "最小试点", overview: "仅改造单个模块" },
+      },
+    }, new AbortController().signal);
+
+    expect(result.isError).toBe(false);
+    const question = askUser.mock.calls[0][0] as { options: Array<{ choice: string; title: string; recommended?: boolean }> };
+    expect(question.options.map(option => option.title)).toEqual(["核心流程", "全面改造", "最小试点"]);
+    expect(question.options[0].recommended).toBe(true);
+  });
+
+  it("tolerates missing overviews, alias fields, and extra keys", async () => {
+    const askUser = vi.fn().mockResolvedValue({ choice: "A", answer: "" });
+    const tools = createProposalToolRegistry({
+      project: createProject(), block, reviewDraft: () => true, askUser, onTodos: () => undefined,
+    });
+    const result = await tools.execute({
+      id: "ask-loose", name: "ask_user", arguments: {
+        prompt: "范围如何确定？",
+        options: [
+          { label: "核心流程", description: "先覆盖主要业务路径", recommended: true, context: "额外字段应被忽略" },
+          { label: "全面改造" },
+          { title: "最小试点", overview: "仅改造单个模块" },
+        ],
+      },
+    }, new AbortController().signal);
+
+    expect(result.isError).toBe(false);
+    const question = askUser.mock.calls[0][0] as { question: string; options: Array<{ title: string; overview: string; recommended?: boolean }> };
+    expect(question.question).toBe("范围如何确定？");
+    expect(question.options.map(option => option.title)).toEqual(["核心流程", "全面改造", "最小试点"]);
+    expect(question.options[0].overview).toBe("先覆盖主要业务路径");
+    expect(question.options[1].overview).toBe("");
+    expect(question.options[0].recommended).toBe(true);
+  });
+
+  it("rejects calls with fewer than two options", async () => {
+    const tools = createProposalToolRegistry({
+      project: createProject(), block, reviewDraft: () => true,
+      askUser: async () => ({ choice: "A", answer: "" }),
+      onTodos: () => undefined,
+    });
+    const result = await tools.execute({
+      id: "ask-too-few", name: "ask_user", arguments: {
+        question: "范围如何确定？",
+        options: [{ title: "只有一个选项" }],
+      },
+    }, new AbortController().signal);
+
+    expect(result.isError).toBe(true);
+    expect(result.failure?.code).toBe("INVALID_ARGUMENTS");
   });
 });
 
