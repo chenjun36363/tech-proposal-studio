@@ -2750,7 +2750,12 @@
   /* ---- markdown preview ---- */
   .md-preview {
     padding: 22px 24px;
-    overflow: auto;
+    /* 不要在这里声明 overflow:auto：预览区真正的滚动容器是父级 .md-pane
+       （高度固定、overflow:auto，也是滚动同步的 ref 目标）。若 .md-preview
+       也设为 overflow:auto，它会被内容撑成与正文等高（scrollHeight==clientHeight），
+       从而成为一个“内容尺寸的非滚动容器”，在 Chromium/WebView2 中会吞掉滚轮事件、
+       不再向上冒泡到 .md-pane，导致预览区域无法滚动。令其保持可见，由父级统一滚动。 */
+    overflow: visible;
     line-height: 1.75;
     color: hsl(var(--foreground));
   }
