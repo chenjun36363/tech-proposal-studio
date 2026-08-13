@@ -31,6 +31,7 @@ export function createProject(): Project {
     selectedModel,
     model,
     search: { provider: "searxng", endpoint: "", apiKey: "", engines: ["baidu", "360search", "bing"] },
+    wikiCloud: { enabled: false, baseUrl: "http://127.0.0.1:5175", workspaceId: "", apiKey: "", knowledgeBaseIds: [], retrievalMode: "HYBRID", limit: 8 },
     mineru: {
       baseUrl: "https://mineru.net",
       apiKey: "",

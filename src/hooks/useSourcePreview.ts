@@ -30,6 +30,20 @@ export function useSourcePreview() {
       setMarkdown(`# ${next.title}\n\n${next.excerpt || ""}\n\n[打开网页](${next.location})`);
       return;
     }
+    if (next.kind === "cloud") {
+      const citation = next.citation;
+      const metadata = citation
+        ? [
+            `- 知识库：${citation.knowledgeBaseName || citation.knowledgeBaseId || "未标注"}`,
+            `- Document ID：${citation.documentId}`,
+            `- Chunk ID：${citation.chunkId}`,
+            citation.locator ? `- 位置：${citation.locator}` : "",
+            citation.sourceUri ? `- 原始来源：${citation.sourceUri}` : "",
+          ].filter(Boolean).join("\n")
+        : `- 原始来源：${next.location}`;
+      setMarkdown(`# ${next.title}\n\n${metadata}\n\n---\n\n${next.content ?? next.excerpt}`);
+      return;
+    }
     if (next.location.startsWith("knowledge:")) {
       setMarkdown(`# ${next.title}\n\n${next.content ?? next.excerpt}`);
       return;

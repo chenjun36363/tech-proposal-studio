@@ -17,8 +17,10 @@ use parser::{build_document_chunks, parse_sections};
 use repository::{
     chunk as repository_chunk, classify_documents, delete_category as repository_delete_category,
     document_id as repository_document_id, document_location, find_document_id,
-    index_document as repository_index_document, list_categories as repository_list_categories,
-    list_documents, list_sections, mark_document_restored, remove_document, resolve_workspace_path,
+    index_document as repository_index_document,
+    index_document_with_source as repository_index_document_with_source,
+    list_categories as repository_list_categories, list_documents, list_sections,
+    mark_document_restored, remove_document, resolve_workspace_path,
     save_category as repository_save_category,
     save_heading_metadata as repository_save_heading_metadata, search as search_repository,
     section_chunks as repository_section_chunks, section_scope as repository_section_scope,
@@ -293,6 +295,32 @@ fn store_document_with_progress(
     )
 }
 
+fn store_document_with_structure_progress(
+    workspace: &WorkspacePaths,
+    source_type: &str,
+    location: &str,
+    source_url: Option<&str>,
+    title: &str,
+    source_markdown: &str,
+    index_markdown: &str,
+    app: Option<&AppHandle>,
+) -> Result<KnowledgeDocument, String> {
+    repository_index_document_with_source(
+        workspace,
+        source_type,
+        location,
+        source_url,
+        title,
+        source_markdown,
+        index_markdown,
+        |document_id, stage, current, total, message| {
+            if let Some(app) = app {
+                emit_progress(app, document_id, stage, current, total, message);
+            }
+        },
+    )
+}
+
 fn safe_markdown_name(title: &str) -> String {
     let invalid = ['<', '>', ':', '\"', '/', '\\', '|', '?', '*'];
     let cleaned: String = title
@@ -363,7 +391,7 @@ fn validate_history_path(workspace: &WorkspacePaths, path: &str) -> Result<PathB
     let target =
         fs::canonicalize(resolve_workspace_path(workspace, path)).map_err(|e| e.to_string())?;
     if !target.starts_with(history) {
-        return Err("只能规范化工作区知识库目录下的副本".into());
+        return Err("只能处理工作区知识库目录下的副本".into());
     }
     Ok(target)
 }
@@ -489,31 +517,6 @@ pub async fn knowledge_analyze_markdown(
     })
 }
 
-fn backup_original(
-    workspace: &WorkspacePaths,
-    document_id: &str,
-    source: &Path,
-    content: &str,
-) -> Result<PathBuf, String> {
-    let dir = PathBuf::from(&workspace.root)
-        .join(".gouan")
-        .join("backups")
-        .join("knowledge")
-        .join(document_id);
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stem = source
-        .file_stem()
-        .and_then(|x| x.to_str())
-        .unwrap_or("document");
-    let path = dir.join(format!(
-        "{}-{}.md",
-        now_string(),
-        safe_markdown_name(stem).trim_end_matches(".md")
-    ));
-    fs::write(&path, content).map_err(|e| e.to_string())?;
-    Ok(path)
-}
-
 fn save_heading_metadata(
     workspace: &WorkspacePaths,
     document_id: &str,
@@ -549,45 +552,30 @@ pub async fn knowledge_apply_headings(
     emit_progress(
         &app,
         &document_id,
-        "normalization_backup",
+        "structure_preparing",
         0,
         0,
-        "正在备份规范化前的原文…",
+        "正在生成仅用于索引的章节结构…",
     );
-    backup_original(&workspace, &document_id, &source, &original)?;
-    emit_progress(
-        &app,
-        &document_id,
-        "normalization_writing",
-        0,
-        0,
-        "正在写入确认后的标题结构…",
-    );
-    let normalized = apply_heading_decisions(&original, &decisions, toc_start, toc_end);
-    fs::write(&source, &normalized).map_err(|e| e.to_string())?;
+    let structured = apply_heading_decisions(&original, &decisions, toc_start, toc_end);
     let title = source
         .file_stem()
         .and_then(|x| x.to_str())
         .unwrap_or("未命名");
-    let doc = match store_document_with_progress(
+    let doc = store_document_with_structure_progress(
         &workspace,
         "markdown",
         &absolute,
         None,
         title,
-        &normalized,
+        &original,
+        &structured,
         Some(&app),
-    ) {
-        Ok(doc) => doc,
-        Err(error) => {
-            let _ = fs::write(&source, &original);
-            return Err(error);
-        }
-    };
+    )?;
     emit_progress(
         &app,
         &document_id,
-        "normalization_metadata",
+        "structure_metadata",
         0,
         0,
         "正在保存章节识别结果…",
@@ -597,7 +585,7 @@ pub async fn knowledge_apply_headings(
         &doc.id,
         &decisions,
         &original,
-        &normalized,
+        &structured,
         "confirmed",
     )?;
     emit_progress(
@@ -606,7 +594,7 @@ pub async fn knowledge_apply_headings(
         "complete",
         doc.chunk_count as usize,
         doc.chunk_count as usize,
-        "结构规范化和索引已完成",
+        "章节索引已完成，知识库原文未修改",
     );
     Ok(doc)
 }
@@ -1278,8 +1266,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first.id, second.id);
-        let hits =
-            knowledge_search(workspace.clone(), "幂等".into(), Some(10), None, None, None).unwrap();
+        let hits = knowledge_search(
+            workspace.clone(),
+            "幂等".into(),
+            Some(10),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].chunk.content.contains("重复扣款"));
         assert_eq!(
@@ -1287,6 +1283,7 @@ mod tests {
                 workspace.clone(),
                 "支付 幂等".into(),
                 Some(10),
+                None,
                 None,
                 None,
                 None
@@ -1302,6 +1299,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(relaxed.len(), 1);
@@ -1313,6 +1311,7 @@ mod tests {
                 Some(10),
                 None,
                 Some(vec!["documentTitle".into()]),
+                None,
                 None
             )
             .unwrap()
@@ -1325,6 +1324,7 @@ mod tests {
             Some(10),
             None,
             Some(vec!["content".into()]),
+            None,
             None
         )
         .unwrap()
@@ -1336,6 +1336,7 @@ mod tests {
                 Some(10),
                 None,
                 Some(vec!["headingPath".into()]),
+                None,
                 None
             )
             .unwrap()
@@ -1344,17 +1345,24 @@ mod tests {
         );
         let chunk_id = hits[0].chunk.id.clone();
         knowledge_set_chunk_quality(workspace.clone(), chunk_id.clone(), "bad".into()).unwrap();
-        assert!(
-            knowledge_search(workspace.clone(), "幂等".into(), Some(10), None, None, None)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(knowledge_search(
+            workspace.clone(),
+            "幂等".into(),
+            Some(10),
+            None,
+            None,
+            None,
+            None
+        )
+        .unwrap()
+        .is_empty());
         assert_eq!(
             knowledge_search(
                 workspace.clone(),
                 "幂等".into(),
                 Some(10),
                 Some(vec!["bad".into()]),
+                None,
                 None,
                 None
             )
@@ -1420,6 +1428,7 @@ mod tests {
                 Some(10),
                 None,
                 None,
+                None,
                 None
             )
             .unwrap()
@@ -1433,6 +1442,7 @@ mod tests {
             None,
             None,
             Some(vec![first.id.clone()]),
+            None,
         )
         .unwrap();
         assert_eq!(only_first.len(), 1);
@@ -1444,6 +1454,7 @@ mod tests {
             None,
             None,
             Some(vec![second.id.clone()]),
+            None,
         )
         .unwrap();
         assert_eq!(only_second.len(), 1);
@@ -1454,7 +1465,8 @@ mod tests {
             Some(10),
             None,
             None,
-            Some(vec!["nonexistent-id".into()])
+            Some(vec!["nonexistent-id".into()]),
+            None
         )
         .unwrap()
         .is_empty());
@@ -1505,6 +1517,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap()
         .remove(0);
@@ -1513,6 +1526,7 @@ mod tests {
             workspace.clone(),
             "支付 接口".into(),
             Some(10),
+            None,
             None,
             None,
             None,
@@ -1528,6 +1542,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(!hits.is_empty());
@@ -1539,11 +1554,68 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(!quoted.is_empty());
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn indexes_confirmed_headings_without_rewriting_source_markdown() {
+        let root =
+            std::env::temp_dir().join(format!("gouan-virtual-heading-test-{}", now_string()));
+        let history = root.join("history");
+        fs::create_dir_all(&history).unwrap();
+        let source = history.join("reference.md");
+        let original = "第一章 概述\n\n这是保持不变的知识正文。\n\n1.1 建设目标\n\n目标正文。\n";
+        fs::write(&source, original).unwrap();
+        let workspace = WorkspacePaths {
+            root: root.to_string_lossy().into(),
+            history_dir: history.to_string_lossy().into(),
+        };
+        let decisions = vec![
+            HeadingReviewDecision {
+                id: "chapter".into(),
+                line: 0,
+                selected: true,
+                level: 1,
+                source: "numbering".into(),
+                confidence: 0.99,
+            },
+            HeadingReviewDecision {
+                id: "section".into(),
+                line: 4,
+                selected: true,
+                level: 2,
+                source: "numbering".into(),
+                confidence: 0.99,
+            },
+        ];
+        let structured = apply_heading_decisions(original, &decisions, None, None);
+        let document = store_document_with_structure_progress(
+            &workspace,
+            "markdown",
+            &source.to_string_lossy(),
+            None,
+            "reference",
+            original,
+            &structured,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&source).unwrap(), original);
+        assert_eq!(document.fingerprint, hash_text(original));
+        let sections = knowledge_sections(workspace.clone(), document.id).unwrap();
+        assert!(sections
+            .iter()
+            .any(|section| section.title == "第一章 概述"));
+        assert!(sections
+            .iter()
+            .any(|section| section.title == "1.1 建设目标"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn repeated_heading_recognition_is_idempotent() {
         let original="目 录\n\n[第一章 概述](#_Toc1)\n[1.1 建设目标](#_Toc2)\n[1.2 建设范围](#_Toc3)\n\n# 第一章 概述\n\n## 1.1 建设目标\n\n正文\n";
@@ -1606,6 +1678,7 @@ mod tests {
             None,
             Some(vec!["content".into()]),
             None,
+            None,
         )
         .unwrap();
         assert_eq!(hits.len(), 1);
@@ -1633,6 +1706,7 @@ mod tests {
                 Some(10),
                 Some(vec!["good".into()]),
                 Some(vec!["content".into()]),
+                None,
                 None
             )
             .unwrap()
@@ -1645,6 +1719,7 @@ mod tests {
             Some(10),
             Some(vec!["normal".into()]),
             Some(vec!["content".into()]),
+            None,
             None
         )
         .unwrap()
@@ -1662,6 +1737,7 @@ mod tests {
             Some(10),
             None,
             Some(vec!["headingPath".into()]),
+            None,
             None,
         )
         .unwrap();

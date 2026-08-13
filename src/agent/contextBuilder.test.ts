@@ -25,6 +25,27 @@ describe("buildProposalAgentMessages", () => {
     expect(messages[1]).toEqual({ role: "user", content: "继续上一轮" });
   });
 
+  it("preserves wiki-cloud citation metadata in the agent context", () => {
+    const conversation = createAgentConversation("project-cloud");
+    const messages = buildProposalAgentMessages({
+      systemPrompt: "system",
+      conversation,
+      pinnedContext: [{
+        source: {
+          id: "wiki-cloud:ws:chunk", kind: "cloud", title: "验收 & 引用", location: "s3://source", excerpt: "", fingerprint: "f", accessedAt: "now",
+          citation: { provider: "wiki-cloud", workspaceId: "ws", knowledgeBaseId: "kb", documentId: "doc", chunkId: "chunk", locator: "page:3", sourceUri: "s3://source", versionNo: 2 },
+        },
+        content: "云端检索内容",
+      }],
+    });
+
+    expect(messages[0].content).toContain('provider="wiki-cloud"');
+    expect(messages[0].content).toContain('document_id="doc"');
+    expect(messages[0].content).toContain('chunk_id="chunk"');
+    expect(messages[0].content).toContain('locator="page:3"');
+    expect(messages[0].content).toContain('title="验收 &amp; 引用"');
+  });
+
   it("can exclude memory and cap explicitly pinned context", () => {
     const conversation = createAgentConversation("project-2");
     const messages = buildProposalAgentMessages({

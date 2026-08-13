@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bold, BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, Lock, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bold, BookOpen, Brain, Check, Cloud, ChevronDown, ChevronRight, ChevronUp, Code2, Copy, Download, FilePlus2, FileText, FolderOpen, GitBranch, GitCompare, Globe2, Highlighter, IndentDecrease, IndentIncrease, Info, Italic, Lock, MessageSquareText, Minus, Moon, MoreHorizontal, MoveVertical, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Plus, Redo2, RefreshCw, Replace, Save, Search, Settings, Sparkles, Strikethrough, Sun, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { cycleTheme, getAppliedTheme, type Theme } from "./core/theme";
 import { createProject, defaultWorkspaceFromRoot, makeId } from "./core/data";
 import { exportMarkdown, loadProject, saveProject } from "./features/workspace/storage";
@@ -68,6 +68,7 @@ import { ToolSettingsSection } from "./features/settings/ToolSettingsSection";
 import { SkillsSettingsSection } from "./features/settings/SkillsSettingsSection";
 import { AppUpdateSettings } from "./features/settings/AppUpdateSettings";
 import { WordExportSettingsSection } from "./features/settings/WordExportSettingsSection";
+import { WikiCloudSettingsSection } from "./features/settings/WikiCloudSettingsSection";
 import { ApiKeyField } from "./components/ApiKeyField";
 import { useProposalDocumentController } from "./hooks/useProposalDocumentController";
 import { useDocumentSafety } from "./hooks/useDocumentSafety";
@@ -1281,7 +1282,7 @@ export default function App() {
 
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand-mark"><img src={appIcon} alt="" /><span>TechProposal Studio</span></div>
+      <div className="brand-mark"><img src={appIcon} alt="" /><span className="brand-copy"><b>TechProposal Studio</b><small>构案 · 技术方案工作台</small></span></div>
       <div className="project-identity">
         <input disabled={longWritingLocked || safety.status === "checking"} className={safety.isDirty ? "document-name-dirty" : ""} value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }), false)} />
         <div className="document-status-row">
@@ -1338,10 +1339,10 @@ export default function App() {
           {rightOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
         </IconButton>
         <IconButton
-          title={"当前：" + (theme === "gouan" ? "构案" : theme === "light" ? "浅色" : "深色") + "；切换到" + (theme === "gouan" ? "浅色" : theme === "light" ? "深色" : "构案") + "主题"}
+          title={`当前：${theme === "wiki" ? "知识云" : theme === "gouan" ? "构案" : theme === "light" ? "浅色" : "深色"}；点击切换主题`}
           onClick={() => setTheme(cycleTheme(theme))}
         >
-          {theme === "gouan" ? <Palette size={18} /> : theme === "light" ? <Sun size={18} /> : <Moon size={18} />}
+          {theme === "wiki" || theme === "gouan" ? <Palette size={18} /> : theme === "light" ? <Sun size={18} /> : <Moon size={18} />}
         </IconButton>
         <IconButton title="设置" onClick={() => setSettingsOpen(true)}><Settings size={18} /></IconButton>
       </div>
@@ -1978,10 +1979,11 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
   openEnvironmentCheck: () => void;
   save: (p: Project, context?: { connectionsLoadedRoot?: string }) => void | Promise<void>;
 }) {
-  const [section, setSection] = useState<"model" | "search" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "wordExport" | "workspace" | "about">("model");
+  const [section, setSection] = useState<"model" | "search" | "knowledgeCloud" | "agent" | "tools" | "skills" | "history" | "memory" | "parser" | "wordExport" | "workspace" | "about">("model");
   const [draft, setDraft] = useState(() => {
     const next = structuredClone(project);
     if (!next.mineru) next.mineru = createProject().mineru;
+    if (!next.wikiCloud) next.wikiCloud = createProject().wikiCloud;
     if (!next.wordExport) next.wordExport = createProject().wordExport;
     next.agent = normalizeAgentSettings(next.agent);
     return next;
@@ -1993,6 +1995,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
   const sectionDetails = {
     model: { title: "模型服务", description: "配置模型接口、访问凭据和默认模型。", icon: <Globe2 size={15} /> },
     search: { title: "联网搜索", description: "配置搜索提供方、接口地址和上游搜索引擎。", icon: <Search size={15} /> },
+    knowledgeCloud: { title: "远程知识库", description: "连接 wiki-cloud，并在构案中检索可追溯的远程知识片段。", icon: <Cloud size={15} /> },
     agent: { title: "Agent", description: "控制多轮执行、上下文、记忆与工具使用策略。", icon: <Settings size={15} /> },
     tools: { title: "工具", description: "管理注册给 AI 的工具及其可用状态。", icon: <Wrench size={15} /> },
     skills: { title: "技能", description: "管理 Agent Skills、ClawHub 市场和本地运行环境。", icon: <Sparkles size={15} /> },
@@ -2034,7 +2037,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
         const paths = defaultWorkspaceFromRoot(path);
         setDraft(current => applyConnections({ ...current, workspace: paths }, connections));
         setConnectionsLoadedRoot(path);
-        setWorkspaceLoadMessage(connections ? "已加载该工作区的模型、搜索和 MinerU 配置。" : "该工作区暂无连接配置，将沿用当前设置。");
+        setWorkspaceLoadMessage(connections ? "已加载该工作区的模型、搜索、wiki-cloud 和 MinerU 配置。" : "该工作区暂无连接配置，将沿用当前设置。");
       } catch (error) {
         setConnectionsLoadedRoot("");
         setWorkspaceLoadMessage(error instanceof Error ? error.message : "加载工作区配置失败");
@@ -2088,6 +2091,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
         <label className="wide">搜索 API Key<ApiKeyField value={draft.search.apiKey} placeholder="写入工作区 .gouan/connections.json" onChange={v => setDraft({ ...draft, search: { ...draft.search, apiKey: v } })} /></label>
       </div>
       </div>}
+      {section === "knowledgeCloud" && <WikiCloudSettingsSection draft={draft} setDraft={setDraft} desktop={desktop} />}
       {section === "agent" && <div className="settings-section-content agent-runtime-settings">
         <div className="agent-title"><Settings size={15} /><span>Agent 运行策略</span></div>
         <p className="muted">控制多轮执行、会话记忆、知识检索与引用方式。章节修改仍需在审核区手动确认。</p>

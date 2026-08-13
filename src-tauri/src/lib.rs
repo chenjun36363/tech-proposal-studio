@@ -48,6 +48,8 @@ mod terminal;
 mod tool_metrics;
 #[path = "integrations/updater.rs"]
 mod updater;
+#[path = "integrations/wiki_cloud.rs"]
+mod wiki_cloud;
 #[path = "workspace/files.rs"]
 mod workspace_files;
 pub(crate) use process::{child_path_env, resolve_shell, resolve_workdir};
@@ -914,6 +916,8 @@ pub fn run() {
             privileged::privileged_cancel_powershell,
             connections::load_workspace_connections,
             connections::save_workspace_connections,
+            wiki_cloud::wiki_cloud_search,
+            wiki_cloud::wiki_cloud_test_connection,
             load_secret_value,
             drafts::save_workspace_document_draft,
             drafts::list_workspace_document_drafts,

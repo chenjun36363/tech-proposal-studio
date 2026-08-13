@@ -37,13 +37,13 @@ export function HeadingReviewModal({ result, candidates, setCandidates, busy, pr
           {!candidates.length && <p className="muted">未发现标题候选，将按文档根节点切片。</p>}
         </section>
         <section className="heading-tree-preview">
-          <div className="heading-review-column-title">章节树预览</div>
+          <div className="heading-review-column-title">章节树预览（仅用于索引，不修改原文）</div>
           {selected.map(item => <div key={item.id} style={{ paddingLeft: `${(item.level - 1) * 14}px` }}><span>H{item.level}</span><b>{item.text}</b></div>)}
           {!selected.length && <p className="muted">没有选中的标题</p>}
         </section>
       </div>
       {busy && progress && <div className="knowledge-progress heading-review-progress"><span>{progress.message}</span><b>{progress.total > 1 ? `${progress.current}/${progress.total}` : `已进行 ${busySeconds} 秒`}</b></div>}
-      <div className="modal-actions"><button onClick={close} disabled={busy}>取消</button><button className="primary" onClick={confirm} disabled={busy}>{busy ? "正在规范化并索引…" : "确认结构并入库"}</button></div>
+      <div className="modal-actions"><button onClick={close} disabled={busy}>取消</button><button className="primary" onClick={confirm} disabled={busy}>{busy ? "正在建立章节索引…" : "确认结构并入库"}</button></div>
     </div>
   </div>;
 }

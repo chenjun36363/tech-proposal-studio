@@ -1,6 +1,6 @@
 export type BlockType = "text" | "table" | "code" | "mermaid" | "quote" | "decision" | "evidence";
 export interface DocumentBlock { id: string; sectionId: string; type: BlockType; content: string; order: number; status: "draft" | "review" | "done"; sourceRefs: string[]; metadata?: Record<string, string>; }
-export interface SourceRecord { id: string; kind: "local" | "web" | "manual"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; }
+export interface SourceRecord { id: string; kind: "local" | "web" | "manual" | "cloud"; title: string; location: string; excerpt: string; fingerprint: string; accessedAt: string; heading?: string; content?: string; citation?: WikiCloudCitation; }
 /** Legacy flat model config; still derived from selected provider for call-site compatibility. */
 export interface OpenAICompatibleConfig { baseUrl: string; apiKey: string; model: string; timeoutMs: number; headers: Record<string, string>; enabled: boolean; reasoningEffort?: ReasoningEffort; }
 export interface ModelOption { id: string; displayName: string; ownedBy?: string; }
@@ -46,6 +46,26 @@ export interface ResolvedModelConfig {
   reasoningEffort?: ReasoningEffort;
 }
 export interface SearchConfig { provider: "searxng" | "brave"; endpoint: string; apiKey: string; engines?: string[]; }
+export interface WikiCloudConfig {
+  enabled: boolean;
+  baseUrl: string;
+  workspaceId: string;
+  apiKey: string;
+  knowledgeBaseIds: string[];
+  retrievalMode: "HYBRID" | "LEXICAL_ONLY";
+  limit: number;
+}
+export interface WikiCloudCitation {
+  provider: "wiki-cloud";
+  workspaceId: string;
+  knowledgeBaseId?: string;
+  knowledgeBaseName?: string;
+  documentId: string;
+  chunkId: string;
+  locator?: string;
+  sourceUri?: string;
+  versionNo?: number;
+}
 /** MinerU cloud document → Markdown (Word/PDF). Stored under workspace `.gouan/connections.json`. */
 export interface MinerUConfig {
   baseUrl: string;
@@ -67,6 +87,8 @@ export interface ConnectionSettings {
   model: OpenAICompatibleConfig;
   search: SearchConfig;
   mineru: MinerUConfig;
+  /** wiki-cloud read-only retrieval provider; apiKey is held in keyring/local runtime only. */
+  wikiCloud: WikiCloudConfig;
 }
 export interface CommandPreset { id: string; name: string; program: string; args: string[]; cwd: string; timeoutMs: number; allowShell: boolean; stdin?: string; }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string; durationMs: number; }
@@ -116,6 +138,8 @@ export interface Project {
   search: SearchConfig;
   /** MinerU 文档解析配置（与 connections 同步；apiKey 不写入 project localStorage） */
   mineru: MinerUConfig;
+  /** wiki-cloud 只读知识检索配置；apiKey 不写入 project localStorage。 */
+  wikiCloud: WikiCloudConfig;
   /** Agent 会话、上下文和工具策略。 */
   agent: import("../agent/settings").AgentSettings;
   /** Markdown 与 Word 导出共用的标题编号设置。 */

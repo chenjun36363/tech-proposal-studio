@@ -113,6 +113,32 @@ function ensureMineru(project: Project): Project {
   return { ...project, mineru: createProject().mineru };
 }
 
+function ensureWikiCloud(project: Project): Project {
+  const base = createProject().wikiCloud;
+  const raw = project.wikiCloud;
+  if (!raw || typeof raw !== "object") {
+    return { ...project, wikiCloud: { ...base, knowledgeBaseIds: [...base.knowledgeBaseIds] } };
+  }
+  return {
+    ...project,
+    wikiCloud: {
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
+      baseUrl: typeof raw.baseUrl === "string" && raw.baseUrl.trim()
+        ? raw.baseUrl.trim().replace(/\/+$/, "")
+        : base.baseUrl,
+      workspaceId: typeof raw.workspaceId === "string" ? raw.workspaceId.trim() : "",
+      apiKey: typeof raw.apiKey === "string" ? raw.apiKey : "",
+      knowledgeBaseIds: Array.isArray(raw.knowledgeBaseIds)
+        ? [...new Set(raw.knowledgeBaseIds.filter(id => typeof id === "string" && id.trim()).map(id => id.trim()))]
+        : [],
+      retrievalMode: raw.retrievalMode === "LEXICAL_ONLY" ? "LEXICAL_ONLY" : "HYBRID",
+      limit: typeof raw.limit === "number" && Number.isFinite(raw.limit)
+        ? Math.min(50, Math.max(1, Math.trunc(raw.limit)))
+        : base.limit,
+    },
+  };
+}
+
 function migrateLegacyStructure(raw: StoredProject): Project {
   const contextSourceRefs = Array.isArray(raw.contextSourceRefs)
     ? raw.contextSourceRefs.filter(id => typeof id === "string")
@@ -159,7 +185,7 @@ function ensureProviders(project: Project): Project {
 function normalizeProject(raw: StoredProject): Project {
   const markdownReady = ensureMarkdown(raw);
   const migrated = migrateLegacyStructure(markdownReady);
-  return ensureCommands(ensureProviders(ensureWordExport(ensureHeadingNumbering(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) })))));
+  return ensureCommands(ensureProviders(ensureWordExport(ensureHeadingNumbering(ensureWikiCloud(ensureMineru({ ...migrated, agent: normalizeAgentSettings(migrated.agent) }))))));
 }
 export function loadProject(): Project {
   try {
@@ -192,6 +218,7 @@ export function saveProject(project: Project) {
     providers: (normalized.providers ?? []).map(provider => ({ ...provider, apiKey: "" })),
     search: { ...normalized.search, apiKey: "" },
     mineru: { ...(normalized.mineru ?? createProject().mineru), apiKey: "" },
+    wikiCloud: { ...(normalized.wikiCloud ?? createProject().wikiCloud), apiKey: "" },
   }));
 }
 export function exportMarkdown(project: Project) {

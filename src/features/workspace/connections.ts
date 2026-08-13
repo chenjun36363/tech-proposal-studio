@@ -8,6 +8,7 @@ import type {
   Project,
   SearchConfig,
   SelectedModel,
+  WikiCloudConfig,
 } from "../../core/types";
 import { createProject, makeId } from "../../core/data";
 import { isDesktop } from "../../services/runtime";
@@ -42,6 +43,7 @@ function defaults(): ConnectionSettings {
     model: { ...base.model, headers: { ...base.model.headers } },
     search: { ...base.search, engines: [...(base.search.engines ?? [])] },
     mineru: { ...base.mineru },
+    wikiCloud: { ...base.wikiCloud, knowledgeBaseIds: [...base.wikiCloud.knowledgeBaseIds] },
   };
 }
 
@@ -122,6 +124,21 @@ function normalizeSearch(raw: Partial<SearchConfig> | undefined): SearchConfig {
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   const n = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+export function normalizeWikiCloud(raw: Partial<WikiCloudConfig> | undefined | null): WikiCloudConfig {
+  const d = defaults().wikiCloud;
+  return {
+    enabled: typeof raw?.enabled === "boolean" ? raw.enabled : d.enabled,
+    baseUrl: typeof raw?.baseUrl === "string" ? raw.baseUrl.trim().replace(/\/+$/, "") : d.baseUrl,
+    workspaceId: typeof raw?.workspaceId === "string" ? raw.workspaceId.trim() : "",
+    apiKey: typeof raw?.apiKey === "string" ? raw.apiKey : "",
+    knowledgeBaseIds: Array.isArray(raw?.knowledgeBaseIds)
+      ? [...new Set(raw.knowledgeBaseIds.filter(id => typeof id === "string" && id.trim()).map(id => id.trim()))]
+      : [],
+    retrievalMode: raw?.retrievalMode === "LEXICAL_ONLY" ? "LEXICAL_ONLY" : "HYBRID",
+    limit: clampInt(raw?.limit, d.limit, 1, 50),
+  };
 }
 
 export function normalizeMineru(raw: Partial<MinerUConfig> | undefined | null): MinerUConfig {
@@ -236,6 +253,7 @@ export function normalizeConnections(raw: unknown): ConnectionSettings {
   const obj = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const search = normalizeSearch(obj.search as Partial<SearchConfig> | undefined);
   const mineru = normalizeMineru(obj.mineru as Partial<MinerUConfig> | undefined);
+  const wikiCloud = normalizeWikiCloud(obj.wikiCloud as Partial<WikiCloudConfig> | undefined);
 
   const hasProviders = Array.isArray(obj.providers);
   const isV2 = obj.version === 2 || hasProviders;
@@ -273,6 +291,7 @@ export function normalizeConnections(raw: unknown): ConnectionSettings {
     model,
     search,
     mineru,
+    wikiCloud,
   };
 }
 
@@ -291,6 +310,7 @@ export function connectionsFromProject(project: Project): ConnectionSettings {
     model: deriveModelSnapshot(providers, selectedModel, project.model),
     search: { ...project.search, engines: project.search.engines ? [...project.search.engines] : undefined },
     mineru: normalizeMineru(project.mineru),
+    wikiCloud: normalizeWikiCloud(project.wikiCloud),
   };
 }
 
@@ -304,6 +324,7 @@ export function applyConnections(project: Project, conn: ConnectionSettings | nu
     model: next.model,
     search: next.search,
     mineru: next.mineru,
+    wikiCloud: next.wikiCloud,
   };
 }
 
@@ -318,7 +339,11 @@ function loadBrowserConnections(): ConnectionSettings | null {
 }
 
 function saveBrowserConnections(conn: ConnectionSettings) {
-  localStorage.setItem(BROWSER_CONNECTIONS_KEY, JSON.stringify(normalizeConnections(conn)));
+  const normalized = normalizeConnections(conn);
+  localStorage.setItem(BROWSER_CONNECTIONS_KEY, JSON.stringify({
+    ...normalized,
+    wikiCloud: { ...normalized.wikiCloud, apiKey: "" },
+  }));
 }
 
 /**
@@ -358,11 +383,13 @@ async function reconcileConnectionSecrets(
 
   const mineruApiKey = await fill(conn.mineru.apiKey, "mineru-api-key", "/mineru/apiKey");
   const searchApiKey = await fill(conn.search.apiKey, "search-api-key", "/search/apiKey");
+  const wikiCloudApiKey = await fill(conn.wikiCloud.apiKey, `wiki-cloud-api-key:${conn.wikiCloud.workspaceId || "default"}`, "/wikiCloud/apiKey");
 
   const next: ConnectionSettings = {
     ...conn,
     mineru: { ...conn.mineru, apiKey: mineruApiKey },
     search: { ...conn.search, apiKey: searchApiKey },
+    wikiCloud: { ...conn.wikiCloud, apiKey: wikiCloudApiKey },
   };
 
   if (changed) {
@@ -421,6 +448,7 @@ export async function saveWorkspaceConnections(root: string | undefined, conn: C
     selectedModel: normalized.selectedModel,
     search: normalized.search,
     mineru: normalized.mineru,
+    wikiCloud: { ...normalized.wikiCloud, apiKey: "" },
   };
   if (root && isDesktop()) {
     return invoke<string>("save_workspace_connections", { root, payload });
@@ -450,6 +478,10 @@ export async function syncConnectionSecrets(conn: ConnectionSettings): Promise<v
     }
     if (conn.mineru.apiKey) {
       await invoke("store_secret", { name: "mineru-api-key", value: conn.mineru.apiKey });
+    }
+    const wikiCloudSecretName = `wiki-cloud-api-key:${conn.wikiCloud.workspaceId || "default"}`;
+    if (conn.wikiCloud.apiKey) {
+      await invoke("store_secret", { name: wikiCloudSecretName, value: conn.wikiCloud.apiKey });
     }
   } catch {
     /* keyring optional */

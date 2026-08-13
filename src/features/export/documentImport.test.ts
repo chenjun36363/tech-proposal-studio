@@ -49,6 +49,14 @@ describe("documentImport helpers", () => {
     expect(next).toContain("## 第1章 旧编号");
     expect(next).toContain("### 1.1 小节");
   });
+
+  it("preserves headings and numbering for knowledge imports", () => {
+    const raw = "# 资料标题\r\n\r\n## 原始章节\r\n\r\n### 自定义小节";
+    const next = prepareImportedMarkdown(raw, { renumberHeadings: false });
+    expect(next).toBe("# 资料标题\n\n## 原始章节\n\n### 自定义小节");
+    expect(next).not.toContain("第1章");
+    expect(next).not.toContain("1.1");
+  });
 });
 
 describe("resolveMineruConfig", () => {

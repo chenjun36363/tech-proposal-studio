@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, FolderSearch, Globe2, Layers3, Pencil, Trash2 } from "lucide-react";
+import { Cloud, Copy, FolderSearch, Globe2, Layers3, Pencil, Trash2 } from "lucide-react";
 import { makeId } from "../../core/data";
 import type { DocumentBlock, SourceRecord } from "../../core/types";
 
@@ -46,7 +46,7 @@ export function ContextPanel({ contextSources, context, updateBlock, updateSourc
     </div>}
     <div className="context-source-list">
       {contextSources.map((source, index) => <article key={source.id}><div className="context-source-index">{String(index + 1).padStart(2, "0")}</div><div className="context-source-body">
-        <span>{source.kind === "web" ? <Globe2 size={13} /> : source.kind === "manual" ? <Pencil size={13} /> : <FolderSearch size={13} />}{source.kind === "web" ? "网页来源" : source.kind === "manual" ? "手动内容" : "本地资料"}<small className="context-source-char-count">{sourceContent(source).replace(/\s/g, "").length.toLocaleString()} 字</small></span>
+        <span>{source.kind === "web" ? <Globe2 size={13} /> : source.kind === "manual" ? <Pencil size={13} /> : source.kind === "cloud" ? <Cloud size={13} /> : <FolderSearch size={13} />}{source.kind === "web" ? "网页来源" : source.kind === "manual" ? "手动内容" : source.kind === "cloud" ? "wiki-cloud" : "本地资料"}<small className="context-source-char-count">{sourceContent(source).replace(/\s/g, "").length.toLocaleString()} 字</small></span>
         <b>{source.title}</b><p>{source.excerpt || "（无摘要）"}</p><div>
           <button type="button" onClick={() => void openSourcePreview(source)}>预览</button>
           <button type="button" onClick={() => void copy(sourceContent(source), `已复制“${source.title}”`)}><Copy size={11} />复制</button>

@@ -40,13 +40,38 @@ pub(in crate::knowledge) fn index_document<F>(
     source_url: Option<&str>,
     title: &str,
     markdown: &str,
+    progress: F,
+) -> Result<KnowledgeDocument, String>
+where
+    F: FnMut(&str, &str, usize, usize, &str),
+{
+    index_document_with_source(
+        workspace,
+        source_type,
+        location,
+        source_url,
+        title,
+        markdown,
+        markdown,
+        progress,
+    )
+}
+
+pub(in crate::knowledge) fn index_document_with_source<F>(
+    workspace: &WorkspacePaths,
+    source_type: &str,
+    location: &str,
+    source_url: Option<&str>,
+    title: &str,
+    source_markdown: &str,
+    index_markdown: &str,
     mut progress: F,
 ) -> Result<KnowledgeDocument, String>
 where
     F: FnMut(&str, &str, usize, usize, &str),
 {
     let mut db = knowledge_db(workspace)?;
-    let fingerprint = hash_text(markdown);
+    let fingerprint = hash_text(source_markdown);
     let location = storage_location(workspace, location);
     let id = document_id_for_location(&db, &location)?;
     if let Some(existing) = load_document(&db, &id)? {
@@ -57,7 +82,10 @@ where
                 |row| row.get::<_, i64>(0),
             )
             .unwrap_or(1);
-        if existing.fingerprint == fingerprint && version >= CHUNKING_VERSION {
+        if source_markdown == index_markdown
+            && existing.fingerprint == fingerprint
+            && version >= CHUNKING_VERSION
+        {
             progress(
                 &id,
                 "index_unchanged",
@@ -70,7 +98,7 @@ where
     }
 
     progress(&id, "index_parsing", 0, 0, "正在解析 Markdown 章节…");
-    let sections = parse_sections(&id, title, markdown);
+    let sections = parse_sections(&id, title, index_markdown);
     progress(
         &id,
         "index_chunking",
@@ -198,7 +226,7 @@ where
     tx.commit().map_err(|e| e.to_string())?;
     if source_type == "markdown"
         && sections.len() <= 1
-        && markdown.chars().count() > MAX_CHUNK_CHARS
+        && source_markdown.chars().count() > MAX_CHUNK_CHARS
     {
         db.execute(
             "UPDATE knowledge_documents SET structure_status='review_recommended' WHERE id=?1 AND structure_status!='confirmed'",

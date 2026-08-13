@@ -17,10 +17,15 @@ export function isSupportedImportDocument(path: string): boolean {
   return SUPPORTED_EXT.test(path);
 }
 
-/** Pure helper: prepare MinerU markdown for workspace (renumber + normalize newlines). */
-export function prepareImportedMarkdown(raw: string): string {
+export interface DocumentImportOptions {
+  /** Formal proposals keep automatic numbering; knowledge imports preserve source headings. */
+  renumberHeadings?: boolean;
+}
+
+/** Pure helper: normalize MinerU markdown and optionally apply proposal heading numbering. */
+export function prepareImportedMarkdown(raw: string, options: DocumentImportOptions = {}): string {
   const normalized = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  return renumberHeadings(normalized);
+  return options.renumberHeadings === false ? normalized : renumberHeadings(normalized);
 }
 
 export function markdownNameFromSource(sourceFileName: string): string {
@@ -51,6 +56,7 @@ export async function importWordOrPdfToWorkspace(
   sourcePath: string,
   workspaceRoot: string,
   mineru?: MinerUConfig | null,
+  options: DocumentImportOptions = {},
 ): Promise<{ path: string; sourceFileName: string; assetRelativeDir: string | null; originalPath: string | null; originalWarning: string | null }> {
   if (!isDesktop()) throw new Error("Word/PDF 导入仅在桌面端可用");
   if (!workspaceRoot.trim()) throw new Error("请先在设置中配置工作目录");
@@ -62,7 +68,7 @@ export async function importWordOrPdfToWorkspace(
   // Allow empty apiKey here: Rust also reads connections.json + keyring.
 
   const converted = await convertDocumentWithMineru(sourcePath, workspaceRoot, config);
-  const markdown = prepareImportedMarkdown(converted.markdown);
+  const markdown = prepareImportedMarkdown(converted.markdown, options);
   const files = await listWorkspaceMarkdown(workspaceRoot);
   const sourceName = converted.sourceFileName || sourcePath.split(/[\\/]/).pop() || "导入文档.pdf";
   const mdName = uniqueImportedMarkdownName(

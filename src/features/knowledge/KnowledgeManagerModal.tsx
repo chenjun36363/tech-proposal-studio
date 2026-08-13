@@ -148,7 +148,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     setProgress({ documentId: "", stage: "document_parsing", current: 0, total: 0, message: "正在通过 MinerU 解析 Word / PDF…" });
     let temporaryPath = "";
     try {
-      const converted = await importWordOrPdfToWorkspace(sourcePath, project.workspace.root, project.mineru);
+      const converted = await importWordOrPdfToWorkspace(sourcePath, project.workspace.root, project.mineru, { renumberHeadings: false });
       temporaryPath = converted.path;
       setProgress({ documentId: "", stage: "structure_scanning", current: 0, total: 0, message: "文档解析完成，正在识别标题和章节结构…" });
       const result = await analyzeKnowledgeMarkdown(project.workspace, converted.path, project.model);
@@ -190,13 +190,13 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
   };
   const confirmReview = async () => {
     if (!project.workspace || !headingReview) return;
-    setProgress({ documentId: headingReview.documentId, stage: "normalization_preparing", current: 0, total: 0, message: "正在准备结构规范化…" });
+    setProgress({ documentId: headingReview.documentId, stage: "structure_preparing", current: 0, total: 0, message: "正在准备章节索引…" });
     setBusy(true);
     const decisions: HeadingReviewDecision[] = headingCandidates.map(item => ({ id: item.id, line: item.line, selected: item.selected, level: item.level, source: item.source, confidence: item.confidence }));
     try {
       await applyKnowledgeHeadings(project.workspace, headingReview, decisions);
-      setHeadingReview(null); setHeadingCandidates([]); await reload(); notify("文档结构已确认并入库");
-    } catch (error) { notify(error instanceof Error ? error.message : "规范化入库失败"); }
+      setHeadingReview(null); setHeadingCandidates([]); await reload(); notify("章节结构已确认并入库，原文未修改");
+    } catch (error) { notify(error instanceof Error ? error.message : "章节索引入库失败"); }
     finally { setBusy(false); }
   };
   const toggleDocument = async (documentId: string) => {
@@ -217,7 +217,7 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     try {
       const backups = await listKnowledgeBackups(project.workspace, document.id);
       if (!backups.length) return notify("该文档没有可恢复的原始快照");
-      if (!confirm(`恢复“${document.title}”到 ${backups[0].name}？当前规范化内容会被替换。`)) return;
+      if (!confirm(`恢复“${document.title}”到 ${backups[0].name}？当前知识库内容会被替换。`)) return;
       await restoreKnowledgeBackup(project.workspace, document.id, backups[0].path); await reload(); notify("已恢复原始版本并更新知识库");
     } catch (error) { notify(error instanceof Error ? error.message : "恢复原文失败"); }
     finally { setBusy(false); }
@@ -461,8 +461,8 @@ export function KnowledgeManagerModal({ project, updateProject, updateBlock, ref
     {importKind && project.workspace && <FileUploadPanel
       title={importKind === "markdown" ? "导入 Markdown 到知识库" : "导入 Word / PDF 到知识库"}
       description={importKind === "markdown"
-        ? "拖入 Markdown，或选择完整文件路径。导入后将先识别章节结构，再由你确认入库。"
-        : "拖入 Word / PDF，或选择完整文件路径。MinerU 转换完成后将进入章节结构确认；原始文件会复制到工作区 imports 目录保留。"}
+        ? "拖入 Markdown，或选择完整文件路径。章节识别仅用于索引，不会修改导入原文。"
+        : "拖入 Word / PDF，或选择完整文件路径。MinerU 转换后保留原始标题与编号，章节识别仅用于索引；原始文件会复制到工作区 imports 目录保留。"}
       extensions={importKind === "markdown" ? KNOWLEDGE_MARKDOWN_EXTENSIONS : KNOWLEDGE_DOCUMENT_EXTENSIONS}
       extensionLabel={importKind === "markdown" ? "Markdown（.md / .markdown）" : "Word / PDF（.doc / .docx / .pdf）"}
       destination={project.workspace.historyDir}

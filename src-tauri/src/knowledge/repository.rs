@@ -1,5 +1,5 @@
 mod indexing;
-pub(super) use indexing::index_document;
+pub(super) use indexing::{index_document, index_document_with_source};
 mod queries;
 pub(super) use queries::*;
 

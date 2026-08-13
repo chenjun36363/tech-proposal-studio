@@ -149,18 +149,22 @@ describe("workspace connections", () => {
     expect(next.mineru.apiKey).toBe("mu");
   });
 
-  it("round-trips browser connections including keys", async () => {
+  it("round-trips browser connections without persisting the wiki-cloud key", async () => {
     const project = createProject();
     const conn = connectionsFromProject(project);
     conn.providers[0].apiKey = "browser-model-key";
     conn.search.apiKey = "browser-search-key";
     conn.mineru.apiKey = "browser-mineru-key";
+    conn.wikiCloud = { ...conn.wikiCloud, enabled: true, workspaceId: "workspace-1", apiKey: "browser-wiki-cloud-key" };
     conn.search.endpoint = "http://searx";
     await saveWorkspaceConnections(undefined, conn);
     const loaded = await loadWorkspaceConnections();
     expect(loaded?.providers[0].apiKey).toBe("browser-model-key");
     expect(loaded?.search.apiKey).toBe("browser-search-key");
     expect(loaded?.mineru.apiKey).toBe("browser-mineru-key");
+    expect(loaded?.wikiCloud.workspaceId).toBe("workspace-1");
+    expect(loaded?.wikiCloud.apiKey).toBe("");
+    expect(localStorage.getItem("tech-proposal-studio.connections.v1")).not.toContain("browser-wiki-cloud-key");
     expect(loaded?.search.endpoint).toBe("http://searx");
     expect(loaded?.search.engines).toEqual(["baidu", "360search", "bing"]);
   });

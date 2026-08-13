@@ -1,0 +1,454 @@
+/* Keep the pre-existing brand treatment intact outside this skin. */
+.brand-mark .brand-copy b {
+  color: inherit;
+  font: inherit;
+}
+
+.brand-mark .brand-copy small {
+  display: none;
+}
+
+/* ============================================================
+ * wiki-cloud aligned skin — default TechProposal Studio theme
+ * Shares wiki-cloud's system-blue, translucent chrome, quiet
+ * separators and rounded controls while preserving editor density.
+ * ============================================================ */
+@layer base {
+  .wiki {
+    color-scheme: light;
+    --background: 240 24% 96%;
+    --foreground: 240 3% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 3% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 3% 12%;
+    --primary: 211 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 23% 97%;
+    --secondary-foreground: 240 3% 18%;
+    --muted: 240 11% 91%;
+    --muted-foreground: 240 3% 43%;
+    --accent: 211 100% 95%;
+    --accent-foreground: 211 100% 42%;
+    --destructive: 3 100% 59%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 6% 83%;
+    --input: 240 6% 83%;
+    --ring: 211 100% 50%;
+    --success: 135 59% 49%;
+    --warning: 35 100% 50%;
+    --sidebar-bg: 240 23% 97%;
+    --radius: 0.6875rem;
+    --wiki-page: #f2f2f7;
+    --wiki-page-soft: #f7f7fa;
+    --wiki-sidebar: rgba(248, 248, 250, .82);
+    --wiki-surface: rgba(255, 255, 255, .82);
+    --wiki-surface-solid: #ffffff;
+    --wiki-surface-soft: rgba(118, 118, 128, .08);
+    --wiki-control: rgba(118, 118, 128, .12);
+    --wiki-control-hover: rgba(118, 118, 128, .18);
+    --wiki-selected: rgba(0, 122, 255, .1);
+    --wiki-selected-strong: rgba(0, 122, 255, .16);
+    --wiki-text-secondary: rgba(60, 60, 67, .72);
+    --wiki-text-tertiary: rgba(60, 60, 67, .46);
+    --wiki-separator: rgba(60, 60, 67, .22);
+    --wiki-separator-soft: rgba(60, 60, 67, .12);
+    --wiki-blue: #007aff;
+    --wiki-blue-soft: rgba(0, 122, 255, .1);
+    --wiki-shadow-sm: 0 1px 2px rgba(0, 0, 0, .04), 0 10px 28px rgba(0, 0, 0, .055);
+    --wiki-shadow-md: 0 18px 50px rgba(0, 0, 0, .1);
+    --wiki-blur: saturate(180%) blur(24px);
+  }
+
+  .wiki body {
+    color: hsl(var(--foreground));
+    background:
+      radial-gradient(circle at 88% -10%, var(--wiki-blue-soft), transparent 30rem),
+      linear-gradient(180deg, var(--wiki-page-soft), var(--wiki-page));
+  }
+
+  .wiki ::selection {
+    color: white;
+    background: var(--wiki-blue);
+  }
+
+  .wiki :where(button, input, textarea, select):focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--wiki-blue), transparent 74%);
+  }
+}
+
+@layer components {
+  .wiki .app-shell {
+    background:
+      radial-gradient(circle at 88% -10%, var(--wiki-blue-soft), transparent 30rem),
+      linear-gradient(180deg, var(--wiki-page-soft), var(--wiki-page));
+  }
+
+  .wiki .topbar {
+    height: 62px;
+    grid-template-columns: minmax(220px, 250px) minmax(240px, 1fr) auto;
+    padding: 0 14px;
+    border-bottom-color: var(--wiki-separator-soft);
+    background: var(--wiki-surface);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .6);
+    -webkit-backdrop-filter: var(--wiki-blur);
+    backdrop-filter: var(--wiki-blur);
+  }
+
+  .wiki .brand-mark {
+    gap: 11px;
+    min-width: 0;
+    font-family: inherit;
+  }
+
+  .wiki .brand-mark img {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: linear-gradient(145deg, #42a5ff, #0878ed);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 5px 14px rgba(0, 122, 255, .24);
+  }
+
+  .wiki .brand-mark > span {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .wiki .brand-mark b,
+  .wiki .brand-mark small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .wiki .brand-mark b {
+    color: hsl(var(--foreground));
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -.025em;
+  }
+
+  .wiki .brand-mark small {
+    color: var(--wiki-text-tertiary);
+    font-size: 9px;
+    font-weight: 500;
+  }
+
+  .wiki .project-identity input {
+    color: hsl(var(--foreground));
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .wiki .project-identity span {
+    color: var(--wiki-text-tertiary);
+  }
+
+  .wiki .top-actions {
+    gap: 4px;
+  }
+
+  .wiki .top-actions .text-button,
+  .wiki .top-actions .icon-button {
+    min-height: 34px;
+    border-radius: 9px;
+    color: var(--wiki-text-secondary);
+  }
+
+  .wiki .top-actions .text-button:hover:not(:disabled),
+  .wiki .top-actions .icon-button:hover:not(:disabled),
+  .wiki .top-actions .icon-button.active {
+    color: var(--wiki-blue);
+    background: var(--wiki-blue-soft);
+  }
+
+  .wiki .top-actions .save-action.dirty {
+    color: white;
+    background: var(--wiki-blue);
+    box-shadow: 0 4px 12px rgba(0, 122, 255, .2);
+  }
+
+  .wiki .workspace {
+    gap: 1px;
+    padding: 1px 0 0;
+    background: var(--wiki-separator-soft);
+  }
+
+  .wiki .left-panel {
+    border-right: 0;
+    background: var(--wiki-sidebar);
+    -webkit-backdrop-filter: var(--wiki-blur);
+    backdrop-filter: var(--wiki-blur);
+  }
+
+  .wiki .editor-area {
+    background: var(--wiki-page-soft);
+  }
+
+  .wiki .right-panel {
+    background: var(--wiki-surface-solid);
+  }
+
+  .wiki .left-splitter,
+  .wiki .right-splitter {
+    background: var(--wiki-separator-soft);
+  }
+
+  .wiki .left-splitter:hover,
+  .wiki .right-splitter:hover,
+  .wiki body.resizing-left .left-splitter,
+  .wiki body.resizing-right .right-splitter {
+    background: var(--wiki-blue);
+  }
+
+  .wiki .panel-heading,
+  .wiki .editor-title,
+  .wiki .inspector-top {
+    border-bottom-color: var(--wiki-separator-soft);
+    background: var(--wiki-surface);
+    -webkit-backdrop-filter: var(--wiki-blur);
+    backdrop-filter: var(--wiki-blur);
+  }
+
+  .wiki .panel-heading {
+    min-height: 46px;
+    padding-inline: 14px 10px;
+    color: var(--wiki-text-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .wiki .left-view-tabs,
+  .wiki .toc-mode,
+  .wiki .view-toggle,
+  .wiki .right-panel .tabs {
+    border-color: transparent;
+    border-radius: 10px;
+    background: var(--wiki-control);
+    box-shadow: none;
+  }
+
+  .wiki .left-view-tabs {
+    margin: 0 10px 10px;
+    padding: 3px;
+  }
+
+  .wiki .left-view-tabs button,
+  .wiki .toc-mode button,
+  .wiki .view-toggle button,
+  .wiki .right-panel .tabs button {
+    border-radius: 8px;
+    color: var(--wiki-text-secondary);
+  }
+
+  .wiki .left-view-tabs button.active,
+  .wiki .toc-mode button.active,
+  .wiki .view-toggle button.active,
+  .wiki .right-panel .tabs button.active {
+    color: hsl(var(--foreground));
+    background: var(--wiki-surface-solid);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .1);
+  }
+
+  .wiki .right-panel .tabs button.active::after {
+    display: none;
+  }
+
+  .wiki .toc-list,
+  .wiki .workspace-docs-list {
+    padding-inline: 8px;
+  }
+
+  .wiki .toc-item,
+  .wiki .workspace-doc-row,
+  .wiki .git-change-row,
+  .wiki .git-history-list > button {
+    border-radius: 10px;
+    transition: color .16s ease, background-color .16s ease, transform .16s ease;
+  }
+
+  .wiki .toc-item:hover,
+  .wiki .workspace-doc-row:hover,
+  .wiki .git-change-row:hover,
+  .wiki .git-history-list > button:hover {
+    transform: none;
+    background: var(--wiki-surface-soft);
+  }
+
+  .wiki .toc-item.selected,
+  .wiki .workspace-doc-row.selected,
+  .wiki .git-change-row.selected,
+  .wiki .git-history-list > button.selected {
+    color: var(--wiki-blue);
+    background: var(--wiki-selected);
+    box-shadow: none;
+  }
+
+  .wiki .toc-item.selected::before,
+  .wiki .git-history-list > button.selected::before {
+    display: none;
+  }
+
+  .wiki .workspace-doc-row.selected .workspace-doc-item span,
+  .wiki .toc-item.selected small {
+    color: var(--wiki-text-secondary);
+  }
+
+  .wiki .editor-title {
+    min-height: 52px;
+    padding-inline: 18px;
+  }
+
+  .wiki .editor-title > div:first-child > span {
+    color: var(--wiki-blue);
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .wiki .editor-toggle,
+  .wiki .heading-level-btn,
+  .wiki .font-scale-value,
+  .wiki .format-btn,
+  .wiki .heading-renumber-btn {
+    border-color: var(--wiki-separator-soft);
+    border-radius: 8px;
+    color: var(--wiki-text-secondary);
+    background: var(--wiki-surface);
+  }
+
+  .wiki .editor-toggle:hover,
+  .wiki .editor-toggle.active,
+  .wiki .heading-level-btn:hover,
+  .wiki .font-scale-value:hover,
+  .wiki .format-btn:hover,
+  .wiki .heading-renumber-btn:hover {
+    border-color: color-mix(in srgb, var(--wiki-blue), transparent 65%);
+    color: var(--wiki-blue);
+    background: var(--wiki-blue-soft);
+  }
+
+  .wiki .heading-toolbar {
+    border-bottom-color: var(--wiki-separator-soft);
+    background: rgba(247, 247, 250, .9);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+  }
+
+  .wiki .md-workspace {
+    gap: 12px;
+    padding: 12px;
+    background: var(--wiki-page);
+  }
+
+  .wiki .md-pane {
+    overflow: hidden;
+    border: 1px solid var(--wiki-separator-soft);
+    border-radius: 14px;
+    background: var(--wiki-surface-solid);
+    box-shadow: var(--wiki-shadow-sm);
+  }
+
+  .wiki .md-pane + .md-pane {
+    border-left: 1px solid var(--wiki-separator-soft);
+  }
+
+  .wiki .md-source-editor,
+  .wiki .md-source,
+  .wiki .preview-pane {
+    background: var(--wiki-surface-solid);
+  }
+
+  .wiki .inspector-top {
+    min-height: 52px;
+    padding-inline: 12px 8px;
+  }
+
+  .wiki .inspector-content {
+    padding: 18px 16px 28px;
+    background: var(--wiki-surface-solid);
+  }
+
+  .wiki :where(.inspector-content, .modal, .settings-modal) input,
+  .wiki :where(.inspector-content, .modal, .settings-modal) textarea,
+  .wiki :where(.inspector-content, .modal, .settings-modal) select {
+    border-color: var(--wiki-separator-soft);
+    border-radius: 10px;
+    background: var(--wiki-control);
+  }
+
+  .wiki .export-dropdown,
+  .wiki .file-dropdown,
+  .wiki .modal,
+  .wiki .settings-modal,
+  .wiki .source-preview-modal {
+    border-color: var(--wiki-separator-soft);
+    border-radius: 14px;
+    background: var(--wiki-surface-solid);
+    box-shadow: var(--wiki-shadow-md);
+  }
+
+  .wiki .export-dropdown button,
+  .wiki .file-dropdown button {
+    border-radius: 9px;
+  }
+
+  .wiki .export-dropdown button:hover,
+  .wiki .file-dropdown button:hover {
+    color: var(--wiki-blue);
+    background: var(--wiki-blue-soft);
+  }
+
+  .wiki .notice,
+  .wiki .knowledge-progress,
+  .wiki .agent-block,
+  .wiki .source-card,
+  .wiki .command-card {
+    border-color: var(--wiki-separator-soft);
+    border-radius: 12px;
+    background: var(--wiki-surface-soft);
+    box-shadow: none;
+  }
+
+  .wiki .primary,
+  .wiki button.primary {
+    border-color: var(--wiki-blue);
+    color: white;
+    background: var(--wiki-blue);
+  }
+
+  .wiki .primary:hover:not(:disabled),
+  .wiki button.primary:hover:not(:disabled) {
+    border-color: #006ee6;
+    background: #006ee6;
+  }
+}
+
+@media (max-width: 1180px) {
+  .wiki .topbar {
+    grid-template-columns: minmax(190px, 220px) minmax(180px, 1fr) auto;
+  }
+
+  .wiki .brand-mark small {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .wiki .left-panel,
+  .wiki .editor-area,
+  .wiki .right-panel {
+    animation: wiki-surface-in 220ms ease-out both;
+  }
+
+  .wiki .editor-area { animation-delay: 30ms; }
+  .wiki .right-panel { animation-delay: 60ms; }
+}
+
+@keyframes wiki-surface-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}

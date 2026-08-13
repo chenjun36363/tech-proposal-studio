@@ -4,6 +4,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  Cloud,
   ChevronUp,
   Copy,
   FileText,
@@ -47,6 +48,7 @@ import type {
 } from "../../core/types";
 import { readTextFile } from "../workspace/workspace";
 import { ContextPanel } from "./ContextPanel";
+import { searchWikiCloud, wikiCloudHitToSource, wikiCloudReady, type WikiCloudRetrievalHit } from "../knowledge/wikiCloud";
 
 const PowerShellTerminal = lazy(() => import("../terminal/PowerShellTerminal").then(module => ({
   default: module.PowerShellTerminal,
@@ -141,6 +143,7 @@ export function InspectorPanel({
   onLocateLongWritingChapter: (titlePath: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [knowledgeProvider, setKnowledgeProvider] = useState<"local" | "cloud">("local");
   const [searchMode, setSearchMode] = useState<"document" | "snippet">("snippet");
   const [qualityFilters, setQualityFilters] = useState<Set<KnowledgeChunkQuality>>(
     () => new Set(["good", "normal"]),
@@ -151,6 +154,7 @@ export function InspectorPanel({
   const [sourceContents, setSourceContents] = useState<Record<string, string>>({});
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<KnowledgeResultView[]>([]);
+  const [cloudResults, setCloudResults] = useState<WikiCloudRetrievalHit[]>([]);
   const [knowledgeChunks, setKnowledgeChunks] = useState<Record<string, KnowledgeChunk>>({});
   const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
   const [agentMode, setAgentMode] = useState<"conversation" | "long-writing">("conversation");
@@ -243,7 +247,7 @@ export function InspectorPanel({
   }, [desktop, project.workspace, block.sourceRefs, knowledgeChunks]);
 
   useEffect(() => {
-    if (!desktop || tab !== "sources" || !project.workspace?.root) return;
+    if (!desktop || tab !== "sources" || knowledgeProvider !== "local" || !project.workspace?.root) return;
     let cancelled = false;
     void listKnowledge(project.workspace)
       .then(documents => { if (!cancelled) setKnowledgeDocuments(documents); })
@@ -252,7 +256,7 @@ export function InspectorPanel({
       .then(categories => { if (!cancelled) setKnowledgeCategories(categories); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [desktop, tab, project.workspace?.root]);
+  }, [desktop, tab, knowledgeProvider, project.workspace?.root]);
 
   const updateSourceContext = (
     sourceId: string,
@@ -266,8 +270,10 @@ export function InspectorPanel({
       const sourceRefs = shouldInclude
         ? included ? currentRefs : [...currentRefs, sourceId]
         : currentRefs.filter(id => id !== sourceId);
-      const sources = source && !current.sources.some(item => item.id === source.id)
-        ? [...current.sources, source]
+      const sources = source
+        ? current.sources.some(item => item.id === source.id)
+          ? current.sources.map(item => item.id === source.id ? source : item)
+          : [...current.sources, source]
         : current.sources;
       return { ...current, sources, contextSourceRefs: sourceRefs };
     });
@@ -311,6 +317,17 @@ export function InspectorPanel({
     });
   };
 
+  const cloudSource = (hit: WikiCloudRetrievalHit) => wikiCloudHitToSource(project.wikiCloud.workspaceId, hit);
+
+  const addWikiCloudHitToContext = (hit: WikiCloudRetrievalHit) => {
+    const source = cloudSource(hit);
+    updateSourceContext(source.id, source, "toggle");
+  };
+
+  const previewWikiCloudHit = (hit: WikiCloudRetrievalHit) => {
+    void openSourcePreview(cloudSource(hit));
+  };
+
   const loadSearchResults = async () => {
     if (searchMode === "document" || !query.trim() || !project.workspace) {
       setResults([]);
@@ -338,13 +355,24 @@ export function InspectorPanel({
   };
 
   const runKnowledgeSearch = async () => {
-    if (searchMode === "document") {
+    if (knowledgeProvider === "local" && searchMode === "document") {
       setResults([]);
+      return;
+    }
+    if (!query.trim()) {
+      setResults([]);
+      setCloudResults([]);
       return;
     }
     setSearching(true);
     try {
-      await loadSearchResults();
+      if (knowledgeProvider === "cloud") {
+        setResults([]);
+        setCloudResults(await searchWikiCloud(project.wikiCloud, query));
+      } else {
+        setCloudResults([]);
+        await loadSearchResults();
+      }
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : "知识库搜索失败");
     } finally {
@@ -379,12 +407,12 @@ export function InspectorPanel({
   useEffect(() => {
     setResults([]);
     setSearching(false);
-    if (searchMode !== "snippet" || !query.trim() || !project.workspace) return;
+    if (knowledgeProvider !== "local" || searchMode !== "snippet" || !query.trim() || !project.workspace) return;
     setSearching(true);
     void loadSearchResults()
       .catch(cause => notify(cause instanceof Error ? cause.message : "知识库搜索失败"))
       .finally(() => setSearching(false));
-  }, [searchMode]);
+  }, [searchMode, knowledgeProvider]);
 
   const toggleQuality = (quality: KnowledgeChunkQuality) => {
     setQualityFilters(current => {
@@ -465,6 +493,11 @@ export function InspectorPanel({
       {!desktop
         ? <div className="context-empty"><BookOpen size={24} /><span>知识库仅在桌面端可用</span></div>
         : <>
+          <div className="knowledge-provider-switch" role="group" aria-label="知识库来源">
+            <button type="button" className={knowledgeProvider === "local" ? "active" : ""} onClick={() => { setKnowledgeProvider("local"); setCloudResults([]); }}><BookOpen size={13} />本地知识</button>
+            <button type="button" className={knowledgeProvider === "cloud" ? "active" : ""} onClick={() => { setKnowledgeProvider("cloud"); setSearchMode("snippet"); setResults([]); }}><Cloud size={13} />wiki-cloud</button>
+          </div>
+          {knowledgeProvider === "local" ? <>
           <div className="knowledge-search-tool">
             <div className="knowledge-search-intro">
               <div><Search size={16} /><b>知识检索</b><span>查找可引用的方案依据</span></div>
@@ -581,6 +614,35 @@ export function InspectorPanel({
             </article>)}
           </div>}
           {!searching && (!query.trim() || (searchMode === "snippet" && !results.length) || (searchMode === "document" && !documentResults.length)) && <div className="knowledge-search-empty"><BookOpen size={25} /><b>{query.trim() ? "没有匹配结果" : "输入关键词检索知识库"}</b><span>{query.trim() ? (searchMode === "document" ? "尝试文档标题或路径" : "尝试更短的关键词或章节名称") : "输入关键词开始检索"}</span></div>}
+          </> : <>
+            <div className="knowledge-search-tool wiki-cloud-search-tool">
+              <div className="knowledge-search-intro">
+                <div><Cloud size={16} /><b>远程知识检索</b><span>结果保留文档、片段和原始位置</span></div>
+                <em className={wikiCloudReady(project.wikiCloud) ? "wiki-cloud-status ready" : "wiki-cloud-status"}>{wikiCloudReady(project.wikiCloud) ? "已配置" : "未配置"}</em>
+              </div>
+              <div className="knowledge-query-row">
+                <Search size={14} />
+                <input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === "Enter" && void runKnowledgeSearch()} placeholder="检索 wiki-cloud 中的知识片段" />
+                <button type="button" disabled={searching || !query.trim() || !wikiCloudReady(project.wikiCloud)} onClick={() => void runKnowledgeSearch()}>{searching ? "检索中" : "检索"}</button>
+              </div>
+              {!wikiCloudReady(project.wikiCloud) && <p className="wiki-cloud-config-hint">请先在“设置 → 远程知识库”中启用连接并填写服务地址、Workspace ID 与 API Key。</p>}
+            </div>
+            {!!cloudResults.length && <div className="source-list knowledge-results wiki-cloud-results">
+              <div className="knowledge-results-head"><span>远程片段</span><em>{cloudResults.length} 条</em></div>
+              {cloudResults.map(hit => {
+                const source = cloudSource(hit);
+                const included = block.sourceRefs.includes(source.id);
+                return <article key={source.id}>
+                  <div className="knowledge-result-title"><Cloud size={13} className="knowledge-result-document-icon" /><b onClick={() => previewWikiCloudHit(hit)}>{hit.headingPath || hit.title}</b><em className="knowledge-quality-badge normal">{hit.quality || "REMOTE"}</em></div>
+                  <p>{hit.content.replace(/\s+/g, " ").slice(0, 260) || "（该片段暂无正文）"}</p>
+                  <div className="knowledge-result-source" title={hit.sourceUri || hit.locator || hit.documentId}><BookOpen size={11} aria-hidden="true" /><span>{hit.knowledgeBaseName || "远程知识库"} · {hit.title}</span></div>
+                  <div className="wiki-cloud-citation-line"><span>doc {hit.documentId}</span><span>chunk {hit.chunkId}</span>{hit.locator && <span>{hit.locator}</span>}</div>
+                  <div className="knowledge-result-footer"><div className="source-item-actions"><button onClick={() => previewWikiCloudHit(hit)}>预览</button><button onClick={() => void copyText(hit.content, `已复制“${hit.title}”`)}><Copy size={12} />复制</button><button className={included ? "context-added" : ""} onClick={() => addWikiCloudHitToContext(hit)}>{included ? <><Check size={12} />已加入上下文</> : <><Layers3 size={12} />加入上下文</>}</button><small className="knowledge-result-char-count">{hit.content.replace(/\s/g, "").length.toLocaleString()} 字</small></div></div>
+                </article>;
+              })}
+            </div>}
+            {!searching && !cloudResults.length && <div className="knowledge-search-empty"><Cloud size={25} /><b>{query.trim() ? "没有匹配的远程片段" : "检索 wiki-cloud"}</b><span>{query.trim() ? "尝试更短的关键词，或检查知识库 ID 与访问范围" : "结果可预览并显式加入当前 Agent 上下文"}</span></div>}
+          </>}
         </>}
     </div>}
     <div

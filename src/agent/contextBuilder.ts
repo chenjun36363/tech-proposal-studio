@@ -8,6 +8,37 @@ export interface ResolvedAgentContext {
   content: string;
 }
 
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function sourceAttributes(source: SourceRecord, title: string): string {
+  const attributes: Array<[string, string | number | undefined]> = [
+    ["id", source.id],
+    ["title", title],
+  ];
+  if (source.citation?.provider === "wiki-cloud") {
+    attributes.push(
+      ["provider", source.citation.provider],
+      ["workspace_id", source.citation.workspaceId],
+      ["knowledge_base_id", source.citation.knowledgeBaseId],
+      ["document_id", source.citation.documentId],
+      ["chunk_id", source.citation.chunkId],
+      ["version_no", source.citation.versionNo],
+      ["locator", source.citation.locator],
+      ["source_uri", source.citation.sourceUri],
+    );
+  }
+  return attributes
+    .filter((entry): entry is [string, string | number] => entry[1] !== undefined && entry[1] !== "")
+    .map(([name, value]) => `${name}="${escapeXmlAttribute(String(value))}"`)
+    .join(" ");
+}
+
 export function buildProposalAgentMessages(params: {
   systemPrompt: string;
   conversation: AgentConversation;
@@ -23,7 +54,7 @@ export function buildProposalAgentMessages(params: {
     const title = item.source.heading ? `${item.source.title} / ${item.source.heading}` : item.source.title;
     const content = item.content.slice(0, Math.max(0, remaining));
     remaining -= content.length;
-    return content ? `<source id="${item.source.id}" title="${title}">\n${content}\n</source>` : "";
+    return content ? `<source ${sourceAttributes(item.source, title)}>\n${content}\n</source>` : "";
   }).filter(Boolean).join("\n\n");
   const additions = [
     params.conversation.summary ? `## 较早会话摘要\n${params.conversation.summary}` : "",
