@@ -394,6 +394,16 @@ export async function agentCompletion(
   return adapter.parseChatResponse(raw) satisfies AgentModelResponse;
 }
 
+/** Send a minimal non-streaming request to verify a model connection. */
+export async function testModel(config: ResolvedModelConfig | OpenAICompatibleConfig): Promise<void> {
+  const resolved = normalizeConfig(config);
+  const response = await agentCompletion({
+    model: resolved.model,
+    messages: [{ role: "user", content: "请仅回复 OK。" }],
+  }, resolved) as AgentModelResponse;
+  if (!response.choices?.[0]?.message) throw new Error("模型服务返回了空响应");
+}
+
 export async function agentCompletionStream(
   payload: Record<string, unknown>,
   config: ResolvedModelConfig | OpenAICompatibleConfig,

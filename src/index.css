@@ -1912,6 +1912,62 @@
     color: hsl(var(--muted-foreground));
     text-align: center;
   }
+  .model-test-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .model-test-row .model-combobox,
+  .model-test-row .model-select {
+    flex: 1;
+    min-width: 0;
+  }
+  .model-field-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: hsl(var(--foreground));
+  }
+  .model-test-button {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 58px;
+    padding: 8px 10px;
+    border: 1px solid hsl(var(--border));
+    border-radius: 8px;
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .model-test-button:hover:not(:disabled) {
+    border-color: hsl(var(--primary) / 0.4);
+    background: hsl(var(--muted));
+  }
+  .model-test-button:disabled {
+    cursor: wait;
+    opacity: 0.55;
+  }
+  .model-test-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 5px;
+    font-size: 11px;
+  }
+  .model-test-status.success {
+    color: hsl(var(--primary));
+  }
+  .model-test-status.error {
+    color: hsl(var(--destructive));
+  }
+  .model-test-spinning {
+    animation: model-fetch-spin 0.9s linear infinite;
+  }
+
   .fallback-model-select {
     display: flex;
     flex-direction: column;
@@ -1967,10 +2023,22 @@
     font-size: 11px;
     font-weight: 600;
   }
-  .fallback-model-name {
+  .fallback-model-detail {
     flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .fallback-model-name {
     font-size: 12px;
     color: hsl(var(--foreground));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fallback-model-detail .model-test-status {
+    margin-top: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

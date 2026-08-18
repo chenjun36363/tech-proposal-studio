@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentCompletion, agentCompletionStream, improveBlockStream, isRetryableStreamError, runStreamAttemptWithRetry } from "./model";
+import { agentCompletion, agentCompletionStream, improveBlockStream, isRetryableStreamError, runStreamAttemptWithRetry, testModel } from "./model";
 import type { DocumentBlock, OpenAICompatibleConfig, ResolvedModelConfig } from "../core/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -149,6 +149,25 @@ describe("Tauri model adapter", () => {
     const cancelCall = vi.mocked(invoke).mock.calls.find(([command]) => command === "model_proxy_cancel");
     expect(jsonCall?.[1]).toEqual(expect.objectContaining({ runId: expect.any(String) }));
     expect(cancelCall?.[1]).toEqual(expect.objectContaining({ runId: (jsonCall?.[1] as { runId: string }).runId }));
+  });
+
+  it("tests a model with a minimal non-streaming request", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: "assistant", content: "OK" } }] }),
+    });
+
+    await expect(testModel(config)).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("model_proxy_json", expect.objectContaining({
+      request: expect.objectContaining({
+        body: expect.objectContaining({
+          model: "example-model",
+          messages: [{ role: "user", content: "请仅回复 OK。" }],
+          stream: false,
+        }),
+      }),
+    }));
   });
 });
 

@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Layers, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, CircleX, Layers, LoaderCircle, Plus, TestTube, X } from "lucide-react";
 import type { LlmProvider, SelectedModel } from "../core/types";
 import { ModelSelect } from "./ModelSelect";
+
+export type ModelTestResult = { status: "success" | "error"; message: string };
 
 function labelOf(providers: LlmProvider[], selection: SelectedModel): string {
   const provider = providers.find(item => item.id === selection.providerId);
@@ -12,6 +14,10 @@ function sameModel(a: SelectedModel, b: SelectedModel): boolean {
   return a.providerId === b.providerId && a.model === b.model;
 }
 
+function modelKey(selection: SelectedModel): string {
+  return `${selection.providerId}::${selection.model}`;
+}
+
 export function FallbackModelSelect({
   providers,
   value,
@@ -20,6 +26,9 @@ export function FallbackModelSelect({
   max = 3,
   exclude,
   id,
+  onTest,
+  testingKey,
+  testResult,
 }: {
   providers: LlmProvider[];
   value: SelectedModel[];
@@ -29,6 +38,9 @@ export function FallbackModelSelect({
   /** 主模型，避免被重复选为备用。 */
   exclude?: SelectedModel | null;
   id?: string;
+  onTest?: (selection: SelectedModel) => void;
+  testingKey?: string | null;
+  testResult?: (selection: SelectedModel) => ModelTestResult | undefined;
 }) {
   const [adding, setAdding] = useState<SelectedModel | null>(null);
 
@@ -62,17 +74,31 @@ export function FallbackModelSelect({
         <small className="fallback-model-empty">未配置备用模型；主模型失败时将直接报错。</small>
       ) : (
         <ul className="fallback-model-list">
-          {value.map((item, index) => (
-            <li key={`${item.providerId}::${item.model}`} className="fallback-model-item">
-              <span className="fallback-model-order">{index + 1}</span>
-              <span className="fallback-model-name">{labelOf(providers, item)}</span>
-              <span className="fallback-model-actions">
-                <button type="button" title="上移" disabled={disabled || index === 0} onClick={() => move(index, -1)}><ArrowUp size={12} /></button>
-                <button type="button" title="下移" disabled={disabled || index === value.length - 1} onClick={() => move(index, 1)}><ArrowDown size={12} /></button>
-                <button type="button" title="移除" disabled={disabled} onClick={() => removeAt(index)}><X size={12} /></button>
-              </span>
-            </li>
-          ))}
+          {value.map((item, index) => {
+            const key = modelKey(item);
+            const result = testResult?.(item);
+            const testing = testingKey === key;
+            return (
+              <li key={key} className="fallback-model-item">
+                <span className="fallback-model-order">{index + 1}</span>
+                <span className="fallback-model-detail">
+                  <span className="fallback-model-name">{labelOf(providers, item)}</span>
+                  {result && <small className={`model-test-status ${result.status}`}>
+                    {result.status === "success" ? <CheckCircle2 size={12} /> : <CircleX size={12} />}
+                    {result.message}
+                  </small>}
+                </span>
+                <span className="fallback-model-actions">
+                  {onTest && <button type="button" title={testing ? "测试中…" : "测试模型"} aria-label={`测试${labelOf(providers, item)}`} disabled={disabled || testingKey != null} onClick={() => onTest(item)}>
+                    {testing ? <LoaderCircle size={12} className="model-test-spinning" /> : <TestTube size={12} />}
+                  </button>}
+                  <button type="button" title="上移" disabled={disabled || testingKey != null || index === 0} onClick={() => move(index, -1)}><ArrowUp size={12} /></button>
+                  <button type="button" title="下移" disabled={disabled || testingKey != null || index === value.length - 1} onClick={() => move(index, 1)}><ArrowDown size={12} /></button>
+                  <button type="button" title="移除" disabled={disabled || testingKey != null} onClick={() => removeAt(index)}><X size={12} /></button>
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
       {canAdd && (

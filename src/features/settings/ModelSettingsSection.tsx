@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { Plus, RefreshCw, Trash2, Pencil, Globe2, Download, X } from "lucide-react";
+import { CheckCircle2, CircleX, Globe2, LoaderCircle, Plus, RefreshCw, TestTube, Trash2, Pencil, Download, X } from "lucide-react";
 import type { LlmProvider, LlmProtocol, ModelOption, Project, ReasoningEffort, SelectedModel } from "../../core/types";
-import { listModels } from "../../services/model";
+import { listModels, testModel as testModelConnection } from "../../services/model";
 import { LLM_PROTOCOL_LABELS, PROVIDER_PRESETS, createDefaultProvider } from "../../services/llm/defaults";
 import { REASONING_EFFORT_LABELS } from "../../services/llm/thinking";
-import { deriveModelSnapshot, encodeModelValue, parseModelValue, repairSelectionForProviders, resolvedFromLegacy } from "../../services/llm/resolve";
+import { deriveModelSnapshot, encodeModelValue, parseModelValue, repairSelectionForProviders, resolveActiveModelConfig, resolvedFromLegacy } from "../../services/llm/resolve";
 import type { ResolvedModelConfig } from "../../core/types";
 import { ModelSelect } from "../../components/ModelSelect";
-import { FallbackModelSelect } from "../../components/FallbackModelSelect";
+import { FallbackModelSelect, type ModelTestResult } from "../../components/FallbackModelSelect";
 import { ApiKeyField } from "../../components/ApiKeyField";
 import { ccSwitchItemKey, isCcSwitchItemImportable, isCcSwitchItemImported, listCcSwitchProviders, mergeCcSwitchProviders, type CcSwitchProviderItem } from "./ccswitchImport";
 import { isDesktop } from "../../services/runtime";
@@ -48,6 +48,10 @@ function providerToResolved(provider: LlmProvider, model = ""): ResolvedModelCon
     enabled: provider.enabled,
     reasoningEffort: provider.reasoningEffort,
   };
+}
+
+function modelSelectionKey(selection: SelectedModel): string {
+  return `${selection.providerId}::${selection.model}`;
 }
 
 export function HeaderRows({ headers, onChange }: {
@@ -319,13 +323,22 @@ export function ModelSettingsSection({
   setDraft: (next: Project | ((current: Project) => Project)) => void;
 }) {
   const providers = draft.providers ?? [];
+  const aiEnabled = draft.model?.enabled !== false;
   const [editing, setEditing] = useState<LlmProvider | null | undefined>(undefined);
   const [ccSwitchItems, setCcSwitchItems] = useState<CcSwitchProviderItem[] | null>(null);
   const [ccSwitchDatabase, setCcSwitchDatabase] = useState<string | null>(null);
   const [ccSwitchLoading, setCcSwitchLoading] = useState(false);
   const [ccSwitchError, setCcSwitchError] = useState("");
+  const [testingModelKey, setTestingModelKey] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, ModelTestResult>>({});
+
+  const clearModelTests = () => {
+    setTestingModelKey(null);
+    setTestResults({});
+  };
 
   const commitProviders = (nextProviders: LlmProvider[], selectedModel?: SelectedModel | null) => {
+    clearModelTests();
     setDraft(current => {
       const selected = selectedModel !== undefined
         ? selectedModel
@@ -340,10 +353,30 @@ export function ModelSettingsSection({
   };
 
   const commitFallbackModels = (next: SelectedModel[]) => {
+    clearModelTests();
     setDraft(current => ({ ...current, fallbackModels: next.length ? next : undefined }));
   };
 
+  const testSelection = async (selection: SelectedModel) => {
+    const key = modelSelectionKey(selection);
+    clearModelTests();
+    setTestingModelKey(key);
+    try {
+      const config = resolveActiveModelConfig(providers, selection, { requireActive: false, aiEnabled });
+      await testModelConnection(config);
+      setTestResults(current => ({ ...current, [key]: { status: "success", message: "连接成功" } }));
+    } catch (error) {
+      setTestResults(current => ({
+        ...current,
+        [key]: { status: "error", message: error instanceof Error ? error.message : String(error) },
+      }));
+    } finally {
+      setTestingModelKey(current => current === key ? null : current);
+    }
+  };
+
   const setAiEnabled = (enabled: boolean) => {
+    clearModelTests();
     setDraft(current => ({
       ...current,
       model: { ...current.model, enabled },
@@ -391,7 +424,9 @@ export function ModelSettingsSection({
   };
 
   const enabledProviderCount = providers.filter(p => p.enabled).length;
-  const aiEnabled = draft.model?.enabled !== false;
+
+  const defaultModelKey = draft.selectedModel ? modelSelectionKey(draft.selectedModel) : null;
+  const defaultTestResult = defaultModelKey ? testResults[defaultModelKey] : undefined;
 
   return <div className="settings-section-content model-settings-section">
     <div className="notice">
@@ -411,16 +446,34 @@ export function ModelSettingsSection({
       />
     </div>
 
-    <label className="wide">默认模型
-      <ModelSelect
-        providers={providers}
-        value={draft.selectedModel}
-        onChange={selectedModel => commitProviders(providers, selectedModel)}
-        disabled={!aiEnabled}
-      />
+    <div className="wide model-default-field">
+      <div className="model-field-label">默认模型</div>
+      <div className="model-test-row">
+        <ModelSelect
+          providers={providers}
+          value={draft.selectedModel}
+          onChange={selectedModel => commitProviders(providers, selectedModel)}
+          disabled={!aiEnabled}
+        />
+        <button
+          type="button"
+          className="model-test-button"
+          title="测试默认模型"
+          aria-label="测试默认模型"
+          disabled={!aiEnabled || !draft.selectedModel || testingModelKey !== null}
+          onClick={() => { if (draft.selectedModel) void testSelection(draft.selectedModel); }}
+        >
+          {testingModelKey === defaultModelKey ? <LoaderCircle size={13} className="model-test-spinning" /> : <TestTube size={13} />}
+          {testingModelKey === defaultModelKey ? "测试中…" : "测试"}
+        </button>
+      </div>
+      {defaultTestResult && <div className={`model-test-status ${defaultTestResult.status}`} aria-live="polite">
+        {defaultTestResult.status === "success" ? <CheckCircle2 size={13} /> : <CircleX size={13} />}
+        <span>{defaultTestResult.message}</span>
+      </div>}
       {!aiEnabled && <small className="model-list-hint">总开关关闭时仍可配置供应商，但不会发起模型请求。</small>}
       {aiEnabled && enabledProviderCount === 0 && <small className="model-list-error">请至少启用一个供应商。</small>}
-    </label>
+    </div>
 
     <FallbackModelSelect
       providers={providers}
@@ -428,6 +481,9 @@ export function ModelSettingsSection({
       onChange={commitFallbackModels}
       disabled={!aiEnabled}
       exclude={draft.selectedModel}
+      onTest={selection => void testSelection(selection)}
+      testingKey={testingModelKey}
+      testResult={selection => testResults[modelSelectionKey(selection)]}
     />
 
     <div className="provider-list-header">
