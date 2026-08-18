@@ -34,12 +34,16 @@ export function normalizeMemoryToolArgs(args: Record<string, unknown>): { title:
   return { title, content, memoryType };
 }
 
-export function normalizeMemoryReadId(args: Record<string, unknown>): string {
+export function optionalMemoryReadId(args: Record<string, unknown>): string | undefined {
   const nested = [args.memory, args.item, args.result].find(value => value && typeof value === "object" && !Array.isArray(value)) as Record<string, unknown> | undefined;
-  return text(
-    args.id ?? args.memory_id ?? args.memoryId ?? nested?.id ?? nested?.memory_id ?? nested?.memoryId,
-    "id",
-  );
+  const found = args.id ?? args.memory_id ?? args.memoryId ?? nested?.id ?? nested?.memory_id ?? nested?.memoryId;
+  return typeof found === "string" && found.trim() ? found : undefined;
+}
+
+export function normalizeMemoryReadId(args: Record<string, unknown>): string {
+  const id = optionalMemoryReadId(args);
+  if (id === undefined) throw new Error("缺少参数：id");
+  return id;
 }
 
 export const proposalAgentSystemPrompt = `你是“构案”中的软件技术方案 Agent。你的职责是基于当前方案和明确提供的资料，完成可审计的方案写作任务。
@@ -455,6 +459,10 @@ export function createProposalToolRegistry(params: {
     })
     .register({
       definition: { type: "function", function: { name: "read_memory", description: "根据记忆 ID 读取一条项目长期记忆的完整内容。必须把 search_memory 或记忆目录返回的 id 原样传入。", parameters: objectSchema({ id: { type: "string", description: "search_memory 或记忆目录返回的记忆 ID" } }, ["id"]) } },
+      normalizeArgs: args => {
+        const id = optionalMemoryReadId(args);
+        return id !== undefined ? { ...args, id } : args;
+      },
       execute: async args => {
         const memory = await readProjectMemory(project, normalizeMemoryReadId(args));
         return { content: `# ${memory.title}\n\n${memory.content}`, data: memory, isError: false };
@@ -496,6 +504,10 @@ export function createProposalToolRegistry(params: {
     })
     .register({
       definition: { type: "function", function: { name: "propose_section_update", description: "按章节 ID 提交该章节的完整 Markdown 修改稿，供用户查看同一章节的差异并决定是否接受。不会直接写入文件。", parameters: objectSchema({ heading_id: { type: "string", description: "最近一次 get_proposal_outline 返回的目标章节 ID；省略时仅修改当前编辑章节" }, markdown: { type: "string", description: "完整替换目标章节的 Markdown；首行标题的层级、去编号标题和编号格式必须保持不变" }, instruction: { type: "string", description: "本次修改的简短说明" } }, ["markdown", "instruction"]) } },
+      normalizeArgs: args => {
+        const { content, ...rest } = args;
+        return content !== undefined ? { ...rest, markdown: rest.markdown ?? content } : rest;
+      },
       execute: async (args, signal) => {
         const requestedId = typeof args.heading_id === "string" && args.heading_id.trim() ? args.heading_id.trim() : currentHeadingId;
         const heading = findHeading(requestedId);

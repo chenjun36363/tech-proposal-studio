@@ -158,7 +158,7 @@ describe("Tauri model adapter", () => {
       body: JSON.stringify({ choices: [{ message: { role: "assistant", content: "OK" } }] }),
     });
 
-    await expect(testModel(config)).resolves.toBeUndefined();
+    await expect(testModel(config)).resolves.toEqual({ output: "OK" });
     expect(invoke).toHaveBeenCalledWith("model_proxy_json", expect.objectContaining({
       request: expect.objectContaining({
         body: expect.objectContaining({
@@ -168,6 +168,16 @@ describe("Tauri model adapter", () => {
         }),
       }),
     }));
+  });
+
+  it("rejects a successful HTTP response with no usable model text", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: "assistant", content: "" } }] }),
+    });
+
+    await expect(testModel(config)).rejects.toThrow("模型未返回可用文本");
   });
 });
 

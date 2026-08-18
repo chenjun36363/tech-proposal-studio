@@ -120,27 +120,11 @@ function wait(milliseconds: number): Promise<void> {
 
 async function upsertDesktopConversation(conversation: AgentConversation, workspaceRoot?: string): Promise<AgentConversation> {
   const root = await resolveDesktopWorkspaceRoot(workspaceRoot);
-  let candidate = conversation;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await invoke<AgentConversation>("agent_conversation_upsert", { workspaceRoot: root, conversation: candidate });
+      return await invoke<AgentConversation>("agent_conversation_upsert", { workspaceRoot: root, conversation });
     } catch (error) {
       const message = errorText(error);
-      if (message.includes("会话已在其他位置更新") && attempt === 0) {
-        const latest = await invoke<AgentConversation>("agent_conversation_get", { workspaceRoot: root, id: candidate.id });
-        candidate = {
-          ...candidate,
-          revision: latest.revision,
-          mode: latest.mode,
-          pinnedContextOnly: latest.pinnedContextOnly,
-          webSearchEnabled: latest.webSearchEnabled,
-          knowledgeSearchEnabled: latest.knowledgeSearchEnabled,
-          memorySearchEnabled: latest.memorySearchEnabled,
-          fullAccessEnabled: latest.fullAccessEnabled,
-          fullAccessAcknowledged: latest.fullAccessAcknowledged,
-        };
-        continue;
-      }
       if ((message.includes("database is locked") || message.includes("database is busy")) && attempt < 2) {
         await wait(75 * (attempt + 1));
         continue;
@@ -174,15 +158,6 @@ export async function getAgentConversation(conversationId: string, workspaceRoot
 export function agentConversationMessageCount(conversation: AgentConversation | null | undefined): number {
   if (!conversation) return 0;
   return conversation.messageCount ?? conversation.messages.filter(item => item.role === "user" || item.role === "assistant").length;
-}
-
-/** 删除当前项目中所有“0 条对话消息”的会话（新建后未发送消息的空会话）。返回被清理的条数。 */
-export async function pruneEmptyAgentConversations(projectId: string, workspaceRoot?: string): Promise<number> {
-  const existing = await listAgentConversations(projectId, workspaceRoot);
-  const empties = existing.filter(item => agentConversationMessageCount(item) === 0);
-  if (!empties.length) return 0;
-  await Promise.all(empties.map(item => deleteAgentConversation(item.id, projectId, workspaceRoot).catch(() => undefined)));
-  return empties.length;
 }
 
 export interface ConversationDefaults {

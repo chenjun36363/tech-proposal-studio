@@ -206,7 +206,7 @@ React Project state
   ├─ 当前 Markdown → workspace.root 下打开的 .md 文件
   ├─ 连接配置 → 应用数据目录 workspace.db 的 workspace_connections 表
   ├─ 系统凭据镜像 → OS keyring
-  ├─ Agent 会话 → workspace.root/.gouan/conversations.db
+  ├─ Agent 会话 → workspace.root/.gouan/agent-conversations.json
   ├─ 长期记忆 → workspace.root/.gouan/memory.db
   └─ 知识索引 → workspace.root/.gouan/knowledge.db
 ```
@@ -214,7 +214,7 @@ React Project state
 - **项目缓存**：`localStorage` 键 `tech-proposal-studio.project.v1`；写入前始终剥离 `model.apiKey` 与 `search.apiKey`。旧键 `schematic-writer.project.v1` 仅作为一次性迁移源。
 - **连接配置**（模型 + 搜索 + MinerU）：桌面端以应用数据目录 SQLite `workspace.db` 的 `workspace_connections` 表为准，按工作区 root 键控；浏览器模式（无 root）存 `localStorage` 键 `tech-proposal-studio.connections.v1`。旧版 `<workspace.root>/.gouan/connections.json` 只在无数据库行时导入一次，之后不再写入。API Key 按用户要求保存在该 SQLite 行中，但绝不进入项目缓存。
 - **系统凭据**：keyring 服务 `com.techproposal.studio`，若存在旧服务 `cn.gouan.writer` 会一次性复制；保存设置时镜像写入 keyring，模型调用可从中补空 API Key。
-- **Agent 会话**：`<workspace.root>/.gouan/conversations.db`（`agent_conversation` / `agent_conversation_message` / `agent_conversation_meta` 表），含增量事件同步与 revision 冲突检测；旧 JSON 仅作只读迁移源。
+- **Agent 会话**：`<workspace.root>/.gouan/agent-conversations.json` 是 Git 友好的唯一写入真源，保存完整消息、工具调用和会话开关；旧版 `<workspace.root>/.gouan/conversations.db` 仅在 JSON 不存在时一次性迁移，数据库及 WAL 文件继续忽略。
 - **长期记忆**：`<workspace.root>/.gouan/memory.db`，另在 `.gouan/memory/` 下保留决策记录 Markdown。
 - **命令历史**：应用数据目录 `workspace.db`。
 - **知识索引**：见下文「知识库存储与索引」。
@@ -236,9 +236,9 @@ React Project state
 
 ### Agent 会话
 
-- 桌面端会话以 `.gouan/conversations.db` 为唯一真源，前端以内存运行态为即时数据源，通过 `agent-conversations:changed` 增量事件同步。
-- 发送、切换、新建、删除与开关修改均不依赖整页刷新或整库重载；`revision` 检测陈旧写入。
-- Agent 运行中的 token、工具事件与 Todo 只更新运行态，在稳定检查点或结束时持久化。
+- 桌面端会话以 `.gouan/agent-conversations.json` 为唯一写入真源，前端以内存运行态为即时数据源，通过 `agent-conversations:changed` 增量事件同步；文件可由 Git 审阅并在不同工作区环境间同步。
+- 发送、切换、新建、删除与开关修改均不依赖整页刷新或整库重载；`revision` 检测陈旧写入，JSON 使用临时文件刷新后原子替换。
+- Agent 运行中的 token、工具事件与 Todo 只更新运行态，在稳定检查点或结束时持久化；普通发送不会自动删除早期消息，压缩仅由用户主动执行。
 
 ## 隐私与安全
 

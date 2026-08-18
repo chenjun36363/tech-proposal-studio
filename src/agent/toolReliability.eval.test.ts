@@ -65,7 +65,7 @@ describe("tool reliability mock-completion evaluation", () => {
     expect(execute).toHaveBeenCalledWith(testCase.arguments, expect.any(AbortSignal));
   });
 
-  it.each(evaluationCases)("$label 工具在一次结构化纠错后恢复", async (testCase) => {
+  it.each(evaluationCases.filter(testCase => (testCase.required?.length ?? 0) > 0))("$label 工具在一次结构化纠错后恢复", async (testCase) => {
     agentCompletion
       .mockResolvedValueOnce(completionFor(testCase.name, { unexpected_field: true }))
       .mockResolvedValueOnce(completionFor(testCase.name, testCase.arguments))
@@ -80,5 +80,25 @@ describe("tool reliability mock-completion evaluation", () => {
       role: "tool",
       content: expect.stringContaining("INVALID_ARGUMENTS"),
     }));
+  });
+
+  it("松散参数（未知字段、camelCase、字符串数字）一次调用即完成", async () => {
+    agentCompletion
+      .mockResolvedValueOnce(completionFor("search_knowledge", { query: "验收标准", limit: "3", caseSensitive: "false", note: "额外说明" }))
+      .mockResolvedValueOnce({ choices: [{ message: { role: "assistant", content: "已完成" } }] });
+    const execute = vi.fn(() => ({ content: "ok", isError: false }));
+    const registry = new AgentToolRegistry().register({
+      definition: { type: "function", function: { name: "search_knowledge", description: "知识库评测工具", parameters: objectSchema({
+        query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 10 }, case_sensitive: { type: "boolean" },
+      }, ["query"]) } },
+      execute,
+    });
+
+    const result = await runProposalAgent({ task: "评测松散参数", config, registry, signal: new AbortController().signal, onEvent: () => undefined });
+
+    expect(result.status).toBe("completed");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({ query: "验收标准", limit: 3, case_sensitive: false }, expect.any(AbortSignal));
+    expect(agentCompletion).toHaveBeenCalledTimes(2);
   });
 });

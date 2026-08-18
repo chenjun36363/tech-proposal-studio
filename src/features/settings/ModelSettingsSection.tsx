@@ -363,8 +363,10 @@ export function ModelSettingsSection({
     setTestingModelKey(key);
     try {
       const config = resolveActiveModelConfig(providers, selection, { requireActive: false, aiEnabled });
-      await testModelConnection(config);
-      setTestResults(current => ({ ...current, [key]: { status: "success", message: "连接成功" } }));
+      const result = await testModelConnection(config);
+      const preview = result.output.replace(/\s+/g, " ").trim();
+      const displayed = preview.length > 80 ? `${preview.slice(0, 80)}…` : preview;
+      setTestResults(current => ({ ...current, [key]: { status: "success", message: `模型可用：${displayed}` } }));
     } catch (error) {
       setTestResults(current => ({
         ...current,

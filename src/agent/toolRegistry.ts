@@ -153,6 +153,68 @@ export function toolFailure(code: string, options: {
   return { code, retryable: options.retryable === true, issues: options.issues ?? [], repair: options.repair ?? "请根据字段约束修正后重试。" };
 }
 
+const snakeCaseOf = (key: string) => key.replace(/[A-Z]/g, ch => `_${ch.toLowerCase()}`);
+
+function coerceValue(schema: JsonSchema, value: unknown): unknown {
+  if (value === null) return undefined;
+  if (schema.type === "object") {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? normalizeArgsBySchema(schema, value as Record<string, unknown>)
+      : value;
+  }
+  if (schema.type === "array") {
+    if (Array.isArray(value)) return schema.items ? value.map(item => coerceValue(schema.items!, item)) : value;
+    if (typeof value === "string" && value.trim()) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return coerceValue(schema, parsed);
+      } catch { /* keep original value */ }
+    }
+    return value;
+  }
+  if ((schema.type === "integer" || schema.type === "number") && typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed !== "" && Number.isFinite(Number(trimmed))) return Number(trimmed);
+    return value;
+  }
+  if (schema.type === "boolean" && typeof value === "string") {
+    const lower = value.trim().toLowerCase();
+    if (lower === "true" || lower === "1") return true;
+    if (lower === "false" || lower === "0") return false;
+    return value;
+  }
+  if (schema.type === "string" && typeof value === "number" && Number.isFinite(value)) return String(value);
+  return value;
+}
+
+/**
+ * Schema-driven tolerant normalization applied after a tool's own normalizeArgs.
+ * Maps camelCase aliases to declared snake_case keys, coerces obvious primitive
+ * mismatches (string numbers/booleans, JSON-string arrays, null placeholders),
+ * and removes fields the schema does not declare when additionalProperties is
+ * false. Undeclared keys are kept when the schema explicitly allows them.
+ */
+export function normalizeArgsBySchema(schema: Record<string, unknown>, args: Record<string, unknown>): Record<string, unknown> {
+  const objectSchemaValue = schema as JsonSchema;
+  if (objectSchemaValue.type !== "object" || !objectSchemaValue.properties || !args || typeof args !== "object" || Array.isArray(args)) return args;
+  const properties = objectSchemaValue.properties;
+  const declared = new Set(Object.keys(properties));
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (declared.has(key)) {
+      result[key] = coerceValue(properties[key]!, value);
+      continue;
+    }
+    const snake = snakeCaseOf(key);
+    if (declared.has(snake) && !(snake in args)) {
+      result[snake] = coerceValue(properties[snake]!, value);
+      continue;
+    }
+    if (objectSchemaValue.additionalProperties !== false) result[key] = value;
+  }
+  return result;
+}
+
 /** Lets a domain executor return a stable failure without exposing exception text. */
 export class AgentToolExecutionError extends Error {
   constructor(readonly failure: AgentToolFailure) {
@@ -200,7 +262,8 @@ export class AgentToolRegistry {
       return { result: { content: formatToolFailure(failure), isError: true, failure } };
     }
     try {
-      const args = registration.normalizeArgs ? registration.normalizeArgs(call.arguments) : call.arguments;
+      const adapted = registration.normalizeArgs ? registration.normalizeArgs(call.arguments) : call.arguments;
+      const args = normalizeArgsBySchema(registration.definition.function.parameters, adapted);
       const schemaValidation = validateToolArguments(registration.definition.function.parameters, args);
       const contextualValidation = schemaValidation.valid && registration.validateArgs
         ? registration.validateArgs(args)

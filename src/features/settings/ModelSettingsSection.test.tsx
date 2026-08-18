@@ -55,7 +55,7 @@ describe("model connection tests", () => {
     provider.activeModels = [...provider.activeModels, fallbackModel];
     provider.catalog = [...(provider.catalog ?? []), { id: fallbackModel, displayName: fallbackModel }];
     project.fallbackModels = [{ providerId: provider.id, model: fallbackModel }];
-    vi.mocked(testModel).mockResolvedValue(undefined);
+    vi.mocked(testModel).mockResolvedValue({ output: "OK" });
 
     container = document.createElement("div");
     document.body.append(container);
@@ -73,7 +73,7 @@ describe("model connection tests", () => {
     expect(vi.mocked(testModel)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(testModel).mock.calls[0][0].model).toBe(provider.activeModels[0]);
     expect(vi.mocked(testModel).mock.calls[1][0].model).toBe(fallbackModel);
-    expect(container.textContent).toContain("连接成功");
+    expect(container.textContent).toContain("模型可用：OK");
     act(() => root.unmount());
   });
 });

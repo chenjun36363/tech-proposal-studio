@@ -58,7 +58,7 @@
 
 ### P7.3 服务、导出与 Rust 边界
 
-- [ ] 配合 P1 将 Agent 会话存储拆为统一接口、Browser adapter 和 SQLite adapter，React 组件不得直接访问持久化细节。
+- [ ] 配合 P1 将 Agent 会话存储拆为统一接口、Browser adapter 和 JSON 文件 adapter，React 组件不得直接访问持久化细节。
 - [ ] 配合 P2 将工作区监听、磁盘基线和冲突处理收敛到 workspace service/controller。
 - [ ] 将 DOCX 导出拆为 Markdown 解析、样式、图片解析、文档构建和保存适配模块，并补齐表格、图片和异常路径测试。
 - [ ] 将状态初始化和领域装配下沉到对应 Rust 模块；`lib.rs` 只保留插件、state 和显式命令注册。
@@ -86,18 +86,18 @@
 - [ ] 核对章节移动行为：不能移动到自己的子树中，移动后标题编号和目录同步更新。
 - [ ] 为自定义模板补齐保存、读取、应用、删除和异常数据测试。
 - [ ] 验证浏览器与桌面端的模板存储边界：浏览器使用 localStorage，桌面使用 `<workspace.root>/.gouan/templates/`。
-- [ ] 完成 Agent 会话从 legacy localStorage / JSON 迁移到工作区 SQLite 后的兼容、并发刷新和错误处理测试。
+- [ ] 完成 Agent 会话从 legacy localStorage / SQLite 迁移到工作区 Git 友好 JSON 后的兼容、并发刷新和错误处理测试。
 - [x] 增加忽略规则并清理不应提交的运行数据，包括工具日志/快照、临时脚本、本机 Agent 状态、`workspace/.gouan/*.db` 和 Agent 会话实例文件。
 - [x] 2026-07-29 完成前端全量测试（33 个文件、177 项测试）和生产构建。
 - [x] 2026-07-29 完成 Agent 会话 Rust 定向测试（2 项通过）。
 
-## P1 Agent 会话存储 SQLite 改造
+## P1 Agent 会话存储与跨环境同步
 
-目标：桌面端以 `<workspace.root>/.gouan/conversations.db` 作为 Agent 会话唯一真源；前端以内存运行态为即时数据源，通过增量事件同步持久化结果。发送、切换、新建、删除和修改会话开关均不得依赖整页刷新或整库重载。
+目标：桌面端以 `<workspace.root>/.gouan/agent-conversations.json` 作为 Agent 会话唯一写入真源；前端以内存运行态为即时数据源，通过增量事件同步持久化结果。JSON 保留完整消息并可由 Git 审阅、同步；旧 SQLite 仅作为一次性迁移源。发送、切换、新建、删除和修改会话开关均不得依赖整页刷新或整库重载。
 
 ### 存储模型
 
-- [x] 新建独立 Rust `agent_conversations` 存储模块，不复用应用数据目录 `workspace.db`，也不混入记忆模块 `memory.db`。
+- [x] 保留独立 Rust `agent_conversations` 模块；SQLite schema 仅用于兼容旧版本迁移，不再作为新版本写入真源。
 - [x] 创建 `agent_conversation` 表：`id`、`project_id`、`title`、`summary`、三个会话开关、`created_at`、`updated_at`、`revision`。
 - [x] 创建 `agent_conversation_message` 表：`conversation_id`、`sequence`、`role`、`message_json`、`created_at`，以 `(conversation_id, sequence)` 为主键并启用级联删除。
 - [x] 创建 `agent_conversation_meta` 表记录 schema 版本和 JSON 迁移完成标记。
@@ -118,11 +118,11 @@
 
 ### JSON 迁移与兼容
 
-- [x] 首次打开工作区数据库时，如果未标记迁移且存在 `.gouan/agent-conversations.json`，解析、校验并在单个事务中导入。
-- [ ] 按会话 ID 幂等导入；非法会话跳过并返回可见警告，不能导致整个数据库不可用。
-- [x] 导入成功后写入迁移标记；旧 JSON 保留为只读备份，不再由新代码写入。
-- [ ] localStorage 继续作为浏览器模式适配器；桌面端只在 SQLite 尚无数据且 JSON 迁移源不存在时执行一次 legacy localStorage 导入。
-- [ ] 迁移失败时继续使用旧存储读取且禁止覆盖 JSON；修复后可安全重试。
+- [x] 首次打开工作区时优先读取 `.gouan/agent-conversations.json`；如果 JSON 不存在且旧 `conversations.db` 存在，则导出完整会话到 JSON。
+- [ ] 按会话 ID 幂等迁移；非法会话跳过并返回可见警告，不能导致整个工作区不可用。
+- [x] JSON 成为唯一写入真源；旧 SQLite 和历史 JSON 只作为迁移源保留，不再持续双写。
+- [ ] localStorage 继续作为浏览器模式适配器；桌面端只在 JSON 和 SQLite 均无数据时评估 legacy localStorage 导入。
+- [x] JSON 损坏时拒绝覆盖原文件，保留临时文件并返回错误，修复后可安全重试。
 
 ### 前端运行态
 
@@ -145,7 +145,7 @@
 - [ ] 覆盖重叠保存严格串行、后写不被先写覆盖、失败写不推进 revision、数据库 busy 后可重试。
 - [ ] 前端覆盖发送中切换会话、后台完成后回切、新建、删除、三个开关、外部增量事件和 LRU 淘汰。
 - [ ] 增加回归断言：上述操作不得调用完整列表查询，不得卸载 Agent runner，不得触发页面 reload。
-- [x] 桌面端直接使用 SQLite，浏览器模式保留 localStorage；旧 JSON 仅作为只读迁移源。
+- [x] 桌面端直接使用 Git 友好的 JSON 文件，浏览器模式保留 localStorage；旧 SQLite 仅作一次性迁移源。
 - [ ] 完成剩余 Rust 测试和 Tauri 手工流程；确认旧 JSON 始终只读且迁移失败可安全重试。
 
 ## P2 工作区实时同步

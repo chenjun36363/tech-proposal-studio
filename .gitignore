@@ -31,7 +31,10 @@ workspace/.gouan/
 **/.gouan/*.db
 **/.gouan/*.db-shm
 **/.gouan/*.db-wal
-**/.gouan/agent-conversations.json
+
+# Keep the Git-friendly conversation history file trackable in repository workspaces
+!workspace/.gouan/
+!workspace/.gouan/agent-conversations.json
 
 # Logs and process artifacts
 *.log

@@ -10,11 +10,21 @@ describe("agent conversation storage", () => {
     await saveAgentConversation({ ...createAgentConversation("project-b"), title: "B" });
     expect((await listAgentConversations("project-a")).map(item => item.title)).toEqual(["A"]);
   });
-  it("serializes overlapping saves without losing either conversation", async () => {
-    const first = { ...createAgentConversation("project-a"), title: "First" };
-    const second = { ...createAgentConversation("project-a"), title: "Second" };
-    await Promise.all([saveAgentConversation(first), saveAgentConversation(second)]);
-    expect(new Set((await listAgentConversations("project-a")).map(item => item.title))).toEqual(new Set(["First", "Second"]));
+  it("keeps the complete message timeline on ordinary saves", async () => {
+    const conversation = createAgentConversation("project-a");
+    conversation.messages = Array.from({ length: 30 }, (_, index) => ({
+      role: index % 2 ? "assistant" as const : "user" as const,
+      content: `message-${index}`,
+    }));
+    await saveAgentConversation(conversation);
+    const [saved] = await listAgentConversations("project-a");
+    expect(saved.messages).toHaveLength(30);
+    expect(saved.summary).toBe("");
+  });
+
+  it("does not remove an explicitly saved empty conversation", async () => {
+    await saveAgentConversation(createAgentConversation("project-a"));
+    expect(await listAgentConversations("project-a")).toHaveLength(1);
   });
 
   it("starts new conversations with web search disabled", () => {

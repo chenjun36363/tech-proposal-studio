@@ -13,7 +13,7 @@ interface EnvironmentModalProps {
 export function EnvironmentModal({ project, controller, close }: EnvironmentModalProps) {
   const { toolPaths, commandOutputs, runningId, installingAgentId, installOutputs, installAgent, runTask } = controller;
 
-  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+  return <div className="modal-backdrop environment-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <div className="modal env-modal" onMouseDown={event => event.stopPropagation()}>
       <div className="modal-title">
         <div><Command size={18} /><span>环境检查</span></div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock3, HardDrive, MessageSquareText, Search, Trash2, X } from "lucide-react";
-import { AGENT_CONVERSATIONS_CHANGED, agentConversationMessageCount, applyAgentConversationChange, clearAgentConversations, deleteAgentConversation, listAgentConversations, pruneEmptyAgentConversations, type AgentConversation, type AgentConversationChange } from "../agent/conversationStore";
+import { AGENT_CONVERSATIONS_CHANGED, applyAgentConversationChange, clearAgentConversations, deleteAgentConversation, listAgentConversations, type AgentConversation, type AgentConversationChange } from "../agent/conversationStore";
 import { isDesktop } from "../services/runtime";
 import type { Project } from "../core/types";
 
@@ -30,9 +30,7 @@ export function ConversationHistorySettings({ project }: { project: Project }) {
     setError("");
     try {
       const list = await listAgentConversations(project.id, root);
-      // 清理“新建后未发送消息”的空会话，历史里只保留有实际对话的会话。
-      void pruneEmptyAgentConversations(project.id, root).catch(() => undefined);
-      setConversations(list.filter(item => agentConversationMessageCount(item) > 0));
+      setConversations(list);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "历史会话加载失败");
     } finally {
@@ -88,13 +86,13 @@ export function ConversationHistorySettings({ project }: { project: Project }) {
   };
 
   const storageLabel = isDesktop() && root
-    ? `${root.replace(/[\\/]+$/, "")}\\.gouan\\conversations.db`
+    ? `${root.replace(/[\\/]+$/, "")}\\.gouan\\agent-conversations.json`
     : "浏览器 localStorage";
 
   return <div className="settings-section-content conversation-history-settings">
     <div className="conversation-history-summary">
       <div><MessageSquareText size={18} /><span><b>{needle ? filtered.length : conversations.length}</b><small>{needle ? "匹配结果" : "历史会话"}</small></span></div>
-      <div><HardDrive size={17} /><span><b>{isDesktop() && root ? "SQLite 数据库" : "浏览器存储"}</b><small title={storageLabel}>{storageLabel}</small></span></div>
+      <div><HardDrive size={17} /><span><b>{isDesktop() && root ? "工作区 JSON 文件" : "浏览器存储"}</b><small title={storageLabel}>{storageLabel}</small></span></div>
       <button type="button" className="danger-action" onClick={() => void clearAll()} disabled={!conversations.length || busyId !== null}><Trash2 size={14} />清空全部</button>
     </div>
 

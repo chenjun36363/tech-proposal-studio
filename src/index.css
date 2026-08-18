@@ -1305,6 +1305,9 @@
     min-height: 0;
     overflow: auto;
   }
+  .settings-backdrop {
+    z-index: 100;
+  }
   .modal.wide.settings-modal {
     display: flex;
     flex-direction: column;
@@ -5012,6 +5015,9 @@
   }
   .inspector-content label textarea:focus {
     border-color: hsl(var(--primary) / 0.5);
+  }
+  .environment-backdrop {
+    z-index: 120;
   }
   .env-modal {
     width: 560px;

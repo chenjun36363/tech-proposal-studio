@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, BookOpen, Bot, Brain, BrainCircuit, Check, Database, FileSearch, Gauge, GitBranch, Globe2, Hammer, ListTree, Maximize2, MessageSquarePlus, Send, ShieldAlert, Sparkles, Square, Trash2, X } from "lucide-react";
 import { buildProposalAgentMessages, type ResolvedAgentContext } from "../agent/contextBuilder";
-import { AGENT_CONVERSATIONS_CHANGED, agentConversationMessageCount, applyAgentConversationChange, compactAgentConversation, compactAgentConversationToBudget, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, pruneEmptyAgentConversations, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch, type AgentMode, type ConversationDefaults } from "../agent/conversationStore";
+import { AGENT_CONVERSATIONS_CHANGED, agentConversationMessageCount, applyAgentConversationChange, compactAgentConversationToBudget, createAgentConversation, deleteAgentConversation, getAgentConversation, listAgentConversations, patchAgentConversation, saveAgentConversation, type AgentConversation, type AgentConversationChange, type AgentConversationPatch, type AgentMode, type ConversationDefaults } from "../agent/conversationStore";
 import { buildEditorSelectionPrompt, createProposalToolRegistry, proposalAgentSystemPrompt, type AgentSearchHighlight, type AgentWorkspaceRuntime } from "../agent/proposalTools";
 import type { AgentDraft, AgentEditorSelection, AgentEvent, AgentGitApprovalRequest, AgentRunStatus, AgentUserQuestion, AgentUserQuestionAnswer, AgentUserQuestionChoice, TodoItem } from "../agent/protocol";
 import { runProposalAgent } from "../agent/runner";
@@ -162,15 +162,12 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       try {
         const loaded = await listAgentConversations(project.id, workspaceRoot);
         if (cancelled) return;
-        // 清理历史中“新建后未发送消息”的空会话（0 条对话），不在历史里保留它们。
-        void pruneEmptyAgentConversations(project.id, workspaceRoot).catch(() => undefined);
-        const nonEmpty = loaded.filter(item => agentConversationMessageCount(item) > 0);
-        const preferred = nonEmpty.find(item => item.id === activeId) ?? nonEmpty[0];
+        const preferred = loaded.find(item => item.id === activeId) ?? loaded[0];
         const initial = preferred
           ? (preferred.messagesLoaded ? preferred : await getAgentConversation(preferred.id, workspaceRoot))
           : createAgentConversation(project.id, conversationDefaults());
         if (cancelled) return;
-        setConversations(nonEmpty.length ? applyAgentConversationChange(nonEmpty, { projectId: project.id, type: "saved", conversation: initial }) : [initial]);
+        setConversations(loaded.length ? applyAgentConversationChange(loaded, { projectId: project.id, type: "saved", conversation: initial }) : [initial]);
         setActiveId(initial.id);
       } catch (error) {
         if (!cancelled) notify(error instanceof Error ? error.message : "历史会话加载失败");
@@ -279,7 +276,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
   }, [activeId, project.id]);
 
   const commitConversation = async (conversation: AgentConversation) => {
-    const saved = await saveAgentConversation(compactAgentConversation(conversation, agentSettings.recentMessages), workspaceRoot);
+    const saved = await saveAgentConversation(conversation, workspaceRoot);
     setActiveId(saved.id);
     return saved;
   };
@@ -614,7 +611,7 @@ export function AgentConversationPanel({ project, block, pinnedContext, editorSe
       try {
         await commitConversation(completedConversation);
       } catch (saveError) {
-        notify(`AI 回复已保留在当前会话，但写入 SQLite 失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
+        notify(`AI 回复已保留在当前会话，但写入会话文件失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") setRunStatus("cancelled");

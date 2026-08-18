@@ -2046,7 +2046,7 @@ function SettingsModal({ project, close, openEnvironmentCheck, save }: {
     if (kind === "history") setWorkspace({ historyDir: path });
   };
 
-  return <div className="modal-backdrop" onMouseDown={close}>
+  return <div className="modal-backdrop settings-backdrop" onMouseDown={close}>
     <div className="modal wide settings-modal" onMouseDown={e => e.stopPropagation()}>
       <div className="modal-title"><div><Settings size={19} /><span>设置</span></div><IconButton title="关闭" onClick={close}><X size={18} /></IconButton></div>
       <div className="settings-modal-body">
